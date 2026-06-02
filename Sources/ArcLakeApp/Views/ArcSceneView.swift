@@ -11,93 +11,73 @@ public struct ArcSceneView: UIViewRepresentable {
         scnView.scene = labVM.scene
         scnView.allowsCameraControl = true
         scnView.autoenablesDefaultLighting = false
-        scnView.backgroundColor = UIColor(red: 0.02, green: 0.04, blue: 0.08, alpha: 1)
-        scnView.showsStatistics = false
+        scnView.backgroundColor = UIColor(red:0.02, green:0.04, blue:0.08, alpha:1)
         scnView.antialiasingMode = .multisampling4X
         scnView.rendersContinuously = true
+        scnView.showsStatistics = false
 
-        // Camera
-        let camera = SCNCamera()
-        camera.fieldOfView = 60
-        camera.zFar = 200
-        let cameraNode = SCNNode()
-        cameraNode.camera = camera
-        cameraNode.position = SCNVector3(0, 2, 8)
-        cameraNode.look(at: SCNVector3Zero)
-        labVM.scene.rootNode.addChildNode(cameraNode)
+        // Camera — zoomed out to see atoms properly
+        let cam = SCNCamera()
+        cam.fieldOfView = 55
+        cam.zFar = 500
+        cam.zNear = 0.01
+        let camNode = SCNNode()
+        camNode.camera = cam
+        camNode.position = SCNVector3(0, 3, 14)
+        camNode.look(at: SCNVector3Zero)
+        labVM.scene.rootNode.addChildNode(camNode)
 
-        // Tap gesture — probe / drop target
+        // Tap to probe
         let tap = UITapGestureRecognizer(target: context.coordinator,
                                           action: #selector(Coordinator.handleTap(_:)))
         scnView.addGestureRecognizer(tap)
 
-        // Drop target for elements dragged from periodic table
+        // Drop target
         scnView.addInteraction(UIDropInteraction(delegate: context.coordinator))
 
         return scnView
     }
 
     public func updateUIView(_ uiView: SCNView, context: Context) {}
-
-    public func makeCoordinator() -> Coordinator {
-        Coordinator(labVM: labVM)
-    }
+    public func makeCoordinator() -> Coordinator { Coordinator(labVM: labVM) }
 
     public final class Coordinator: NSObject, UIDropInteractionDelegate {
         let labVM: ArcLabViewModel
+        init(labVM: ArcLabViewModel) { self.labVM = labVM }
 
-        init(labVM: ArcLabViewModel) {
-            self.labVM = labVM
-        }
-
-        @objc func handleTap(_ gesture: UITapGestureRecognizer) {
-            guard let scnView = gesture.view as? SCNView else { return }
-            let location = gesture.location(in: scnView)
-            let hits = scnView.hitTest(location, options: nil)
-            if let firstHit = hits.first {
-                // Find which atom was tapped
-                var node: SCNNode? = firstHit.node
-                while let n = node {
-                    if let group = labVM.atomGroupFor(node: n) {
-                        Task { @MainActor in
-                            self.labVM.openProbe(for: group.element)
-                        }
-                        break
+        @objc func handleTap(_ g: UITapGestureRecognizer) {
+            guard let v = g.view as? SCNView else { return }
+            let hits = v.hitTest(g.location(in: v), options: nil)
+            if let node = hits.first?.node {
+                // Walk up to find atom group
+                var n: SCNNode? = node
+                while let cur = n {
+                    if let name = cur.name, name.hasPrefix("atomZ:"),
+                       let z = Int(name.dropFirst(6)),
+                       let el = ElementStore.shared.elements.first(where: { $0.id == z }) {
+                        Task { @MainActor in self.labVM.openProbe(for: el) }
+                        return
                     }
-                    node = n.parent
+                    n = cur.parent
                 }
             }
         }
 
-        // MARK: — Drop interaction (from periodic table)
-        public func dropInteraction(_ interaction: UIDropInteraction,
-                                    canHandle session: UIDropSession) -> Bool {
-            session.canLoadObjects(ofClass: NSString.self)
+        public func dropInteraction(_ i: UIDropInteraction, canHandle s: UIDropSession) -> Bool {
+            s.canLoadObjects(ofClass: NSString.self)
         }
-
-        public func dropInteraction(_ interaction: UIDropInteraction,
-                                    sessionDidUpdate session: UIDropSession) -> UIDropProposal {
+        public func dropInteraction(_ i: UIDropInteraction, sessionDidUpdate s: UIDropSession) -> UIDropProposal {
             UIDropProposal(operation: .copy)
         }
-
-        public func dropInteraction(_ interaction: UIDropInteraction,
-                                    performDrop session: UIDropSession) {
-            session.loadObjects(ofClass: NSString.self) { items in
-                guard let symbol = items.first as? String else { return }
+        public func dropInteraction(_ i: UIDropInteraction, performDrop s: UIDropSession) {
+            s.loadObjects(ofClass: NSString.self) { items in
+                guard let sym = items.first as? String else { return }
                 Task { @MainActor in
-                    if let element = ElementStore.shared.elements.first(where: { $0.elementSymbol == symbol }) {
-                        self.labVM.addElement(element)
-                        self.labVM.log("Dropped \(symbol) into 3D scene")
+                    if let el = ElementStore.shared.elements.first(where: { $0.elementSymbol == sym }) {
+                        self.labVM.addElement(el)
                     }
                 }
             }
         }
-    }
-}
-
-extension ArcLabViewModel {
-    func atomGroupFor(node: SCNNode) -> AtomGroup? {
-        // Match node to atom group
-        nil // filled by scene lookup
     }
 }

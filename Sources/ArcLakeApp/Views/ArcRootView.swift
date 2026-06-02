@@ -5,78 +5,94 @@ import SceneKit
 public struct ArcRootView: View {
     @EnvironmentObject var labVM: ArcLabViewModel
     @EnvironmentObject var themeVM: ArcThemeViewModel
-    @State private var showPeriodicTable = false
     @State private var sidebarCollapsed = false
 
     public var body: some View {
-        ZStack {
-            themeVM.bg.ignoresSafeArea()
+        GeometryReader { geo in
+            ZStack {
+                themeVM.bg.ignoresSafeArea()
 
-            GeometryReader { geo in
                 if geo.size.width > 600 {
-                    // iPad / landscape: side-by-side
+                    // iPad / landscape
                     HStack(spacing: 0) {
-                        // 3D Viewport
                         ArcSceneView()
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
-
                         if !sidebarCollapsed {
-                            // Sidebar
                             ArcSidebarView(sidebarCollapsed: $sidebarCollapsed)
                                 .frame(width: 320)
                                 .background(Color.black.opacity(0.6))
                         } else {
-                            sidebarToggleButton
+                            Button {
+                                withAnimation(.spring()) { sidebarCollapsed = false }
+                            } label: {
+                                Image(systemName: "chevron.left.circle.fill")
+                                    .font(.title2)
+                                    .foregroundColor(themeVM.accent)
+                                    .padding(8)
+                            }
                         }
                     }
                 } else {
-                    // iPhone: stacked
+                    // iPhone — 3D on top, sidebar below
                     VStack(spacing: 0) {
-                        // 3D Viewport — top 55%
                         ArcSceneView()
-                            .frame(height: geo.size.height * 0.55)
-
-                        // Sidebar — bottom 45%
+                            .frame(height: geo.size.height * 0.48)
                         ArcSidebarView(sidebarCollapsed: $sidebarCollapsed)
                             .background(Color.black.opacity(0.7))
                     }
                 }
-            }
 
-            // Floating overlays
-            if labVM.isPeriodicTableVisible {
-                PeriodicTableView()
-                    .transition(.move(edge: .bottom))
-            }
+                // ── Overlay panels — tap outside to dismiss ──
+                if labVM.isPeriodicTableVisible || labVM.isMolCanvasVisible || labVM.isOrbitDeltaVisible {
+                    // Dimmed background — tap to dismiss all
+                    Color.black.opacity(0.45)
+                        .ignoresSafeArea()
+                        .onTapGesture {
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                labVM.isPeriodicTableVisible = false
+                                labVM.isMolCanvasVisible     = false
+                                labVM.isOrbitDeltaVisible    = false
+                            }
+                        }
+                }
 
-            if labVM.isMolCanvasVisible {
-                MolCanvasView()
-                    .transition(.opacity)
-            }
+                // Periodic table — constrained overlay
+                if labVM.isPeriodicTableVisible {
+                    PeriodicTableView()
+                        .frame(
+                            width:  min(geo.size.width - 16, 700),
+                            height: min(geo.size.height * 0.62, 550)
+                        )
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
 
-            if labVM.isOrbitDeltaVisible, let target = labVM.probeTarget {
-                OrbitDeltaNodeView(element: target)
-                    .transition(.scale)
-            }
+                // Mol canvas
+                if labVM.isMolCanvasVisible {
+                    MolCanvasView()
+                        .frame(
+                            width:  min(geo.size.width - 16, 500),
+                            height: min(geo.size.height * 0.58, 480)
+                        )
+                        .transition(.opacity)
+                }
 
-            // Top HUD bar
-            VStack {
-                ArcHUDBar()
-                Spacer()
+                // Orbit delta probe
+                if labVM.isOrbitDeltaVisible, let el = labVM.probeTarget {
+                    OrbitDeltaNodeView(element: el)
+                        .transition(.scale.combined(with: .opacity))
+                }
+
+                // HUD bar — always on top
+                VStack {
+                    ArcHUDBar()
+                    Spacer()
+                }
             }
+            .animation(.spring(response: 0.3), value: labVM.isPeriodicTableVisible)
+            .animation(.spring(response: 0.3), value: labVM.isMolCanvasVisible)
+            .animation(.spring(response: 0.3), value: labVM.isOrbitDeltaVisible)
         }
         .preferredColorScheme(.dark)
-    }
-
-    private var sidebarToggleButton: some View {
-        Button {
-            withAnimation(.spring()) { sidebarCollapsed = false }
-        } label: {
-            Image(systemName: "chevron.left.circle.fill")
-                .font(.title)
-                .foregroundColor(themeVM.accent)
-                .padding(8)
-        }
     }
 }
 
@@ -87,49 +103,31 @@ struct ArcHUDBar: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            // App title
-            Text("ArcLake")
+            Text("Arc Lake")
                 .font(.system(.caption, design: .monospaced, weight: .bold))
                 .foregroundColor(themeVM.accent)
-
             Spacer()
-
-            // Version
             Text("v1.45")
                 .font(.system(.caption2, design: .monospaced))
-                .foregroundColor(.white.opacity(0.4))
-
-            // CFD indicator
+                .foregroundColor(.white.opacity(0.35))
             if labVM.isCFDActive {
                 Label("CFD", systemImage: "wind")
                     .font(.caption2)
                     .foregroundColor(.green)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Color.green.opacity(0.15))
-                    .clipShape(Capsule())
+                    .padding(.horizontal, 5).padding(.vertical, 2)
+                    .background(Color.green.opacity(0.15)).clipShape(Capsule())
             }
-
-            // Theme button
-            Button {
-                withAnimation { themeVM.cycle() }
-            } label: {
-                Image(systemName: "paintpalette.fill")
-                    .foregroundColor(themeVM.accent)
+            Button { withAnimation { themeVM.cycle() } } label: {
+                Image(systemName: "paintpalette.fill").foregroundColor(themeVM.accent)
             }
-
-            // Periodic Table toggle
             Button {
-                withAnimation(.spring()) {
-                    labVM.isPeriodicTableVisible.toggle()
-                }
+                withAnimation(.spring()) { labVM.isPeriodicTableVisible.toggle() }
             } label: {
                 Image(systemName: "tablecells")
-                    .foregroundColor(labVM.isPeriodicTableVisible ? themeVM.accent : .white.opacity(0.6))
+                    .foregroundColor(labVM.isPeriodicTableVisible ? themeVM.accent : .white.opacity(0.5))
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 16).padding(.vertical, 8)
         .background(.ultraThinMaterial)
     }
 }
