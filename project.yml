@@ -17,7 +17,8 @@ targets:
     deploymentTarget: "16.0"
     sources:
       - Sources/ArcLakeApp
-      - Sources/ArcLakeApp/AutumnData.xcdatamodeld
+      - Sources/ArcLakeApp/ArcLakeData.xcdatamodeld
+      - Sources/ArcLakeApp/Resources
     info:
       path: Sources/ArcLakeApp/Info.plist
       properties:
