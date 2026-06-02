@@ -1,0 +1,79 @@
+name: ArcLake
+options:
+  bundleIdPrefix: com.dartmeadow
+  deploymentTarget:
+    iOS: "16.0"
+  generateEmptyDirectories: true
+  xcodeVersion: "15.4"
+  xcodeCompatibilityVersion: "Xcode 14.0"
+packages:
+  swift-markdown-ui:
+    url: https://github.com/gonzalezreal/swift-markdown-ui
+    from: "2.4.0"
+targets:
+  ArcLakeApp:
+    type: application
+    platform: iOS
+    deploymentTarget: "16.0"
+    sources:
+      - Sources/ArcLakeApp
+      - Sources/ArcLakeApp/AutumnData.xcdatamodeld
+    info:
+      path: Sources/ArcLakeApp/Info.plist
+      properties:
+        CFBundleIconName: AppIcon
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        ITSAppUsesNonExemptEncryption: false
+        UIRequiresFullScreen: false
+        UILaunchScreen:
+          UIColorName: ""
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        "UISupportedInterfaceOrientations~ipad":
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UIApplicationSupportsIndirectInputEvents: true
+        NSCameraUsageDescription: Used for AR mode atom visualization
+        NSPhotoLibraryAddUsageDescription: Save GLB exports and screenshots
+        NSMicrophoneUsageDescription: Voice commands for ArcLake lab assistant
+    entitlements:
+      path: Sources/ArcLakeApp/ArcLakeApp.entitlements
+    dependencies:
+      - package: swift-markdown-ui
+        product: MarkdownUI
+        embed: false
+        link: true
+    settings:
+      base:
+        PRODUCT_NAME: ArcLake
+        PRODUCT_BUNDLE_IDENTIFIER: com.dartmeadow.arclake
+        DEVELOPMENT_TEAM: L7AHWS9Q6V
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "iPhone Distribution"
+        PROVISIONING_PROFILE: "ARCLAKE_PROFILE_UUID"
+        PROVISIONING_PROFILE_SPECIFIER: "ArcLakeGitHubFlow"
+        SWIFT_VERSION: "5.9"
+        CODE_SIGN_ENTITLEMENTS: Sources/ArcLakeApp/ArcLakeApp.entitlements
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CURRENT_PROJECT_VERSION: "1"
+        MARKETING_VERSION: "1.45.0"
+      configs:
+        Debug:
+          SWIFT_OPTIMIZATION_LEVEL: "-Onone"
+        Release:
+          SWIFT_OPTIMIZATION_LEVEL: "-O"
+          DEBUG_INFORMATION_FORMAT: "dwarf-with-dsym"
+schemes:
+  ArcLakeApp:
+    build:
+      targets:
+        ArcLakeApp: all
+    archive:
+      config: Release
