@@ -16,10 +16,15 @@ public final class ArcLabViewModel: ObservableObject {
     @Published public var cfdParticles: [SPHEngine.Particle] = []
     @Published public var alloyComponents: [AlloyComponent] = []
 
+    // ── Particle resolution — pts per component (proton/neutron/electron)
+    // Default 30, user-adjustable in Physics tab
+    @Published public var ptsPerComponent: Int = 30
+
     public let physics = PhysicsState()
     public let sphEngine: SPHEngine
     public let scene = SCNScene()
-    private var atomNodes: [Int: SCNNode] = [:]   // z → root node
+    private var atomNodes: [Int: SCNNode] = [:]
+    private var atomPositions: [Int: SIMD3<Float>] = [:]  // physics positions
     private var cfdTimer: Timer?
     private var displayLink: CADisplayLink?
 
@@ -31,70 +36,40 @@ public final class ArcLabViewModel: ObservableObject {
     // MARK: — Scene setup
     private func setupScene() {
         scene.background.contents = UIColor(red:0.015, green:0.03, blue:0.07, alpha:1)
-
-        // Ambient light — dim
         let ambient = SCNLight(); ambient.type = .ambient
-        ambient.intensity = 200; ambient.color = UIColor.white
+        ambient.intensity = 180; ambient.color = UIColor.white
         let an = SCNNode(); an.light = ambient
         scene.rootNode.addChildNode(an)
-
-        // Key light — cyan tint
-        let key = SCNLight(); key.type = .omni
-        key.intensity = 600
+        let key = SCNLight(); key.type = .omni; key.intensity = 500
         key.color = UIColor(red:0.5, green:0.9, blue:1.0, alpha:1)
-        let kn = SCNNode(); kn.position = SCNVector3(8, 8, 8); kn.light = key
+        let kn = SCNNode(); kn.position = SCNVector3(8,8,8); kn.light = key
         scene.rootNode.addChildNode(kn)
-
-        // Floor grid lines (subtle)
         addGridFloor()
-
-        // Start animation loop
-        displayLink = CADisplayLink(target: self, selector: #selector(animationTick))
-        displayLink?.add(to: .main, forMode: .common)
     }
 
     private func addGridFloor() {
-        let gridNode = SCNNode()
-        let gridSize: Float = 20
-        let step: Float = 2
-        var x: Float = -gridSize
-        while x <= gridSize {
-            let line = SCNCylinder(radius: 0.005, height: CGFloat(gridSize*2))
-            line.firstMaterial?.diffuse.contents = UIColor.cyan.withAlphaComponent(0.06)
-            let ln = SCNNode(geometry: line)
-            ln.position = SCNVector3(x, -3, 0)
-            ln.eulerAngles.x = .pi/2
-            gridNode.addChildNode(ln)
-            let line2 = SCNCylinder(radius: 0.005, height: CGFloat(gridSize*2))
-            line2.firstMaterial?.diffuse.contents = UIColor.cyan.withAlphaComponent(0.06)
-            let ln2 = SCNNode(geometry: line2)
-            ln2.position = SCNVector3(0, -3, x)
-            gridNode.addChildNode(ln2)
-            x += step
-        }
-        scene.rootNode.addChildNode(gridNode)
-    }
-
-    @objc private func animationTick() {
-        // Animate electron orbits
-        for node in atomNodes.values {
-            node.childNodes.forEach { shell in
-                shell.childNodes.forEach { electron in
-                    if electron.name == "electron" {
-                        electron.runAction(
-                            SCNAction.rotateBy(x: 0, y: 0.04, z: 0, duration: 0),
-                            forKey: "orbit")
-                    }
-                }
+        let g = SCNNode()
+        for i in stride(from: -20, through: 20, by: 2) {
+            [true, false].forEach { horiz in
+                let c = SCNCylinder(radius: 0.004, height: 40)
+                c.firstMaterial?.diffuse.contents = UIColor.cyan.withAlphaComponent(0.05)
+                c.firstMaterial?.lightingModel = .constant
+                let n = SCNNode(geometry: c)
+                n.position = horiz ? SCNVector3(Float(i), -4, 0) : SCNVector3(0, -4, Float(i))
+                n.eulerAngles.x = .pi/2
+                g.addChildNode(n)
             }
         }
+        scene.rootNode.addChildNode(g)
     }
 
     // MARK: — Element management
     public func addElement(_ element: ArcElement) {
         guard !selectedElements.contains(where: { $0.id == element.id }) else { return }
         selectedElements.append(element)
-        buildPointCloudAtom(element)
+        let pos = physicsPosition(for: element, index: selectedElements.count - 1)
+        atomPositions[element.id] = pos
+        buildPointCloudAtom(element, at: pos)
         log("Added \(element.elementName) (Z=\(element.protons))")
     }
 
@@ -102,133 +77,202 @@ public final class ArcLabViewModel: ObservableObject {
         selectedElements.removeAll { $0.id == element.id }
         atomNodes[element.id]?.removeFromParentNode()
         atomNodes.removeValue(forKey: element.id)
+        atomPositions.removeValue(forKey: element.id)
         log("Removed \(element.elementName)")
     }
 
     public func clearElements() {
         selectedElements.removeAll()
         atomNodes.values.forEach { $0.removeFromParentNode() }
-        atomNodes.removeAll()
+        atomNodes.removeAll(); atomPositions.removeAll()
         log("Cleared all elements")
     }
 
-    // MARK: — Point cloud atom rendering (matches web app style)
-    private func buildPointCloudAtom(_ element: ArcElement) {
+    // Rebuild all atoms when particle resolution changes
+    public func rebuildAllAtoms() {
+        let elements = selectedElements
+        clearElements()
+        for el in elements { addElement(el) }
+        log("Rebuilt \(elements.count) atoms @ \(ptsPerComponent) pts/component")
+    }
+
+    // MARK: — Physics-based positioning
+    // Atoms auto-space based on atomic radius, charge, and environment physics
+    // They repel each other so they never overlap — just like the web app
+    private func physicsPosition(for element: ArcElement, index: Int) -> SIMD3<Float> {
+        let gravity   = Float(physics.gravity)
+        let pressure  = Float(physics.pressure)
+        let temp      = Float(physics.temperature)
+
+        // Base atomic radius influences spacing
+        let atomicRadius = Float(element.neutrons + element.protons) * 0.04 + 0.8
+
+        // Place atoms in a spiral pattern, repelling from existing atoms
+        var candidate = spiralPosition(index: index, spacing: atomicRadius * 3.5)
+
+        // Apply physics offsets
+        // Higher gravity pulls atoms down
+        candidate.y -= gravity * 0.05
+        // Higher pressure compresses the arrangement
+        let pressureFactor = max(0.3, 1.0 - pressure * 0.005)
+        candidate.x *= pressureFactor
+        candidate.z *= pressureFactor
+        // Temperature adds thermal jitter
+        let thermalJitter = (temp - 72.0) * 0.002
+        candidate.x += Float.random(in: -thermalJitter...thermalJitter)
+        candidate.z += Float.random(in: -thermalJitter...thermalJitter)
+
+        // Repulsion from existing atoms — push away from neighbors
+        for (_, existingPos) in atomPositions {
+            let diff = candidate - existingPos
+            let dist = simd_length(diff)
+            let minDist = atomicRadius * 2.5
+            if dist < minDist && dist > 0.001 {
+                let push = (diff / dist) * (minDist - dist) * 0.5
+                candidate += push
+            }
+        }
+
+        return candidate
+    }
+
+    // Archimedean spiral for initial placement
+    private func spiralPosition(index: Int, spacing: Float) -> SIMD3<Float> {
+        if index == 0 { return SIMD3<Float>(0, 0, 0) }
+        let turns: Float = 0.618  // golden ratio turns
+        let angle = Float(index) * turns * 2 * .pi
+        let radius = sqrt(Float(index)) * spacing * 0.7
+        return SIMD3<Float>(cos(angle) * radius, 0, sin(angle) * radius)
+    }
+
+    // MARK: — Point cloud atom builder
+    // Each component (proton/neutron/electron) gets ptsPerComponent particles
+    private func buildPointCloudAtom(_ element: ArcElement, at position: SIMD3<Float>) {
         let root = SCNNode()
         root.name = "atomZ:\(element.id)"
+        root.position = SCNVector3(position.x, position.y, position.z)
 
-        // Position — spread out horizontally
-        let idx = Float(selectedElements.count - 1)
-        let spacing: Float = 5.0
-        let totalWidth = Float(max(1, selectedElements.count - 1)) * spacing
-        root.position = SCNVector3(
-            idx * spacing - totalWidth / 2,
-            0, 0)
+        let pts = ptsPerComponent  // e.g. 30 default
 
-        // Nucleus — point cloud sphere using instanced particles
-        let nucleusR = Float(element.neutrons) * 0.02 + 0.25
-        buildNucleusCloud(root: root, element: element, radius: nucleusR)
+        // ── Nucleus ──────────────────────────────────────────────────
+        // neutrons × pts + protons × pts points packed into nucleus sphere
+        let nucleusR = Float(element.neutrons + element.protons) * 0.018 + 0.22
+        let nucleusR_cg = CGFloat(nucleusR)
 
-        // Electron shells — orbital rings + point electrons
-        for (shellIdx, count) in element.electronOrbits.enumerated() {
-            let shellR = Float(shellIdx + 1) * 1.2 + nucleusR + 0.3
-            buildShellCloud(root: root, shellIdx: shellIdx, count: count,
-                           radius: shellR, color: UIColor(element.category.color))
+        // Proton cloud — pts per proton
+        let totalProtonPts = element.protons * pts
+        let protonPts = fibonacciSphere(n: totalProtonPts, radius: nucleusR * 0.75)
+        buildParticleCloud(parent: root, points: protonPts, ptSize: 0.011,
+            diffuse: UIColor(red:1.0, green:0.42, blue:0.08, alpha:1),
+            emissive: UIColor(red:0.4, green:0.15, blue:0.0, alpha:1))
+
+        // Neutron cloud — pts per neutron
+        let totalNeutronPts = element.neutrons * pts
+        let neutronPts = fibonacciSphere(n: totalNeutronPts, radius: nucleusR * 0.85)
+        buildParticleCloud(parent: root, points: neutronPts, ptSize: 0.013,
+            diffuse: UIColor(red:0.55, green:0.55, blue:0.65, alpha:1),
+            emissive: UIColor(red:0.15, green:0.15, blue:0.25, alpha:1))
+
+        // Nucleus glow
+        let glow = SCNSphere(radius: nucleusR_cg)
+        glow.firstMaterial?.diffuse.contents  = UIColor(red:1.0, green:0.5, blue:0.1, alpha:0.07)
+        glow.firstMaterial?.emission.contents = UIColor(red:1.0, green:0.4, blue:0.0, alpha:0.10)
+        glow.firstMaterial?.isDoubleSided = true
+        glow.firstMaterial?.lightingModel = .constant
+        root.addChildNode(SCNNode(geometry: glow))
+
+        // ── Electron shells ───────────────────────────────────────────
+        // electrons × pts points distributed across orbital shells
+        let catColor = UIColor(element.category.color)
+
+        for (shellIdx, electronCount) in element.electronOrbits.enumerated() {
+            let shellR = Float(shellIdx + 1) * 1.15 + nucleusR + 0.25
+            let shellR_cg = CGFloat(shellR)
+
+            // Orbital ring
+            let torus = SCNTorus(ringRadius: shellR_cg, pipeRadius: 0.007)
+            torus.firstMaterial?.diffuse.contents  = catColor.withAlphaComponent(0.20)
+            torus.firstMaterial?.emission.contents = catColor.withAlphaComponent(0.08)
+            torus.firstMaterial?.lightingModel = .constant
+            let torusNode = SCNNode(geometry: torus)
+            // Each shell tilted differently for 3D look
+            torusNode.eulerAngles = SCNVector3(
+                Float.pi/2 + Float(shellIdx) * 0.28,
+                Float(shellIdx) * 0.52,
+                Float(shellIdx) * 0.18)
+            root.addChildNode(torusNode)
+
+            // Electron point cloud — electronCount × pts points on this shell
+            let totalElectronPts = electronCount * pts
+            let ePts = shellSphere(n: totalElectronPts, radius: shellR)
+            buildParticleCloud(parent: torusNode, points: ePts, ptSize: 0.020,
+                diffuse: catColor, emissive: catColor.withAlphaComponent(0.5))
+
+            // Orbital animation — inner shells faster
+            let period = Double(2.2 + Float(shellIdx) * 0.6)
+            torusNode.runAction(SCNAction.repeatForever(
+                SCNAction.rotateBy(x: 0, y: CGFloat.pi*2, z: 0, duration: period)))
         }
 
         // Atom label
         let text = SCNText(string: element.elementSymbol, extrusionDepth: 0.01)
-        text.font = UIFont.systemFont(ofSize: 0.4, weight: .bold)
-        text.firstMaterial?.diffuse.contents = UIColor.white
-        text.firstMaterial?.emission.contents = UIColor(red:0.4, green:0.9, blue:1.0, alpha:0.5)
-        let labelNode = SCNNode(geometry: text)
-        let (minB, maxB) = text.boundingBox
-        let tw = maxB.x - minB.x
-        labelNode.position = SCNVector3(-tw/2, -(nucleusR + 0.8), 0)
-        labelNode.scale = SCNVector3(0.8, 0.8, 0.8)
-        root.addChildNode(labelNode)
+        text.font = UIFont.systemFont(ofSize: 0.35, weight: .bold)
+        text.firstMaterial?.diffuse.contents  = UIColor.white
+        text.firstMaterial?.emission.contents = UIColor(red:0.3, green:0.8, blue:1.0, alpha:0.4)
+        text.firstMaterial?.lightingModel = .constant
+        let lbl = SCNNode(geometry: text)
+        let (mn, mx) = text.boundingBox
+        lbl.position = SCNVector3(-(mx.x-mn.x)/2, -(nucleusR + 0.7), 0)
+        lbl.scale = SCNVector3(0.75, 0.75, 0.75)
+        root.addChildNode(lbl)
 
         scene.rootNode.addChildNode(root)
         atomNodes[element.id] = root
     }
 
-    // Nucleus: dense point cloud sphere
-    private func buildNucleusCloud(root: SCNNode, element: ArcElement, radius: Float) {
-        let count = min(element.protons * 12 + element.neutrons * 8, 2000)
-        let positions = fibonacciSphere(n: count, radius: radius * 0.7)
+    // Create a node of tiny spheres at given positions
+    private func buildParticleCloud(parent: SCNNode, points: [SIMD3<Float>],
+                                     ptSize: CGFloat, diffuse: UIColor, emissive: UIColor) {
+        let geo = SCNSphere(radius: ptSize)
+        geo.segmentCount = 4   // low poly for performance
+        geo.firstMaterial?.diffuse.contents  = diffuse
+        geo.firstMaterial?.emission.contents = emissive
+        geo.firstMaterial?.lightingModel = .constant
 
-        // Proton cloud (orange-red)
-        let protonGeo = SCNSphere(radius: 0.012)
-        protonGeo.firstMaterial?.diffuse.contents = UIColor(red:1.0, green:0.45, blue:0.1, alpha:1)
-        protonGeo.firstMaterial?.emission.contents = UIColor(red:0.5, green:0.2, blue:0.0, alpha:1)
-        protonGeo.firstMaterial?.lightingModel = .constant
-
-        let neutronGeo = SCNSphere(radius: 0.014)
-        neutronGeo.firstMaterial?.diffuse.contents = UIColor(red:0.6, green:0.6, blue:0.7, alpha:1)
-        neutronGeo.firstMaterial?.emission.contents = UIColor(red:0.2, green:0.2, blue:0.3, alpha:1)
-        neutronGeo.firstMaterial?.lightingModel = .constant
-
-        for (i, pos) in positions.enumerated() {
-            let geo = i % 2 == 0 ? protonGeo : neutronGeo
+        // Use SCNInstancedGeometry pattern via multiple nodes
+        // Group under a container to minimize scene graph overhead
+        let container = SCNNode()
+        for pt in points {
             let n = SCNNode(geometry: geo)
-            n.position = SCNVector3(pos.x, pos.y, pos.z)
-            root.addChildNode(n)
+            n.position = SCNVector3(pt.x, pt.y, pt.z)
+            container.addChildNode(n)
         }
-
-        // Nucleus glow sphere
-        let glowGeo = SCNSphere(radius: CGFloat(radius))
-        glowGeo.firstMaterial?.diffuse.contents = UIColor(red:1.0, green:0.5, blue:0.1, alpha:0.08)
-        glowGeo.firstMaterial?.emission.contents = UIColor(red:1.0, green:0.4, blue:0.0, alpha:0.12)
-        glowGeo.firstMaterial?.isDoubleSided = true
-        glowGeo.firstMaterial?.lightingModel = .constant
-        let glowNode = SCNNode(geometry: glowGeo)
-        root.addChildNode(glowNode)
+        parent.addChildNode(container)
     }
 
-    // Shell: orbital ring + point electrons
-    private func buildShellCloud(root: SCNNode, shellIdx: Int, count: Int,
-                                  radius: Float, color: UIColor) {
-        // Orbital ring (thin torus)
-        let torus = SCNTorus(ringRadius: CGFloat(radius), pipeRadius: 0.008)
-        torus.firstMaterial?.diffuse.contents = color.withAlphaComponent(0.25)
-        torus.firstMaterial?.emission.contents = color.withAlphaComponent(0.12)
-        torus.firstMaterial?.lightingModel = .constant
-        let torusNode = SCNNode(geometry: torus)
-        // Tilt each shell slightly differently
-        torusNode.eulerAngles = SCNVector3(
-            Float.pi/2 + Float(shellIdx) * 0.3,
-            Float(shellIdx) * 0.5, 0)
-        root.addChildNode(torusNode)
-
-        // Point electrons
-        let eGeo = SCNSphere(radius: 0.025)
-        eGeo.firstMaterial?.diffuse.contents = color
-        eGeo.firstMaterial?.emission.contents = color
-        eGeo.firstMaterial?.lightingModel = .constant
-
-        for i in 0..<count {
-            let angle = Float(i) / Float(max(count,1)) * 2 * .pi
-            let eNode = SCNNode(geometry: eGeo)
-            eNode.name = "electron"
-            eNode.position = SCNVector3(
-                cos(angle) * radius,
-                0,
-                sin(angle) * radius)
-            // Orbital animation
-            let speed = Double(1.5 + Float(shellIdx) * 0.4 + Float(i) * 0.05)
-            let orbit = SCNAction.rotateBy(x: 0, y: CGFloat.pi*2, z: 0, duration: speed)
-            eNode.runAction(SCNAction.repeatForever(orbit))
-            torusNode.addChildNode(eNode)
-        }
-    }
-
-    // Fibonacci sphere point distribution
+    // Fibonacci sphere — evenly distributed points on sphere surface
     private func fibonacciSphere(n: Int, radius: Float) -> [SIMD3<Float>] {
-        (0..<n).map { i in
+        guard n > 0 else { return [] }
+        return (0..<n).map { i in
             let theta = Float.pi * (3.0 - sqrt(5.0)) * Float(i)
-            let y = (1.0 - Float(i)/Float(max(n-1,1))*2.0) * radius
-            let r = sqrt(radius*radius - y*y)
+            let y = (1.0 - Float(i) / Float(max(n-1,1)) * 2.0) * radius
+            let r = sqrt(max(0, radius*radius - y*y))
             return SIMD3<Float>(cos(theta)*r, y, sin(theta)*r)
+        }
+    }
+
+    // Shell sphere — points distributed on spherical shell surface
+    private func shellSphere(n: Int, radius: Float) -> [SIMD3<Float>] {
+        guard n > 0 else { return [] }
+        let jitter: Float = radius * 0.08  // slight random spread
+        return (0..<n).map { i in
+            let theta = Float.pi * (3.0 - sqrt(5.0)) * Float(i)
+            let phi   = acos(1.0 - 2.0 * Float(i) / Float(max(n-1,1)))
+            let r = radius + Float.random(in: -jitter...jitter)
+            return SIMD3<Float>(
+                sin(phi)*cos(theta)*r,
+                cos(phi)*r,
+                sin(phi)*sin(theta)*r)
         }
     }
 
@@ -251,7 +295,7 @@ public final class ArcLabViewModel: ObservableObject {
         log("CFD stopped")
     }
 
-    public func exportGLB() -> URL? { SCNExportHelper().exportScene(scene, name: "ArcLake_Export") }
+    public func exportGLB() -> URL? { SCNExportHelper().exportScene(scene, name:"ArcLake_Export") }
 
     public func log(_ message: String) {
         logEntries.insert(LogEntry(message: message), at: 0)
@@ -259,19 +303,14 @@ public final class ArcLabViewModel: ObservableObject {
     }
 
     public func openProbe(for element: ArcElement) {
-        probeTarget = element
-        isOrbitDeltaVisible = true
+        probeTarget = element; isOrbitDeltaVisible = true
     }
 }
 
 // MARK: — Supporting types
 public enum ArcTab: String, CaseIterable {
-    case molecule = "Molecule"
-    case physics  = "Physics"
-    case math     = "Math"
-    case arc      = "Arc"
-    case env      = "Env"
-    case log      = "Log"
+    case molecule="Molecule", physics="Physics", math="Math"
+    case arc="Arc", env="Env", log="Log"
     var icon: String {
         switch self {
         case .molecule: return "atom"
@@ -297,8 +336,4 @@ public struct AlloyComponent: Identifiable {
     public var element: ArcElement
     public var percentage: Double
     public var castingOrder: Int
-}
-
-private extension UIColor {
-    convenience init(_ c: UIColor) { self.init(cgColor: c.cgColor) }
 }
