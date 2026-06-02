@@ -265,22 +265,3 @@ struct AtomDot: View {
         .shadow(color: atom.color.opacity(isSelected ? 0.6 : 0.2), radius: 6)
     }
 }
-
-private extension ArcElement.ElementCategory {
-    var color: UIColor {
-        switch self {
-        case .alkaliMetal:     return UIColor(red:1.0,  green:0.4,  blue:0.4,  alpha:1)
-        case .alkalineEarth:   return UIColor(red:1.0,  green:0.7,  blue:0.3,  alpha:1)
-        case .transitionMetal: return UIColor(red:0.35, green:0.65, blue:1.0,  alpha:1)
-        case .postTransition:  return UIColor(red:0.4,  green:0.85, blue:0.6,  alpha:1)
-        case .metalloid:       return UIColor(red:0.65, green:0.85, blue:0.35, alpha:1)
-        case .nonmetal:        return UIColor(red:0.25, green:0.85, blue:0.85, alpha:1)
-        case .halogen:         return UIColor(red:0.85, green:0.55, blue:0.85, alpha:1)
-        case .nobleGas:        return UIColor(red:0.55, green:0.35, blue:1.0,  alpha:1)
-        case .lanthanide:      return UIColor(red:1.0,  green:0.45, blue:0.65, alpha:1)
-        case .actinide:        return UIColor(red:0.75, green:0.25, blue:0.5,  alpha:1)
-        case .superactinide:   return UIColor(red:0.5,  green:0.15, blue:0.75, alpha:1)
-        case .unknown:         return UIColor(red:0.45, green:0.45, blue:0.45, alpha:1)
-        }
-    }
-}
