@@ -53,7 +53,7 @@ jobs:
           echo "$PROVISIONING_PROFILE_BASE64" | base64 --decode > "$PP_PATH"
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           PP_UUID=$(security cms -D -i "$PP_PATH" 2>/dev/null | \
-            plutil -extract UUID raw - 2>/dev/null || echo "74e39f5b-d5eb-4d1d-857c-7c2dab810bd6")
+            plutil -extract UUID raw - 2>/dev/null || echo "4f27288c-6ada-4a8b-b93a-b42dec94a720")
           cp "$PP_PATH" ~/Library/MobileDevice/Provisioning\ Profiles/"$PP_UUID.mobileprovision"
           echo "PROFILE_UUID=$PP_UUID" >> $GITHUB_ENV
           echo "Profile UUID: $PP_UUID"
@@ -73,7 +73,7 @@ jobs:
 
       - name: Archive
         run: |
-          PP_FINAL="${PROFILE_UUID:-74e39f5b-d5eb-4d1d-857c-7c2dab810bd6}"
+          PP_FINAL="${PROFILE_UUID:-4f27288c-6ada-4a8b-b93a-b42dec94a720}"
           xcodebuild archive \
             -project ArcLake.xcodeproj \
             -scheme ArcLakeApp \
