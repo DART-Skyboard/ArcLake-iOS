@@ -51,7 +51,7 @@ targets:
         link: true
     settings:
       base:
-        PRODUCT_NAME: ArcLake
+        PRODUCT_NAME: "Arc Lake"
         PRODUCT_BUNDLE_IDENTIFIER: DART-Meadow-LLC.Cotharticren
         DEVELOPMENT_TEAM: L7AHWS9Q6V
         CODE_SIGN_STYLE: Manual
@@ -63,7 +63,7 @@ targets:
         ENABLE_USER_SCRIPT_SANDBOXING: NO
         SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
         TARGETED_DEVICE_FAMILY: "1,2"
-        CURRENT_PROJECT_VERSION: "3"
+        CURRENT_PROJECT_VERSION: "4"
         MARKETING_VERSION: "1.4.5"
       configs:
         Debug:
