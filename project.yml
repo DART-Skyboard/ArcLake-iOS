@@ -55,7 +55,7 @@ targets:
         DEVELOPMENT_TEAM: L7AHWS9Q6V
         CODE_SIGN_STYLE: Manual
         CODE_SIGN_IDENTITY: "iPhone Distribution"
-        PROVISIONING_PROFILE: "ARCLAKE_PROFILE_UUID"
+        PROVISIONING_PROFILE: "74e39f5b-d5eb-4d1d-857c-7c2dab810bd6"
         PROVISIONING_PROFILE_SPECIFIER: "ArcLakeGitHubFlow"
         SWIFT_VERSION: "5.9"
         CODE_SIGN_ENTITLEMENTS: Sources/ArcLakeApp/ArcLakeApp.entitlements
