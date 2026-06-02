@@ -23,30 +23,25 @@ public struct OrbitDeltaNodeView: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(element.elementName)
                         .font(.system(size: 12, weight: .bold, design: .monospaced))
-                        .foregroundColor(.white)
-                        .lineLimit(1)
+                        .foregroundColor(.white).lineLimit(1)
                     Text(element.category.rawValue)
                         .font(.system(size: 8, design: .monospaced))
-                        .foregroundColor(Color(element.category.color))
-                        .lineLimit(1)
+                        .foregroundColor(Color(element.category.color)).lineLimit(1)
                 }
                 Spacer(minLength: 4)
                 Button {
                     withAnimation(.spring()) { labVM.isOrbitDeltaVisible = false }
                 } label: {
                     Image(systemName: "xmark")
-                        .font(.caption)
-                        .foregroundColor(.white.opacity(0.5))
+                        .font(.caption).foregroundColor(.white.opacity(0.5))
                         .frame(width: 28, height: 28)
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 12).padding(.vertical, 8)
             .background(Color.white.opacity(0.05))
 
             Divider().background(themeVM.accent.opacity(0.2))
 
-            // Data rows — fixed width, no overflow
             ScrollView {
                 VStack(spacing: 0) {
                     probeRow("Z (Protons)",    "\(element.protons)",   .red)
@@ -59,7 +54,6 @@ public struct OrbitDeltaNodeView: View {
 
                     Divider().background(themeVM.accent.opacity(0.15)).padding(.vertical, 4)
 
-                    // Shells
                     HStack {
                         Text("Shells:")
                             .font(.system(size: 9, design: .monospaced))
@@ -72,14 +66,10 @@ public struct OrbitDeltaNodeView: View {
                         HStack(spacing: 4) {
                             Text(idx < shellNames.count ? shellNames[idx] : "?")
                                 .font(.system(size: 9, weight: .bold, design: .monospaced))
-                                .foregroundColor(themeVM.accent)
-                                .frame(width: 14)
-                            // Dot representation — max 18 dots then show count
-                            let showDots = min(count, 14)
+                                .foregroundColor(themeVM.accent).frame(width: 14)
                             HStack(spacing: 2) {
-                                ForEach(0..<showDots, id: \.self) { _ in
-                                    Circle().fill(Color.cyan.opacity(0.7))
-                                        .frame(width: 5, height: 5)
+                                ForEach(0..<min(count, 14), id: \.self) { _ in
+                                    Circle().fill(Color.cyan.opacity(0.7)).frame(width: 5, height: 5)
                                 }
                                 if count > 14 {
                                     Text("+\(count-14)")
@@ -93,8 +83,7 @@ public struct OrbitDeltaNodeView: View {
                                 .foregroundColor(.white.opacity(0.4))
                                 .frame(width: 20, alignment: .trailing)
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 2)
+                        .padding(.horizontal, 12).padding(.vertical, 2)
                     }
                 }
             }
@@ -102,7 +91,6 @@ public struct OrbitDeltaNodeView: View {
 
             Divider().background(themeVM.accent.opacity(0.2))
 
-            // Actions
             HStack(spacing: 8) {
                 Button {
                     labVM.removeElement(element)
@@ -113,19 +101,22 @@ public struct OrbitDeltaNodeView: View {
                         .foregroundColor(.red.opacity(0.8))
                 }
                 Spacer()
+                // ── FIX: actually add to mol canvas ──────────────
                 Button {
+                    // Add this element to mol canvas at center position
+                    labVM.addToMolCanvas(element: element)
                     labVM.isMolCanvasVisible = true
                     labVM.isOrbitDeltaVisible = false
+                    labVM.log("Added \(element.elementSymbol) to Mol Canvas")
                 } label: {
-                    Label("Canvas", systemImage: "scribble")
+                    Label("To Canvas", systemImage: "scribble")
                         .font(.system(size: 9, design: .monospaced))
                         .foregroundColor(themeVM.accent)
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 12).padding(.vertical, 8)
         }
-        .frame(width: 230)   // fixed width — no overflow
+        .frame(width: 230)
         .background(.ultraThinMaterial)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12)
@@ -137,18 +128,12 @@ public struct OrbitDeltaNodeView: View {
 
     private func probeRow(_ label: String, _ value: String, _ color: Color) -> some View {
         HStack {
-            Text(label)
-                .font(.system(size: 9, design: .monospaced))
-                .foregroundColor(.white.opacity(0.4))
-                .frame(width: 70, alignment: .leading)
+            Text(label).font(.system(size: 9, design: .monospaced))
+                .foregroundColor(.white.opacity(0.4)).frame(width: 70, alignment: .leading)
             Spacer()
-            Text(value)
-                .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                .foregroundColor(color)
-                .lineLimit(1)
-                .frame(width: 110, alignment: .trailing)
+            Text(value).font(.system(size: 9, weight: .semibold, design: .monospaced))
+                .foregroundColor(color).lineLimit(1).frame(width: 110, alignment: .trailing)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 2)
+        .padding(.horizontal, 12).padding(.vertical, 2)
     }
 }
