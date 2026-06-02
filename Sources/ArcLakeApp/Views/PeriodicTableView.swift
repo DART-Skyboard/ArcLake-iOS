@@ -152,7 +152,7 @@ public struct PeriodicTableView: View {
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
                 .background(selectedCategory == category ?
-                    (category.map { Color(category!.color) } ?? themeVM.accent) :
+                    (category != nil ? Color(category!.color) : themeVM.accent) :
                     Color.white.opacity(0.1))
                 .clipShape(Capsule())
         }
@@ -202,24 +202,5 @@ struct ElementCard: View {
             return provider
         }
         .animation(.spring(response: 0.2), value: isDragging)
-    }
-}
-
-private extension ArcElement.ElementCategory {
-    var color: UIColor {
-        switch self {
-        case .alkaliMetal:     return UIColor(red: 1.0,  green: 0.4,  blue: 0.4,  alpha: 1)
-        case .alkalineEarth:   return UIColor(red: 1.0,  green: 0.7,  blue: 0.3,  alpha: 1)
-        case .transitionMetal: return UIColor(red: 0.4,  green: 0.7,  blue: 1.0,  alpha: 1)
-        case .postTransition:  return UIColor(red: 0.4,  green: 0.9,  blue: 0.6,  alpha: 1)
-        case .metalloid:       return UIColor(red: 0.7,  green: 0.9,  blue: 0.4,  alpha: 1)
-        case .nonmetal:        return UIColor(red: 0.3,  green: 0.9,  blue: 0.9,  alpha: 1)
-        case .halogen:         return UIColor(red: 0.9,  green: 0.6,  blue: 0.9,  alpha: 1)
-        case .nobleGas:        return UIColor(red: 0.6,  green: 0.4,  blue: 1.0,  alpha: 1)
-        case .lanthanide:      return UIColor(red: 1.0,  green: 0.5,  blue: 0.7,  alpha: 1)
-        case .actinide:        return UIColor(red: 0.8,  green: 0.3,  blue: 0.5,  alpha: 1)
-        case .superactinide:   return UIColor(red: 0.5,  green: 0.2,  blue: 0.8,  alpha: 1)
-        case .unknown:         return UIColor(red: 0.5,  green: 0.5,  blue: 0.5,  alpha: 1)
-        }
     }
 }
