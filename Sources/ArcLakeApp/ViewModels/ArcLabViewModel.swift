@@ -183,7 +183,7 @@ public final class ArcLabViewModel: ObservableObject {
 
         // ── Electron shells ───────────────────────────────────────────
         // electrons × pts points distributed across orbital shells
-        let catColor = UIColor(element.category.color)
+        let catColor = element.category.color
 
         for (shellIdx, electronCount) in element.electronOrbits.enumerated() {
             let shellR = Float(shellIdx + 1) * 1.15 + nucleusR + 0.25
