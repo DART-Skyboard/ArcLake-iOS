@@ -7,200 +7,263 @@ public struct PeriodicTableView: View {
     @State private var searchText = ""
     @State private var selectedCategory: ArcElement.ElementCategory? = nil
 
-    // Standard periodic table grid positions [symbol: (row, col)]
-    private static let gridPositions: [String: (Int, Int)] = {
-        var pos: [String: (Int, Int)] = [:]
-        // Period 1
-        pos["H"]  = (1,1);  pos["He"] = (1,18)
-        // Period 2
-        pos["Li"] = (2,1);  pos["Be"] = (2,2)
-        pos["B"]  = (2,13); pos["C"]  = (2,14); pos["N"]  = (2,15)
-        pos["O"]  = (2,16); pos["F"]  = (2,17); pos["Ne"] = (2,18)
-        // Period 3
-        pos["Na"] = (3,1);  pos["Mg"] = (3,2)
-        pos["Al"] = (3,13); pos["Si"] = (3,14); pos["P"]  = (3,15)
-        pos["S"]  = (3,16); pos["Cl"] = (3,17); pos["Ar"] = (3,18)
-        // Period 4
-        pos["K"]  = (4,1);  pos["Ca"] = (4,2)
-        pos["Sc"] = (4,3);  pos["Ti"] = (4,4);  pos["V"]  = (4,5)
-        pos["Cr"] = (4,6);  pos["Mn"] = (4,7);  pos["Fe"] = (4,8)
-        pos["Co"] = (4,9);  pos["Ni"] = (4,10); pos["Cu"] = (4,11)
-        pos["Zn"] = (4,12); pos["Ga"] = (4,13); pos["Ge"] = (4,14)
-        pos["As"] = (4,15); pos["Se"] = (4,16); pos["Br"] = (4,17); pos["Kr"] = (4,18)
-        // Period 5
-        pos["Rb"] = (5,1);  pos["Sr"] = (5,2)
-        pos["Y"]  = (5,3);  pos["Zr"] = (5,4);  pos["Nb"] = (5,5)
-        pos["Mo"] = (5,6);  pos["Tc"] = (5,7);  pos["Ru"] = (5,8)
-        pos["Rh"] = (5,9);  pos["Pd"] = (5,10); pos["Ag"] = (5,11)
-        pos["Cd"] = (5,12); pos["In"] = (5,13); pos["Sn"] = (5,14)
-        pos["Sb"] = (5,15); pos["Te"] = (5,16); pos["I"]  = (5,17); pos["Xe"] = (5,18)
-        // Period 6
-        pos["Cs"] = (6,1);  pos["Ba"] = (6,2);  pos["La"] = (8,3)
-        pos["Hf"] = (6,4);  pos["Ta"] = (6,5);  pos["W"]  = (6,6)
-        pos["Re"] = (6,7);  pos["Os"] = (6,8);  pos["Ir"] = (6,9)
-        pos["Pt"] = (6,10); pos["Au"] = (6,11); pos["Hg"] = (6,12)
-        pos["Tl"] = (6,13); pos["Pb"] = (6,14); pos["Bi"] = (6,15)
-        pos["Po"] = (6,16); pos["At"] = (6,17); pos["Rn"] = (6,18)
-        // Period 7
-        pos["Fr"] = (7,1);  pos["Ra"] = (7,2)
-        pos["Rf"] = (7,4);  pos["Db"] = (7,5);  pos["Sg"] = (7,6)
-        pos["Bh"] = (7,7);  pos["Hs"] = (7,8);  pos["Mt"] = (7,9)
-        pos["Ds"] = (7,10); pos["Rg"] = (7,11); pos["Cn"] = (7,12)
-        pos["Nh"] = (7,13); pos["Fl"] = (7,14); pos["Mc"] = (7,15)
-        pos["Lv"] = (7,16); pos["Ts"] = (7,17); pos["Og"] = (7,18)
-        return pos
+    // Standard PT grid: 18 columns × 10 periods (+ lanthanide/actinide rows)
+    // Each cell is (period, group) — 0 means empty spacer
+    private static let COLS = 18
+    // Build a 10×18 grid — row 0 = period 1 ... row 9 = period 10
+    // Lanthanides in row 7 (period 8), Actinides in row 8 (period 9)
+    private static let gridMap: [[Int]] = {
+        // map [period][group] → atomicNumber
+        var m = Array(repeating: Array(repeating: 0, count: 19), count: 11)
+        for entry in periodicTableLayout {
+            if entry.period <= 10 && entry.group <= 18 {
+                m[entry.period][entry.group] = entry.z
+            }
+        }
+        // Return rows 1-10, cols 1-18
+        return (1...10).map { p in (1...18).map { g in m[p][g] } }
     }()
 
-    private var filteredElements: [ArcElement] {
-        ElementStore.shared.elements.filter { el in
-            let matchSearch = searchText.isEmpty ||
-                el.elementName.localizedCaseInsensitiveContains(searchText) ||
-                el.elementSymbol.localizedCaseInsensitiveContains(searchText) ||
-                String(el.protons).contains(searchText)
-            let matchCategory = selectedCategory == nil || el.category == selectedCategory
-            return matchSearch && matchCategory
-        }
+    private var elementMap: [Int: ArcElement] {
+        Dictionary(uniqueKeysWithValues: ElementStore.shared.elements.map { ($0.id, $0) })
+    }
+
+    private func matchesFilter(_ el: ArcElement) -> Bool {
+        let matchSearch = searchText.isEmpty ||
+            el.elementName.localizedCaseInsensitiveContains(searchText) ||
+            el.elementSymbol.localizedCaseInsensitiveContains(searchText) ||
+            "\(el.protons)".contains(searchText)
+        let matchCat = selectedCategory == nil || el.category == selectedCategory
+        return matchSearch && matchCat
     }
 
     public var body: some View {
-        VStack(spacing: 0) {
-            // Header
-            HStack {
-                Text("Periodic Table")
-                    .font(.system(.headline, design: .monospaced))
-                    .foregroundColor(themeVM.accent)
-                Spacer()
-                Button {
-                    withAnimation { labVM.isPeriodicTableVisible = false }
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundColor(.white.opacity(0.6))
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(Color.black.opacity(0.8))
-
-            // Search bar
-            HStack {
-                Image(systemName: "magnifyingglass")
-                    .foregroundColor(themeVM.accent.opacity(0.6))
-                TextField("Search element, symbol, Z...", text: $searchText)
-                    .textFieldStyle(.plain)
-                    .foregroundColor(.white)
-                    .font(.system(.caption, design: .monospaced))
-                if !searchText.isEmpty {
-                    Button { searchText = "" } label: {
+        GeometryReader { geo in
+            VStack(spacing: 0) {
+                // ── Header — always visible, close button always reachable ──
+                HStack {
+                    Image(systemName: "tablecells")
+                        .foregroundColor(themeVM.accent)
+                    Text("Periodic Table")
+                        .font(.system(.subheadline, design: .monospaced, weight: .bold))
+                        .foregroundColor(themeVM.accent)
+                    Spacer()
+                    Button {
+                        withAnimation(.spring()) {
+                            labVM.isPeriodicTableVisible = false
+                        }
+                    } label: {
                         Image(systemName: "xmark.circle.fill")
-                            .foregroundColor(.white.opacity(0.4))
-                    }
-                }
-            }
-            .padding(8)
-            .background(Color.white.opacity(0.05))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-
-            // Category filter
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    categoryChip(nil, label: "All")
-                    ForEach(ArcElement.ElementCategory.allCases, id: \.self) { cat in
-                        categoryChip(cat, label: cat.rawValue.components(separatedBy: " ").first ?? cat.rawValue)
+                            .font(.title3)
+                            .foregroundColor(.white.opacity(0.8))
+                            .frame(width: 44, height: 44)  // large tap target
                     }
                 }
                 .padding(.horizontal, 12)
-            }
-            .padding(.vertical, 4)
+                .padding(.vertical, 8)
+                .background(Color.black.opacity(0.9))
 
-            // Toggle: grid vs list
-            ScrollView {
-                LazyVGrid(columns: Array(repeating: GridItem(.fixed(52), spacing: 3), count: 9),
-                          spacing: 3) {
-                    ForEach(filteredElements) { element in
-                        ElementCard(element: element)
-                            .onTapGesture {
-                                labVM.addElement(element)
-                                labVM.log("Selected \(element.elementSymbol) from periodic table")
-                            }
+                // ── Search ──
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundColor(themeVM.accent.opacity(0.6))
+                        .font(.caption)
+                    TextField("Search element, symbol, Z...", text: $searchText)
+                        .textFieldStyle(.plain)
+                        .foregroundColor(.white)
+                        .font(.system(.caption, design: .monospaced))
+                    if !searchText.isEmpty {
+                        Button { searchText = "" } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.white.opacity(0.4))
+                                .font(.caption)
+                        }
                     }
                 }
                 .padding(8)
+                .background(Color.white.opacity(0.06))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+
+                // ── Category filter ──
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 5) {
+                        categoryChip(nil, label: "All")
+                        ForEach(ArcElement.ElementCategory.allCases, id: \.self) { cat in
+                            categoryChip(cat, label: shortName(cat))
+                        }
+                    }
+                    .padding(.horizontal, 10)
+                }
+                .padding(.vertical, 3)
+
+                // ── Periodic table grid — scrollable ──
+                ScrollView([.horizontal, .vertical], showsIndicators: false) {
+                    let cellSize: CGFloat = 44
+                    let spacing: CGFloat = 2
+
+                    VStack(spacing: spacing) {
+                        ForEach(0..<Self.gridMap.count, id: \.self) { rowIdx in
+                            // Add separator row before lanthanides (row 7) and actinides (row 8)
+                            if rowIdx == 7 {
+                                Divider()
+                                    .background(themeVM.accent.opacity(0.2))
+                                    .padding(.vertical, 2)
+                            }
+                            HStack(spacing: spacing) {
+                                ForEach(0..<Self.COLS, id: \.self) { colIdx in
+                                    let z = Self.gridMap[rowIdx][colIdx]
+                                    if z == 0 {
+                                        // Empty spacer cell
+                                        Rectangle()
+                                            .fill(Color.clear)
+                                            .frame(width: cellSize, height: cellSize)
+                                    } else if let el = elementMap[z] {
+                                        let dimmed = !matchesFilter(el) &&
+                                            (!searchText.isEmpty || selectedCategory != nil)
+                                        PTCell(element: el, size: cellSize, dimmed: dimmed)
+                                            .onTapGesture {
+                                                labVM.addElement(el)
+                                                labVM.log("Added \(el.elementSymbol) from periodic table")
+                                            }
+                                            .onDrag {
+                                                NSItemProvider(object: el.elementSymbol as NSString)
+                                            }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    .padding(8)
+                }
+                .frame(maxHeight: .infinity)
+
+                // ── Legend ──
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(ArcElement.ElementCategory.allCases, id: \.self) { cat in
+                            HStack(spacing: 3) {
+                                Circle()
+                                    .fill(Color(cat.color))
+                                    .frame(width: 8, height: 8)
+                                Text(shortName(cat))
+                                    .font(.system(size: 8, design: .monospaced))
+                                    .foregroundColor(.white.opacity(0.5))
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 10)
+                }
+                .padding(.vertical, 4)
+                .background(Color.black.opacity(0.5))
             }
+            .background(Color(red:0.04, green:0.06, blue:0.1).opacity(0.97))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(themeVM.accent.opacity(0.3), lineWidth: 0.5)
+            )
+            // ── CRITICAL: constrain to safe screen bounds ──
+            .frame(
+                width: min(geo.size.width, UIScreen.main.bounds.width) - 8,
+                height: min(geo.size.height, UIScreen.main.bounds.height) - 16
+            )
+            .position(x: geo.size.width / 2, y: geo.size.height / 2)
+            .shadow(color: themeVM.accent.opacity(0.15), radius: 16)
         }
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(themeVM.accent.opacity(0.3), lineWidth: 0.5)
-        )
-        .padding()
-        .frame(maxHeight: UIScreen.main.bounds.height * 0.75)
-        .shadow(color: themeVM.accent.opacity(0.2), radius: 20)
+        .ignoresSafeArea(.keyboard)
     }
 
-    private func categoryChip(_ category: ArcElement.ElementCategory?, label: String) -> some View {
+    private func categoryChip(_ category: ArcElement.ElementCategory?,
+                               label: String) -> some View {
         Button {
             withAnimation(.easeInOut(duration: 0.15)) {
-                selectedCategory = category
+                selectedCategory = (selectedCategory == category) ? nil : category
             }
         } label: {
             Text(label)
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundColor(selectedCategory == category ? .black : .white.opacity(0.7))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(selectedCategory == category ?
-                    (category != nil ? Color(category!.color) : themeVM.accent) :
-                    Color.white.opacity(0.1))
+                .font(.system(size: 9, design: .monospaced))
+                .foregroundColor(selectedCategory == category ? .black : .white.opacity(0.6))
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(
+                    selectedCategory == category ?
+                        (category != nil ? Color(category!.color) : themeVM.accent) :
+                        Color.white.opacity(0.08)
+                )
                 .clipShape(Capsule())
+        }
+    }
+
+    private func shortName(_ cat: ArcElement.ElementCategory) -> String {
+        switch cat {
+        case .alkaliMetal:     return "Alkali"
+        case .alkalineEarth:   return "Alkaline"
+        case .transitionMetal: return "Transition"
+        case .postTransition:  return "Post-Trans"
+        case .metalloid:       return "Metalloid"
+        case .nonmetal:        return "Nonmetal"
+        case .halogen:         return "Halogen"
+        case .nobleGas:        return "Noble Gas"
+        case .lanthanide:      return "Lanthanide"
+        case .actinide:        return "Actinide"
+        case .superactinide:   return "Superact."
+        case .unknown:         return "Unknown"
         }
     }
 }
 
-// MARK: — Element Card with drag support
-struct ElementCard: View {
+// MARK: — Single PT cell
+struct PTCell: View {
     let element: ArcElement
-    @EnvironmentObject var labVM: ArcLabViewModel
-    @EnvironmentObject var themeVM: ArcThemeViewModel
-    @State private var isDragging = false
-
-    var catColor: Color { Color(element.category.color) }
+    let size: CGFloat
+    let dimmed: Bool
 
     var body: some View {
-        VStack(spacing: 1) {
-            Text(String(element.protons))
-                .font(.system(size: 7, design: .monospaced))
-                .foregroundColor(.white.opacity(0.5))
-            Text(element.elementSymbol)
-                .font(.system(size: 14, weight: .bold, design: .monospaced))
-                .foregroundColor(.white)
-            Text(element.elementName.prefix(6))
-                .font(.system(size: 6, design: .monospaced))
-                .foregroundColor(.white.opacity(0.6))
-                .lineLimit(1)
-        }
-        .frame(width: 50, height: 58)
-        .background(
-            RoundedRectangle(cornerRadius: 4)
-                .fill(catColor.opacity(isDragging ? 0.5 : 0.2))
+        ZStack {
+            RoundedRectangle(cornerRadius: 3)
+                .fill(Color(element.category.color).opacity(dimmed ? 0.07 : 0.22))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 4)
-                        .stroke(catColor.opacity(0.6), lineWidth: 0.5)
+                    RoundedRectangle(cornerRadius: 3)
+                        .stroke(Color(element.category.color).opacity(dimmed ? 0.2 : 0.6),
+                                lineWidth: 0.5)
                 )
-        )
-        .scaleEffect(isDragging ? 1.1 : 1.0)
-        .shadow(color: catColor.opacity(isDragging ? 0.5 : 0), radius: 8)
-        // Drag provider — drag to 3D scene or mol canvas
-        .onDrag {
-            isDragging = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                isDragging = false
+
+            VStack(spacing: 0) {
+                Text("\(element.protons)")
+                    .font(.system(size: size * 0.16, design: .monospaced))
+                    .foregroundColor(.white.opacity(dimmed ? 0.2 : 0.5))
+                Text(element.elementSymbol)
+                    .font(.system(size: size * 0.28, weight: .bold, design: .monospaced))
+                    .foregroundColor(.white.opacity(dimmed ? 0.3 : 1.0))
+                    .minimumScaleFactor(0.6)
+                    .lineLimit(1)
+                Text(element.elementName.prefix(4))
+                    .font(.system(size: size * 0.14, design: .monospaced))
+                    .foregroundColor(.white.opacity(dimmed ? 0.15 : 0.55))
+                    .lineLimit(1)
             }
-            let provider = NSItemProvider(object: element.elementSymbol as NSString)
-            return provider
         }
-        .animation(.spring(response: 0.2), value: isDragging)
+        .frame(width: size, height: size)
+    }
+}
+
+private extension ArcElement.ElementCategory {
+    var color: UIColor {
+        switch self {
+        case .alkaliMetal:     return UIColor(red:1.0,  green:0.4,  blue:0.4,  alpha:1)
+        case .alkalineEarth:   return UIColor(red:1.0,  green:0.7,  blue:0.3,  alpha:1)
+        case .transitionMetal: return UIColor(red:0.35, green:0.65, blue:1.0,  alpha:1)
+        case .postTransition:  return UIColor(red:0.4,  green:0.85, blue:0.6,  alpha:1)
+        case .metalloid:       return UIColor(red:0.65, green:0.85, blue:0.35, alpha:1)
+        case .nonmetal:        return UIColor(red:0.25, green:0.85, blue:0.85, alpha:1)
+        case .halogen:         return UIColor(red:0.85, green:0.55, blue:0.85, alpha:1)
+        case .nobleGas:        return UIColor(red:0.55, green:0.35, blue:1.0,  alpha:1)
+        case .lanthanide:      return UIColor(red:1.0,  green:0.45, blue:0.65, alpha:1)
+        case .actinide:        return UIColor(red:0.75, green:0.25, blue:0.5,  alpha:1)
+        case .superactinide:   return UIColor(red:0.5,  green:0.15, blue:0.75, alpha:1)
+        case .unknown:         return UIColor(red:0.45, green:0.45, blue:0.45, alpha:1)
+        }
     }
 }
