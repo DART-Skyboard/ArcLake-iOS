@@ -79,38 +79,9 @@ struct SceneTabBar: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 2) {
                 ForEach(labVM.sceneTabs_data.indices, id: \.self) { i in
-                    SceneTabButton(index: i)
-                                .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                                .foregroundColor(labVM.activeTabIndex == i ?
-                                    themeVM.accent : .white.opacity(0.4))
-                            if labVM.sceneTabs_data.count > 1 {
-                                Button {
-                                    if labVM.sceneTabs_data.count > 1 {
-                                        labVM.sceneTabs.remove(at: i)
-                                        if labVM.activeTabIndex >= labVM.sceneTabs.count {
-                                            labVM.activeTabIndex = labVM.sceneTabs.count - 1
-                                        }
-                                    }
-                                } label: {
-                                    Image(systemName: "xmark")
-                                        .font(.system(size: 7))
-                                        .foregroundColor(.white.opacity(0.3))
-                                }
-                            }
-                        }
-                        .padding(.horizontal, 8).padding(.vertical, 4)
-                        .background(labVM.activeTabIndex == i ?
-                            themeVM.accent.opacity(0.12) : Color.white.opacity(0.04))
-                        .cornerRadius(5)
-                        .overlay(RoundedRectangle(cornerRadius: 5)
-                            .stroke(labVM.activeTabIndex == i ?
-                                themeVM.accent.opacity(0.4) : Color.clear, lineWidth: 0.5))
-                    }
+                    SceneTabPill(index: i)
                 }
-                // Add tab
-                Button {
-                    labVM.addSceneTab()
-                } label: {
+                Button { labVM.addSceneTab() } label: {
                     Image(systemName: "plus")
                         .font(.system(size: 10))
                         .foregroundColor(themeVM.accent)
@@ -122,8 +93,42 @@ struct SceneTabBar: View {
             .padding(.horizontal, 8).padding(.vertical, 4)
         }
         .background(Color.black.opacity(0.5))
-        .overlay(Rectangle().frame(height: 0.5).foregroundColor(themeVM.accent.opacity(0.2)), alignment: .bottom)
+        .overlay(Rectangle().frame(height: 0.5)
+            .foregroundColor(themeVM.accent.opacity(0.2)), alignment: .bottom)
     }
+}
+
+private struct SceneTabPill: View {
+    let index: Int
+    @EnvironmentObject var labVM: ArcLabViewModel
+    @EnvironmentObject var themeVM: ArcThemeViewModel
+
+    var isActive: Bool { labVM.activeTabIndex == index }
+    var name: String { labVM.sceneTabs_data[safe: index] ?? "" }
+    var isCFD: Bool { labVM.sceneTabsCFD[safe: index] ?? false }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            if isCFD { Circle().fill(Color.blue).frame(width: 5, height: 5) }
+            Text(name)
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundColor(isActive ? themeVM.accent : .white.opacity(0.4))
+            if labVM.sceneTabs_data.count > 1 {
+                Button { labVM.removeSceneTab(index) } label: {
+                    Image(systemName: "xmark").font(.system(size: 7))
+                        .foregroundColor(.white.opacity(0.3))
+                }
+            }
+        }
+        .padding(.horizontal, 8).padding(.vertical, 4)
+        .background(isActive ? themeVM.accent.opacity(0.12) : Color.white.opacity(0.04))
+        .cornerRadius(5)
+        .overlay(RoundedRectangle(cornerRadius: 5)
+            .stroke(isActive ? themeVM.accent.opacity(0.4) : Color.clear, lineWidth: 0.5))
+        .onTapGesture { labVM.switchTab(index) }
+    }
+}
+
 }
 
 // MARK: — HUD Bar
@@ -180,46 +185,5 @@ struct ArcHUDBar: View {
         }
         .padding(.horizontal, 14).padding(.vertical, 6)
         .background(.ultraThinMaterial)
-    }
-}
-
-// MARK: — Scene Tab Button (extracted to fix type-checker)
-private struct SceneTabButton: View {
-    let index: Int
-    @EnvironmentObject var labVM: ArcLabViewModel
-    @EnvironmentObject var themeVM: ArcThemeViewModel
-
-    var body: some View {
-        Button { labVM.switchTab(index) } label: {
-            HStack(spacing: 4) {
-                if (labVM.sceneTabsCFD[safe: index]) == true {
-                    Circle().fill(Color.blue).frame(width: 5, height: 5)
-                }
-                Text(labVM.sceneTabs_data[safe: index] ?? "")
-                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    .foregroundColor(labVM.activeTabIndex == index ?
-                        themeVM.accent : .white.opacity(0.4))
-                if labVM.sceneTabs_data.count > 1 {
-                    Button { labVM.removeSceneTab(index) } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 7))
-                            .foregroundColor(.white.opacity(0.3))
-                    }
-                }
-            }
-            .padding(.horizontal, 8).padding(.vertical, 4)
-            .background(labVM.activeTabIndex == index ?
-                themeVM.accent.opacity(0.12) : Color.white.opacity(0.04))
-            .cornerRadius(5)
-            .overlay(RoundedRectangle(cornerRadius: 5)
-                .stroke(labVM.activeTabIndex == index ?
-                    themeVM.accent.opacity(0.4) : Color.clear, lineWidth: 0.5))
-        }
-    }
-}
-
-private extension Array {
-    subscript(safe index: Int) -> Element? {
-        indices.contains(index) ? self[index] : nil
     }
 }
