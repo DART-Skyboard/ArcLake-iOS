@@ -272,8 +272,6 @@ extension ArcLabViewModel {
         molBonds.removeAll { ($0.fromId==from && $0.toId==to)||($0.fromId==to && $0.toId==from) }
         molBonds.append(MolBond(from: from, to: to, order: molBondMode, isDelta: true))
     }
-    var pendingMolAtom: (symbol: String, z: Int, color: UIColor)? {
-        get { MolCanvasState.shared.pendingAtom }
         set { MolCanvasState.shared.pendingAtom = newValue }
     }
 }
