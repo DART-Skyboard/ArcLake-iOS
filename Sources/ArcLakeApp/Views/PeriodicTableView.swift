@@ -37,7 +37,7 @@ public struct PeriodicTableView: View {
         return matchSearch && matchCat
     }
 
-    @EnvironmentObject var labVM: ArcLabViewModel
+    
 
     public var body: some View {
         GeometryReader { geo in

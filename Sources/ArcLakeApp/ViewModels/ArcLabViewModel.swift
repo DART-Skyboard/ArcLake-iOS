@@ -386,11 +386,6 @@ public final class ArcLabViewModel: ObservableObject {
 
     public func exportGLB() -> URL? { SCNExportHelper().exportScene(scene, name:"ArcLake_Export") }
 
-    public func rebuildGrid() {
-        // Grid is built in setupScene — this refreshes it
-        scene.rootNode.childNodes.filter { $0.name == "grid" }.forEach { $0.removeFromParentNode() }
-        if showGrid { addGridFloor() }
-    }
 
     public func log(_ message: String) {
         logEntries.insert(LogEntry(message: message), at: 0)

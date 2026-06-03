@@ -79,14 +79,7 @@ struct SceneTabBar: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 2) {
                 ForEach(labVM.sceneTabs_data.indices, id: \.self) { i in
-                    Button {
-                        labVM.switchTab(i)
-                    } label: {
-                        HStack(spacing: 4) {
-                            if labVM.sceneTabsCFD[safe: i] == true {
-                                Circle().fill(Color.blue).frame(width: 5, height: 5)
-                            }
-                            Text(labVM.sceneTabs_data[i])
+                    SceneTabButton(index: i)
                                 .font(.system(size: 10, weight: .semibold, design: .monospaced))
                                 .foregroundColor(labVM.activeTabIndex == i ?
                                     themeVM.accent : .white.opacity(0.4))
@@ -187,5 +180,46 @@ struct ArcHUDBar: View {
         }
         .padding(.horizontal, 14).padding(.vertical, 6)
         .background(.ultraThinMaterial)
+    }
+}
+
+// MARK: — Scene Tab Button (extracted to fix type-checker)
+private struct SceneTabButton: View {
+    let index: Int
+    @EnvironmentObject var labVM: ArcLabViewModel
+    @EnvironmentObject var themeVM: ArcThemeViewModel
+
+    var body: some View {
+        Button { labVM.switchTab(index) } label: {
+            HStack(spacing: 4) {
+                if (labVM.sceneTabsCFD[safe: index]) == true {
+                    Circle().fill(Color.blue).frame(width: 5, height: 5)
+                }
+                Text(labVM.sceneTabs_data[safe: index] ?? "")
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundColor(labVM.activeTabIndex == index ?
+                        themeVM.accent : .white.opacity(0.4))
+                if labVM.sceneTabs_data.count > 1 {
+                    Button { labVM.removeSceneTab(index) } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 7))
+                            .foregroundColor(.white.opacity(0.3))
+                    }
+                }
+            }
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            .background(labVM.activeTabIndex == index ?
+                themeVM.accent.opacity(0.12) : Color.white.opacity(0.04))
+            .cornerRadius(5)
+            .overlay(RoundedRectangle(cornerRadius: 5)
+                .stroke(labVM.activeTabIndex == index ?
+                    themeVM.accent.opacity(0.4) : Color.clear, lineWidth: 0.5))
+        }
+    }
+}
+
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }
