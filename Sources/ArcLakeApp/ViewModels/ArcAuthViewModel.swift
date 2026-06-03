@@ -29,7 +29,7 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
         isSignedIn = true
         username   = "Guest"
         error      = nil
-        Task { await UserVaultService.shared.setup(githubUsername: nil) }
+        Task { await ArcVaultService.shared.setup(githubUsername: nil) }
     }
 
     // MARK: — Sign in with Apple
@@ -50,7 +50,7 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
         KeychainHelper.save(key: "arc_apple_user_id",      value: account.id)
         KeychainHelper.save(key: "arc_apple_display_name", value: account.displayName)
         isSignedIn = true; isGuest = false
-        Task { await UserVaultService.shared.setup(githubUsername: githubConnected ? githubUsername : nil) }
+        Task { await ArcVaultService.shared.setup(githubUsername: githubConnected ? githubUsername : nil) }
     }
 
     public func restoreSession() {
@@ -62,13 +62,13 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
                     self?.appleUserId = uid
                     self?.isSignedIn  = true
                     self?.username    = KeychainHelper.load(key: "arc_apple_display_name") ?? "User"
-                    Task { await UserVaultService.shared.setup(githubUsername: self?.githubUsername) }
+                    Task { await ArcVaultService.shared.setup(githubUsername: self?.githubUsername) }
                 }
             }
         }
         // Restore GitHub
         if let pat = KeychainHelper.load(key: "arc_github_pat"), !pat.isEmpty {
-            Task { await GitHubClient.shared.setToken(pat) }
+            Task { await ArcGitHubClient.shared.setToken(pat) }
             githubConnected = true
             githubUsername  = KeychainHelper.load(key: "arc_github_username") ?? ""
         }
@@ -79,7 +79,7 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
     public func startGitHubAuth() async {
         error = nil
         do {
-            let flow = try await GitHubClient.shared.startDeviceFlow(clientId: githubClientId)
+            let flow = try await ArcGitHubClient.shared.startDeviceFlow(clientId: githubClientId)
             deviceFlowCode = ArcDeviceFlowDisplay(
                 userCode: flow.userCode,
                 verificationUrl: flow.verificationUri,
@@ -95,18 +95,18 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
         let deadline = Date().addingTimeInterval(600)
         while Date() < deadline {
             try? await Task.sleep(nanoseconds: UInt64(interval) * 1_000_000_000)
-            if let token = try? await GitHubClient.shared.pollDeviceFlow(
+            if let token = try? await ArcGitHubClient.shared.pollDeviceFlow(
                 clientId: githubClientId, deviceCode: deviceCode), !token.isEmpty {
                 KeychainHelper.save(key: "arc_github_pat", value: token)
-                await GitHubClient.shared.setToken(token)
-                let gh = (try? await GitHubClient.shared.fetchAuthenticatedUser()) ?? "GitHub User"
+                await ArcGitHubClient.shared.setToken(token)
+                let gh = (try? await ArcGitHubClient.shared.fetchAuthenticatedUser()) ?? "GitHub User"
                 KeychainHelper.save(key: "arc_github_username", value: gh)
                 githubConnected = true
                 githubUsername  = gh
                 deviceFlowCode  = nil
                 if !isSignedIn { isSignedIn = true; username = gh }
                 saveGitHubAccount(id: gh, displayName: gh, token: token)
-                Task { await UserVaultService.shared.setup(githubUsername: gh) }
+                Task { await ArcVaultService.shared.setup(githubUsername: gh) }
                 return
             }
         }
@@ -117,9 +117,9 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
     public func switchGitHubAccount(to account: ArcSavedAccount) {
         guard let token = KeychainHelper.load(key: "arc_github_pat_\(account.id)") else { return }
         KeychainHelper.save(key: "arc_github_pat", value: token)
-        Task { await GitHubClient.shared.setToken(token) }
+        Task { await ArcGitHubClient.shared.setToken(token) }
         githubUsername = account.displayName; githubConnected = true
-        Task { await UserVaultService.shared.setup(githubUsername: account.displayName) }
+        Task { await ArcVaultService.shared.setup(githubUsername: account.displayName) }
     }
 
     public func disconnectGitHub() {
@@ -199,7 +199,7 @@ extension ArcAuthViewModel:
         }
         appleUserId = uid; username = display
         isSignedIn = true; isGuest = false; error = nil
-        Task { await UserVaultService.shared.setup(githubUsername: githubConnected ? githubUsername : nil) }
+        Task { await ArcVaultService.shared.setup(githubUsername: githubConnected ? githubUsername : nil) }
     }
 
     public func authorizationController(
