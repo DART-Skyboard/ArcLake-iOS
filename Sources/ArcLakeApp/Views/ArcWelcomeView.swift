@@ -13,7 +13,7 @@ struct ArcWelcomeView: View {
     var body: some View {
         ZStack {
             LinearGradient(
-                colors: [Color(hex: "#060a10"), Color(hex: "#0a0e14")],
+                colors: [Color(red:0.024,green:0.039,blue:0.063), Color(red:0.039,green:0.055,blue:0.078)],
                 startPoint: .top, endPoint: .bottom
             ).ignoresSafeArea()
 
@@ -131,7 +131,7 @@ struct ArcGitHubDeviceFlowSheet: View {
     var body: some View {
         ZStack {
             LinearGradient(
-                colors: [Color(hex: "#060a10"), Color(hex: "#0a0e14")],
+                colors: [Color(red:0.024,green:0.039,blue:0.063), Color(red:0.039,green:0.055,blue:0.078)],
                 startPoint: .top, endPoint: .bottom
             ).ignoresSafeArea()
 
