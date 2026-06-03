@@ -19,6 +19,20 @@ public final class ArcLabViewModel: ObservableObject {
     // ── Particle resolution — pts per component (proton/neutron/electron)
     // Default 30, user-adjustable in Physics tab
     @Published public var ptsPerComponent: Int = 30
+    @Published public var isNodeEditorVisible = false
+    @Published public var showGrid = true
+    @Published public var showFloor = false
+    @Published public var showAxisLabels = true
+    @Published public var periodicTableMode: PeriodicTableMode = .addToScene
+    @Published public var molAtoms: [MolAtomNode] = []
+    @Published public var molBonds: [MolBond] = []
+    @Published public var deltaConnections: [DeltaConnection] = []
+    @Published public var selectedMolAtomId: UUID? = nil
+    @Published public var molBondMode: Int = 1
+    @Published public var molDeltaMode: Bool = false
+    @Published public var molLabelMode: Bool = false
+    @Published public var sceneTabs_data: [String] = ["Scene 1"]
+    @Published public var activeTabIndex: Int = 0
 
     public let physics = PhysicsState()
     public let sphEngine: SPHEngine
@@ -296,6 +310,12 @@ public final class ArcLabViewModel: ObservableObject {
     }
 
     public func exportGLB() -> URL? { SCNExportHelper().exportScene(scene, name:"ArcLake_Export") }
+
+    public func rebuildGrid() {
+        // Grid is built in setupScene — this refreshes it
+        scene.rootNode.childNodes.filter { $0.name == "grid" }.forEach { $0.removeFromParentNode() }
+        if showGrid { addGridFloor() }
+    }
 
     public func log(_ message: String) {
         logEntries.insert(LogEntry(message: message), at: 0)

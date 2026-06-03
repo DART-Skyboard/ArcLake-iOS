@@ -25,8 +25,8 @@ public struct ArcRootView: View {
                 }
 
                 // ── Overlays (tap outside to dismiss) ─────────────────
-                if labVM.isPeriodicTableVisible || labVM.isMolCanvasVisible
-                    || labVM.isOrbitDeltaVisible || labVM.isNodeEditorVisible {
+                let showDim = labVM.isPeriodicTableVisible || labVM.isMolCanvasVisible || labVM.isOrbitDeltaVisible || labVM.isNodeEditorVisible
+            if showDim {
                     Color.black.opacity(0.4).ignoresSafeArea()
                         .onTapGesture {
                             withAnimation(.easeOut(duration: 0.2)) {
@@ -89,7 +89,7 @@ public struct ArcRootView: View {
             .animation(.spring(response: 0.3), value: labVM.isPeriodicTableVisible)
             .animation(.spring(response: 0.3), value: labVM.isMolCanvasVisible)
             .animation(.spring(response: 0.3), value: labVM.isOrbitDeltaVisible)
-            .animation(.spring(response: 0.3), value: labVM.isNodeEditorVisible)
+            
         }
         .preferredColorScheme(.dark)
     }
@@ -162,6 +162,7 @@ struct SceneTabBar: View {
 struct ArcHUDBar: View {
     @EnvironmentObject var labVM: ArcLabViewModel
     @EnvironmentObject var themeVM: ArcThemeViewModel
+    @State private var _gridOn = true
 
     var body: some View {
         HStack(spacing: 10) {
@@ -181,8 +182,9 @@ struct ArcHUDBar: View {
             Spacer()
             // Grid toggle
             Button {
-                labVM.showGrid.toggle()
-                labVM.rebuildGrid()
+                let vm = labVM
+                vm.showGrid.toggle()
+                vm.rebuildGrid()
             } label: {
                 Image(systemName: labVM.showGrid ? "grid" : "grid.slash")
                     .font(.caption)
@@ -190,11 +192,11 @@ struct ArcHUDBar: View {
             }
             // Node editor
             Button {
-                withAnimation { labVM.isNodeEditorVisible.toggle() }
+                withAnimation { labVM.isNodeEditorVisible = !labVM.isNodeEditorVisible }
             } label: {
                 Image(systemName: "circle.connected.to.line.below")
                     .font(.caption)
-                    .foregroundColor(labVM.isNodeEditorVisible ? .purple : .white.opacity(0.4))
+                    .foregroundColor(.purple.opacity(0.7))
             }
             // Theme
             Button { withAnimation { themeVM.cycle() } } label: {
