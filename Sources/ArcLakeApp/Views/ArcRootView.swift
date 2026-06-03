@@ -513,6 +513,7 @@ struct ArcProfileSheet: View {
     @Environment(\.dismiss) var dismiss
     @State private var showApplePicker  = false
     @State private var showGitHubPicker = false
+    @State private var showSupport = false
 
     var body: some View {
         ZStack {
@@ -554,6 +555,23 @@ struct ArcProfileSheet: View {
                 }
                 .background(Color.white.opacity(0.04)).cornerRadius(12).padding(.horizontal, 20)
                 Spacer()
+                Button { showSupport = true } label: {
+                    HStack(spacing:10) {
+                        Image(systemName:"heart.fill").font(.system(size:14)).foregroundColor(.pink)
+                        VStack(alignment:.leading, spacing:1) {
+                            Text("Support ArcLake").font(.custom("Exo2-SemiBold", size:13)).foregroundColor(.white)
+                            Text("$4.99/month · Help keep development active")
+                                .font(.system(size:9, design:.monospaced)).foregroundColor(.white.opacity(0.35))
+                        }
+                        Spacer()
+                        Image(systemName:"chevron.right").font(.system(size:10)).foregroundColor(.white.opacity(0.25))
+                    }
+                    .padding(.horizontal,16).padding(.vertical,12)
+                    .background(Color.pink.opacity(0.06)).clipShape(RoundedRectangle(cornerRadius:10))
+                    .overlay(RoundedRectangle(cornerRadius:10).stroke(Color.pink.opacity(0.2), lineWidth:0.7))
+                }
+                .padding(.horizontal, 20)
+
                 Button { authVM.signOut(); dismiss() } label: {
                     Text("Sign Out").font(.custom("Exo2-SemiBold", size: 15)).foregroundColor(.red)
                         .frame(maxWidth: .infinity).frame(height: 48)
@@ -563,6 +581,9 @@ struct ArcProfileSheet: View {
             }
         }
         .presentationDetents([.medium, .large])
+        .sheet(isPresented: $showSupport) {
+            ArcSupportSheet(accentColor: themeVM.accent, appName: "ArcLake")
+        }
         .confirmationDialog("Switch Apple Account", isPresented: $showApplePicker) {
             ForEach(authVM.savedAppleAccounts) { a in Button(a.displayName) { authVM.switchAppleAccount(to: a) } }
             Button("Add New Apple ID") { authVM.signInWithApple() }
