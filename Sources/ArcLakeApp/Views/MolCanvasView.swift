@@ -1,267 +1,419 @@
 
 import SwiftUI
 
-struct MolAtom: Identifiable {
-    let id = UUID()
-    var symbol: String
-    var position: CGPoint
-    var atomicNumber: Int
-    var color: Color
-}
-
-struct MolBond: Identifiable {
-    let id = UUID()
-    var fromId: UUID
-    var toId: UUID
-    var order: Int = 1
-}
-
 public struct MolCanvasView: View {
     @EnvironmentObject var labVM: ArcLabViewModel
     @EnvironmentObject var themeVM: ArcThemeViewModel
-    @State private var atoms: [MolAtom] = []
-    @State private var bonds: [MolBond] = []
-    @State private var selectedAtomId: UUID? = nil
-    @State private var bondingFromId: UUID? = nil
-    @State private var bondMode = false
-
-    // Pan + zoom state
-    @State private var canvasOffset: CGSize = .zero
-    @State private var lastOffset:   CGSize = .zero
-    @State private var canvasScale:  CGFloat = 1.0
-    @State private var lastScale:    CGFloat = 1.0
+    @State private var canvasOffset = CGSize.zero
+    @State private var canvasScale: CGFloat = 1.0
+    @State private var showBondTool = false
+    @State private var showDeltaTool = false
+    @State private var showAddToScenePrompt = false
+    @State private var dragStartOffset = CGSize.zero
+    @State private var selectedForBond: UUID? = nil
 
     public var body: some View {
         VStack(spacing: 0) {
-            // ── Toolbar ──
-            HStack(spacing: 10) {
+            // ── Toolbar ─────────────────────────────────────────────
+            HStack(spacing: 6) {
                 Text("Mol Canvas")
-                    .font(.system(.caption, design: .monospaced, weight: .bold))
+                    .font(.system(size: 12, weight: .bold, design: .monospaced))
                     .foregroundColor(themeVM.accent)
 
                 Spacer()
 
-                Button {
-                    bondMode.toggle()
-                    bondingFromId = nil
-                } label: {
-                    Label("Bond", systemImage: "line.diagonal")
-                        .font(.caption2)
-                        .foregroundColor(bondMode ? themeVM.accent : .white.opacity(0.4))
-                }
-
-                Button {
-                    canvasOffset = .zero
-                    canvasScale  = 1.0
-                } label: {
-                    Image(systemName: "arrow.up.left.and.down.right.magnifyingglass")
-                        .foregroundColor(.white.opacity(0.5))
-                        .font(.caption)
-                }
-
-                Button {
-                    atoms.removeAll(); bonds.removeAll(); bondingFromId = nil
-                    labVM.log("Mol canvas cleared")
-                } label: {
-                    Image(systemName: "trash")
-                        .foregroundColor(.red.opacity(0.7))
-                }
-
-                Button {
-                    for atom in atoms {
-                        if let el = ElementStore.shared.elements.first(where: { $0.elementSymbol == atom.symbol }) {
-                            labVM.addElement(el)
-                        }
+                // Bond order buttons
+                ForEach([1,2,3], id: \.self) { order in
+                    Button {
+                        labVM.molBondMode = order
+                        labVM.molDeltaMode = false
+                    } label: {
+                        Text(["—","═","≡"][order-1])
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundColor(labVM.molBondMode == order && !labVM.molDeltaMode ?
+                                themeVM.accent : .white.opacity(0.4))
+                            .frame(width: 28, height: 28)
+                            .background(labVM.molBondMode == order && !labVM.molDeltaMode ?
+                                themeVM.accent.opacity(0.15) : Color.clear)
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
                     }
-                    labVM.isMolCanvasVisible = false
-                    labVM.log("Sent \(atoms.count) atoms to 3D")
+                }
+
+                // Delta connection
+                Button {
+                    labVM.molDeltaMode.toggle()
+                    if labVM.molDeltaMode { showDeltaTool = true }
                 } label: {
-                    Image(systemName: "cube.transparent")
+                    Text("Δ")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(labVM.molDeltaMode ? .purple : .white.opacity(0.4))
+                        .frame(width: 28, height: 28)
+                        .background(labVM.molDeltaMode ? Color.purple.opacity(0.2) : Color.clear)
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                }
+
+                // Label tool
+                Button {
+                    labVM.molLabelMode.toggle()
+                } label: {
+                    Image(systemName: "textformat")
+                        .font(.system(size: 12))
+                        .foregroundColor(labVM.molLabelMode ? themeVM.accent : .white.opacity(0.4))
+                        .frame(width: 28, height: 28)
+                }
+
+                // Clear
+                Button {
+                    labVM.clearMolCanvas()
+                } label: {
+                    Image(systemName: "trash").font(.caption)
+                        .foregroundColor(.red.opacity(0.7)).frame(width: 28, height: 28)
+                }
+
+                // Add to scene
+                Button {
+                    showAddToScenePrompt = true
+                } label: {
+                    Label("→ Scene", systemImage: "cube.fill")
+                        .font(.system(size: 9, design: .monospaced))
                         .foregroundColor(themeVM.accent)
+                        .padding(.horizontal, 6).padding(.vertical, 3)
+                        .background(themeVM.accent.opacity(0.12))
+                        .clipShape(Capsule())
                 }
 
                 Button {
-                    withAnimation { labVM.isMolCanvasVisible = false }
+                    labVM.isMolCanvasVisible = false
                 } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundColor(.white.opacity(0.6))
-                        .font(.title3)
-                        .frame(width: 36, height: 36)
+                    Image(systemName: "xmark").font(.caption2)
+                        .foregroundColor(.white.opacity(0.4)).frame(width: 24, height: 24)
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(Color.black.opacity(0.8))
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(Color.black.opacity(0.4))
 
-            // ── Canvas ──
+            // ── Canvas area ──────────────────────────────────────────
             GeometryReader { geo in
                 ZStack {
-                    // Background grid (fixed, not transformed)
-                    canvasGridBackground(size: geo.size)
-
-                    // Transformed content
-                    ZStack {
-                        // Bonds
-                        ForEach(bonds) { bond in
-                            if let from = atoms.first(where: { $0.id == bond.fromId }),
-                               let to   = atoms.first(where: { $0.id == bond.toId }) {
-                                BondLine(from: from.position, to: to.position, order: bond.order)
-                            }
+                    // Grid background
+                    Canvas { ctx, size in
+                        let step: CGFloat = 30
+                        var x: CGFloat = 0
+                        while x < size.width {
+                            ctx.stroke(Path { p in
+                                p.move(to: CGPoint(x:x, y:0))
+                                p.addLine(to: CGPoint(x:x, y:size.height))
+                            }, with: .color(.cyan.opacity(0.06)), lineWidth: 0.5)
+                            x += step
                         }
-
-                        // Atoms
-                        ForEach(atoms) { atom in
-                            AtomDot(atom: atom,
-                                    isSelected:   selectedAtomId == atom.id,
-                                    isBondTarget: bondMode && bondingFromId != nil && bondingFromId != atom.id)
-                                .position(atom.position)
-                                .gesture(
-                                    DragGesture()
-                                        .onChanged { val in
-                                            if !bondMode {
-                                                moveAtom(id: atom.id, to: val.location)
-                                            }
-                                        }
-                                )
-                                .onTapGesture { handleAtomTap(atom) }
-                        }
-
-                        // Bonding hint
-                        if bondMode, let fid = bondingFromId,
-                           let from = atoms.first(where: { $0.id == fid }) {
-                            Text("Tap atom to bond →")
-                                .font(.system(size: 9, design: .monospaced))
-                                .foregroundColor(themeVM.accent)
-                                .position(x: from.position.x,
-                                          y: from.position.y - 28)
+                        var y: CGFloat = 0
+                        while y < size.height {
+                            ctx.stroke(Path { p in
+                                p.move(to: CGPoint(x:0, y:y))
+                                p.addLine(to: CGPoint(x:size.width, y:y))
+                            }, with: .color(.cyan.opacity(0.06)), lineWidth: 0.5)
+                            y += step
                         }
                     }
-                    .scaleEffect(canvasScale)
-                    .offset(canvasOffset)
+
+                    // Bonds
+                    Canvas { ctx, _ in
+                        for bond in labVM.molBonds {
+                            guard let fromNode = labVM.molAtoms.first(where: { $0.id == bond.fromId }),
+                                  let toNode   = labVM.molAtoms.first(where: { $0.id == bond.toId })
+                            else { continue }
+
+                            let from = CGPoint(
+                                x: fromNode.position.x + canvasOffset.width,
+                                y: fromNode.position.y + canvasOffset.height)
+                            let to = CGPoint(
+                                x: toNode.position.x + canvasOffset.width,
+                                y: toNode.position.y + canvasOffset.height)
+
+                            let color: Color = bond.isDelta ? .purple : .cyan
+                            let width: CGFloat = [1:1.5, 2:3.0, 3:4.5][bond.order] ?? 1.5
+
+                            // Draw bond lines (offset for double/triple)
+                            for i in 0..<bond.order {
+                                let offset = CGFloat(i - bond.order/2) * 4.0
+                                let dx = to.y - from.y; let dy = from.x - to.x
+                                let len = sqrt(dx*dx + dy*dy)
+                                let nx = len > 0 ? dx/len : 0; let ny = len > 0 ? dy/len : 0
+                                ctx.stroke(Path { p in
+                                    p.move(to: CGPoint(x: from.x + nx*offset, y: from.y + ny*offset))
+                                    p.addLine(to: CGPoint(x: to.x + nx*offset, y: to.y + ny*offset))
+                                }, with: .color(color.opacity(0.8)), lineWidth: width/CGFloat(bond.order))
+                            }
+
+                            // Bond order label
+                            let mid = CGPoint(x:(from.x+to.x)/2, y:(from.y+to.y)/2 - 10)
+                            if bond.order > 1 {
+                                ctx.draw(Text("\(bond.order)").font(.system(size:8)).foregroundColor(color),
+                                         at: mid)
+                            }
+                            if bond.isDelta {
+                                ctx.draw(Text("Δ").font(.system(size:9)).foregroundColor(.purple),
+                                         at: CGPoint(x:mid.x+10, y:mid.y))
+                            }
+                        }
+                    }
+
+                    // Atom nodes
+                    ForEach($labVM.molAtoms) { $atom in
+                        MolAtomNodeView(atom: $atom,
+                            isSelected: labVM.selectedMolAtomId == atom.id,
+                            isLabelMode: labVM.molLabelMode,
+                            accent: themeVM.accent,
+                            onTap: { handleAtomTap(atom) },
+                            onDragChanged: { val in
+                                atom.position = CGPoint(
+                                    x: atom.position.x + val.translation.width - (val.predictedEndTranslation.width - val.translation.width) * 0,
+                                    y: atom.position.y + val.translation.height)
+                            })
+                        .offset(canvasOffset)
+                    }
                 }
-                // Pan gesture (2 fingers or when not dragging atom)
+                // 2-finger pan
                 .gesture(
-                    DragGesture(minimumDistance: 4)
+                    DragGesture(minimumDistance: 1)
                         .onChanged { val in
-                            if !bondMode {
+                            if val.startLocation != val.location {
                                 canvasOffset = CGSize(
-                                    width:  lastOffset.width  + val.translation.width,
-                                    height: lastOffset.height + val.translation.height)
+                                    width: dragStartOffset.width + val.translation.width,
+                                    height: dragStartOffset.height + val.translation.height)
                             }
                         }
-                        .onEnded { _ in lastOffset = canvasOffset }
+                        .onEnded { _ in dragStartOffset = canvasOffset }
+                        .simultaneously(with: MagnificationGesture()
+                            .onChanged { canvasScale = max(0.3, min(3.0, $0)) })
                 )
-                // Pinch zoom
-                .gesture(
-                    MagnificationGesture()
-                        .onChanged { val in
-                            canvasScale = max(0.4, min(4.0, lastScale * val))
-                        }
-                        .onEnded { _ in lastScale = canvasScale }
-                )
-                // Drop from periodic table
-                .onDrop(of: [.plainText], isTargeted: nil) { providers, location in
-                    providers.first?.loadObject(ofClass: NSString.self) { obj, _ in
-                        guard let symbol = obj as? String else { return }
-                        // Convert drop location accounting for pan/zoom
-                        let adjusted = CGPoint(
-                            x: (location.x - geo.size.width/2  - canvasOffset.width)  / canvasScale + geo.size.width/2,
-                            y: (location.y - geo.size.height/2 - canvasOffset.height) / canvasScale + geo.size.height/2
-                        )
-                        Task { @MainActor in
-                            addAtom(symbol: symbol, at: adjusted)
-                            labVM.log("Dropped \(symbol) onto mol canvas")
-                        }
+                // Receive pending atom from probe
+                .onAppear {
+                    if let pending = labVM.pendingMolAtom {
+                        let pos = CGPoint(
+                            x: geo.size.width / 2 + Double(labVM.molAtoms.count % 3) * 70,
+                            y: geo.size.height / 2 + Double(labVM.molAtoms.count / 3) * 60)
+                        labVM.molAtoms.append(MolAtomNode(
+                            symbol: pending.symbol, z: pending.z,
+                            color: pending.color, at: pos))
+                        labVM.pendingMolAtom = nil
                     }
-                    return true
                 }
             }
-            .background(Color(red:0.01, green:0.04, blue:0.08))
-            .clipShape(RoundedRectangle(cornerRadius: 0))
-        }
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14)
-            .stroke(themeVM.accent.opacity(0.3), lineWidth: 0.5))
-        .padding(.horizontal, 4)
-        .padding(.vertical, 4)
-        .shadow(color: themeVM.accent.opacity(0.15), radius: 16)
-    }
 
-    private func canvasGridBackground(size: CGSize) -> some View {
-        Canvas { ctx, sz in
-            let spacing: CGFloat = 32
-            let color = Color.cyan.opacity(0.05)
-            for x in stride(from: 0.0, through: sz.width, by: spacing) {
-                ctx.stroke(Path { p in p.move(to: CGPoint(x:x,y:0)); p.addLine(to: CGPoint(x:x,y:sz.height)) },
-                           with: .color(color), lineWidth: 0.5)
+            // ── Status bar ────────────────────────────────────────────
+            HStack(spacing: 12) {
+                Label("\(labVM.molAtoms.count) atoms", systemImage: "atom")
+                Label("\(labVM.molBonds.count) bonds", systemImage: "link")
+                if !labVM.deltaConnections.isEmpty {
+                    Label("\(labVM.deltaConnections.count) Δ", systemImage: "function")
+                        .foregroundColor(.purple)
+                }
+                Spacer()
+                Text(labVM.molDeltaMode ? "Δ MODE" : "BOND \(labVM.molBondMode)×")
+                    .font(.system(size: 8, design: .monospaced))
+                    .foregroundColor(labVM.molDeltaMode ? .purple : themeVM.accent)
             }
-            for y in stride(from: 0.0, through: sz.height, by: spacing) {
-                ctx.stroke(Path { p in p.move(to: CGPoint(x:0,y:y)); p.addLine(to: CGPoint(x:sz.width,y:y)) },
-                           with: .color(color), lineWidth: 0.5)
-            }
+            .font(.system(size: 9, design: .monospaced))
+            .foregroundColor(.white.opacity(0.4))
+            .padding(.horizontal, 10).padding(.vertical, 4)
+            .background(Color.black.opacity(0.3))
         }
-        .frame(width: size.width, height: size.height)
-    }
-
-    private func addAtom(symbol: String, at position: CGPoint) {
-        let el = ElementStore.shared.elements.first { $0.elementSymbol == symbol }
-        let color = el.map { Color($0.category.color) } ?? Color.cyan
-        atoms.append(MolAtom(symbol: symbol, position: position,
-                             atomicNumber: el?.protons ?? 0, color: color))
-    }
-
-    private func moveAtom(id: UUID, to position: CGPoint) {
-        if let idx = atoms.firstIndex(where: { $0.id == id }) {
-            atoms[idx].position = position
+        .background(Color(red:0.02, green:0.04, blue:0.10))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12)
+            .stroke(themeVM.accent.opacity(0.25), lineWidth: 0.5))
+        // Delta tool sheet
+        .sheet(isPresented: $showDeltaTool) {
+            DeltaConnectionSheet()
+        }
+        // Add to scene prompt
+        .confirmationDialog("Add to Scene", isPresented: $showAddToScenePrompt, titleVisibility: .visible) {
+            Button("Add to Current Scene") { labVM.addMolCanvasToScene(newTab: false) }
+            Button("Add to New Scene Tab") { labVM.addMolCanvasToScene(newTab: true) }
+            Button("Cancel", role: .cancel) {}
         }
     }
 
-    private func handleAtomTap(_ atom: MolAtom) {
-        if let fid = bondingFromId {
-            if fid != atom.id {
-                bonds.append(MolBond(fromId: fid, toId: atom.id))
-                let fromSym = atoms.first(where: {$0.id == fid})?.symbol ?? "?"
-                labVM.log("Bonded \(fromSym)–\(atom.symbol)")
+    private func handleAtomTap(_ atom: MolAtomNode) {
+        if labVM.molDeltaMode {
+            // Delta mode — first tap selects from, second tap creates connection
+            if let fromId = selectedForBond {
+                if fromId != atom.id {
+                    labVM.addBond(from: fromId, to: atom.id)  // adds as delta bond
+                    showDeltaTool = true
+                }
+                selectedForBond = nil
+            } else {
+                selectedForBond = atom.id
             }
-            bondingFromId = nil
-        } else if bondMode {
-            bondingFromId = atom.id
+            labVM.selectedMolAtomId = atom.id
+        } else if labVM.molLabelMode {
+            labVM.selectedMolAtomId = atom.id
         } else {
-            selectedAtomId = selectedAtomId == atom.id ? nil : atom.id
+            // Bond mode — connect atoms
+            if let fromId = selectedForBond {
+                if fromId != atom.id {
+                    labVM.addMolBond(from: fromId, to: atom.id)
+                }
+                selectedForBond = nil
+                labVM.selectedMolAtomId = nil
+            } else {
+                selectedForBond = atom.id
+                labVM.selectedMolAtomId = atom.id
+            }
         }
     }
 }
 
-struct BondLine: View {
-    let from: CGPoint
-    let to:   CGPoint
-    let order: Int
-    var body: some View {
-        Canvas { ctx, _ in
-            let path = Path { p in p.move(to: from); p.addLine(to: to) }
-            ctx.stroke(path, with: .color(.white.opacity(0.6)), lineWidth: CGFloat(order))
-        }
-        .allowsHitTesting(false)
+extension ArcLabViewModel {
+    func addBond(from: UUID, to: UUID) {
+        molBonds.removeAll { ($0.fromId==from && $0.toId==to)||($0.fromId==to && $0.toId==from) }
+        molBonds.append(MolBond(from: from, to: to, order: molBondMode, isDelta: true))
+    }
+    var pendingMolAtom: (symbol: String, z: Int, color: UIColor)? {
+        get { MolCanvasState.shared.pendingAtom }
+        set { MolCanvasState.shared.pendingAtom = newValue }
     }
 }
 
-struct AtomDot: View {
-    let atom:         MolAtom
-    let isSelected:   Bool
-    let isBondTarget: Bool
+// MARK: — Individual mol atom node view
+struct MolAtomNodeView: View {
+    @Binding var atom: MolAtomNode
+    let isSelected: Bool
+    let isLabelMode: Bool
+    let accent: Color
+    let onTap: () -> Void
+    let onDragChanged: (DragGesture.Value) -> Void
+    @State private var isEditing = false
+    @State private var labelText = ""
+
     var body: some View {
         ZStack {
             Circle()
-                .fill(atom.color.opacity(0.25))
-                .frame(width: 38, height: 38)
+                .fill(Color(atom.color).opacity(0.25))
                 .overlay(Circle().stroke(
-                    isSelected ? Color.yellow : isBondTarget ? Color.green : atom.color,
+                    isSelected ? accent : Color(atom.color).opacity(0.8),
                     lineWidth: isSelected ? 2 : 1))
+                .frame(width: 36, height: 36)
             Text(atom.symbol)
-                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
                 .foregroundColor(.white)
         }
-        .shadow(color: atom.color.opacity(isSelected ? 0.6 : 0.2), radius: 6)
+        .overlay(alignment: .bottom) {
+            if atom.label != atom.symbol {
+                Text(atom.label)
+                    .font(.system(size: 7, design: .monospaced))
+                    .foregroundColor(accent)
+                    .offset(y: 20)
+            }
+        }
+        .position(atom.position)
+        .onTapGesture {
+            if isLabelMode {
+                isEditing = true
+                labelText = atom.label
+            } else {
+                onTap()
+            }
+        }
+        .gesture(DragGesture().onChanged { val in
+            atom.position = CGPoint(x: atom.position.x + val.translation.width,
+                                    y: atom.position.y + val.translation.height)
+        })
+        .sheet(isPresented: $isEditing) {
+            NavigationView {
+                Form {
+                    Section("Atom Label") {
+                        TextField("Label", text: $labelText)
+                    }
+                }
+                .navigationTitle("Edit Label")
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { atom.label = labelText; isEditing = false }
+                    }
+                }
+            }
+            .presentationDetents([.height(200)])
+        }
+    }
+}
+
+// MARK: — Delta connection sheet
+struct DeltaConnectionSheet: View {
+    @EnvironmentObject var labVM: ArcLabViewModel
+    @EnvironmentObject var themeVM: ArcThemeViewModel
+    @Environment(\.dismiss) var dismiss
+    @State private var fromShell = 0
+    @State private var toShell = 0
+    @State private var op = "+"
+    @State private var fromAtomIdx = 0
+    @State private var toAtomIdx = 1
+
+    var body: some View {
+        NavigationView {
+            Form {
+                Section("Atoms") {
+                    if labVM.molAtoms.count >= 2 {
+                        Picker("From Atom", selection: $fromAtomIdx) {
+                            ForEach(labVM.molAtoms.indices, id: \.self) { i in
+                                Text(labVM.molAtoms[i].symbol).tag(i)
+                            }
+                        }
+                        Picker("To Atom", selection: $toAtomIdx) {
+                            ForEach(labVM.molAtoms.indices, id: \.self) { i in
+                                Text(labVM.molAtoms[i].symbol).tag(i)
+                            }
+                        }
+                    } else {
+                        Text("Add at least 2 atoms to create a Δ connection")
+                            .font(.caption).foregroundColor(.secondary)
+                    }
+                }
+                Section("Shell Connection") {
+                    Picker("From Shell", selection: $fromShell) {
+                        ForEach(0..<7) { Text("Shell \($0+1) (\(["K","L","M","N","O","P","Q"][$0]))").tag($0) }
+                    }
+                    Picker("To Shell", selection: $toShell) {
+                        ForEach(0..<7) { Text("Shell \($0+1) (\(["K","L","M","N","O","P","Q"][$0]))").tag($0) }
+                    }
+                    Picker("Operator", selection: $op) {
+                        ForEach(["+","-","×","÷","√","²"], id:\.self) { Text($0).tag($0) }
+                    }
+                }
+                Section("Preview") {
+                    if labVM.molAtoms.count >= 2 {
+                        Text("Δ(\(labVM.molAtoms[safe: fromAtomIdx]?.symbol ?? "?") shell \(fromShell+1)) \(op) Δ(\(labVM.molAtoms[safe: toAtomIdx]?.symbol ?? "?") shell \(toShell+1))")
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundColor(.purple)
+                    }
+                }
+            }
+            .navigationTitle("Δ Algebra Connection")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Add") {
+                        if labVM.molAtoms.count >= 2 {
+                            labVM.addDeltaConnection(
+                                from: labVM.molAtoms[fromAtomIdx].id,
+                                to: labVM.molAtoms[toAtomIdx].id,
+                                fromShell: fromShell, toShell: toShell, op: op)
+                        }
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.medium])
+    }
+}
+
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }

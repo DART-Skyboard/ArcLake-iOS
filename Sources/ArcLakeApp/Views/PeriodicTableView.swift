@@ -37,6 +37,8 @@ public struct PeriodicTableView: View {
         return matchSearch && matchCat
     }
 
+    @EnvironmentObject var labVM: ArcLabViewModel
+
     public var body: some View {
         GeometryReader { geo in
             VStack(spacing: 0) {
@@ -44,7 +46,23 @@ public struct PeriodicTableView: View {
                 HStack {
                     Image(systemName: "tablecells")
                         .foregroundColor(themeVM.accent)
+                    HStack {
                     Text("Periodic Table")
+                    Spacer()
+                    // Mode toggle
+                    Button {
+                        labVM.periodicTableMode = labVM.periodicTableMode == .addToScene ? .addToCanvas : .addToScene
+                    } label: {
+                        Label(labVM.periodicTableMode == .addToScene ? "→ 3D Scene" : "→ Canvas",
+                              systemImage: labVM.periodicTableMode == .addToScene ? "cube" : "scribble")
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(labVM.periodicTableMode == .addToCanvas ? .purple : themeVM.accent)
+                            .padding(.horizontal, 8).padding(.vertical, 4)
+                            .background((labVM.periodicTableMode == .addToCanvas ? Color.purple : themeVM.accent).opacity(0.12))
+                            .clipShape(Capsule())
+                    }
+                }.frame(maxWidth: .infinity)
+                Text("ignored_placeholder_never_rendered")
                         .font(.system(.subheadline, design: .monospaced, weight: .bold))
                         .foregroundColor(themeVM.accent)
                     Spacer()
