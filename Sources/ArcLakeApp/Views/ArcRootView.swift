@@ -146,7 +146,7 @@ struct DARTTopBar: View {
                             .frame(width: 5, height: 5)
                             .opacity(0.9)
                         Text("CFD")
-                            .font(.system(size: 9, design: .monospaced, weight: .semibold))
+                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
                             .foregroundColor(Color(red:0.2,green:0.7,blue:1.0))
                     }
                     .padding(.horizontal, 8).padding(.vertical, 3)
@@ -489,3 +489,88 @@ struct DARTPanelCard<Content: View>: View {
 
 // MARK: — enum for tab selection
 enum DARTTab { case scene, panel }
+
+
+// MARK: — Arc Profile Sheet (DART)
+struct ArcProfileSheet: View {
+    @EnvironmentObject var authVM: ArcAuthViewModel
+    @EnvironmentObject var themeVM: ArcThemeViewModel
+    @Environment(\.dismiss) var dismiss
+    @State private var showApplePicker  = false
+    @State private var showGitHubPicker = false
+
+    var body: some View {
+        ZStack {
+            Color(red:0.024,green:0.039,blue:0.063).ignoresSafeArea()
+            VStack(spacing: 0) {
+                Capsule().fill(Color.white.opacity(0.2))
+                    .frame(width: 40, height: 4).padding(.top, 12).padding(.bottom, 20)
+                ZStack {
+                    Circle().fill(themeVM.accent.opacity(0.12)).frame(width: 72, height: 72)
+                    Circle().stroke(themeVM.accent.opacity(0.4), lineWidth: 1.5).frame(width: 72, height: 72)
+                    Text(authVM.username.prefix(1).uppercased())
+                        .font(.custom("Orbitron-Bold", size: 28)).foregroundColor(themeVM.accent)
+                }
+                Spacer().frame(height: 12)
+                Text(authVM.username)
+                    .font(.custom("Orbitron-Bold", size: 16)).foregroundColor(.white)
+                Text("DART · Autumn-Ash Vault")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.35)).padding(.top, 3)
+                Spacer().frame(height: 24)
+                VStack(spacing: 0) {
+                    arcRow("Apple ID", authVM.appleUserId.isEmpty ? "—" : "Connected ✓",
+                           authVM.appleUserId.isEmpty ? .white.opacity(0.3) : .green) { showApplePicker = true }
+                    Divider().background(Color.white.opacity(0.08))
+                    arcRow("GitHub", authVM.githubConnected ? authVM.githubUsername : "Not connected",
+                           authVM.githubConnected ? themeVM.accent : .white.opacity(0.3)) { showGitHubPicker = true }
+                    Divider().background(Color.white.opacity(0.08))
+                    HStack {
+                        Text("Vault").font(.system(size: 13, design: .monospaced)).foregroundColor(.white.opacity(0.4))
+                        Spacer()
+                        Text("Autumn-Ash/ArcLake ✓").font(.system(size: 13, design: .monospaced)).foregroundColor(themeVM.accent)
+                    }.padding(.horizontal, 16).padding(.vertical, 12)
+                    Divider().background(Color.white.opacity(0.08))
+                    HStack {
+                        Text("Build").font(.system(size: 13, design: .monospaced)).foregroundColor(.white.opacity(0.4))
+                        Spacer()
+                        Text("1.0.7 (26)").font(.system(size: 13, design: .monospaced)).foregroundColor(.white.opacity(0.3))
+                    }.padding(.horizontal, 16).padding(.vertical, 12)
+                }
+                .background(Color.white.opacity(0.04)).cornerRadius(12).padding(.horizontal, 20)
+                Spacer()
+                Button { authVM.signOut(); dismiss() } label: {
+                    Text("Sign Out").font(.custom("Exo2-SemiBold", size: 15)).foregroundColor(.red)
+                        .frame(maxWidth: .infinity).frame(height: 48)
+                        .background(Color.red.opacity(0.1)).cornerRadius(10)
+                }
+                .padding(.horizontal, 20).padding(.bottom, 40)
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .confirmationDialog("Switch Apple Account", isPresented: $showApplePicker) {
+            ForEach(authVM.savedAppleAccounts) { a in Button(a.displayName) { authVM.switchAppleAccount(to: a) } }
+            Button("Add New Apple ID") { authVM.signInWithApple() }
+            Button("Cancel", role: .cancel) {}
+        }
+        .confirmationDialog("Switch GitHub Account", isPresented: $showGitHubPicker) {
+            ForEach(authVM.savedGitHubAccounts) { a in Button(a.displayName) { authVM.switchGitHubAccount(to: a); dismiss() } }
+            Button("Connect New GitHub Account") { Task { await authVM.startGitHubAuth() }; dismiss() }
+            if authVM.githubConnected { Button("Disconnect GitHub", role: .destructive) { authVM.disconnectGitHub() } }
+            Button("Cancel", role: .cancel) {}
+        }
+    }
+
+    private func arcRow(_ label: String, _ value: String, _ color: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack {
+                Text(label).font(.system(size: 13, design: .monospaced)).foregroundColor(.white.opacity(0.4))
+                Spacer()
+                HStack(spacing: 5) {
+                    Text(value).font(.system(size: 13, design: .monospaced)).foregroundColor(color)
+                    Image(systemName: "chevron.right").font(.system(size: 9)).foregroundColor(.white.opacity(0.2))
+                }
+            }.padding(.horizontal, 16).padding(.vertical, 12)
+        }
+    }
+}
