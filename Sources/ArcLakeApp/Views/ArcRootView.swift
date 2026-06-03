@@ -5,6 +5,8 @@ import SceneKit
 public struct ArcRootView: View {
     @EnvironmentObject var labVM: ArcLabViewModel
     @EnvironmentObject var themeVM: ArcThemeViewModel
+    @EnvironmentObject var authVM: ArcAuthViewModel
+    @State private var showProfile = false
 
     public var body: some View {
         GeometryReader { geo in
@@ -67,6 +69,7 @@ public struct ArcRootView: View {
             
         }
         .preferredColorScheme(.dark)
+        .sheet(isPresented: $showProfile) { ArcProfileSheet() }
     }
 }
 
@@ -169,6 +172,13 @@ struct ArcHUDBar: View {
                     .font(.caption)
                     .foregroundColor(.purple.opacity(0.7))
             }
+            // Profile avatar
+            Button { /* signal up to ArcRootView via environment — handled via ArcProfileSheet */ } label: {
+                ZStack {
+                    Circle().fill(themeVM.accent.opacity(0.15)).frame(width: 28, height: 28)
+                    Circle().stroke(themeVM.accent.opacity(0.35), lineWidth: 1).frame(width: 28, height: 28)
+                }
+            }
             // Theme
             Button { withAnimation { themeVM.cycle() } } label: {
                 Image(systemName: "paintpalette.fill").foregroundColor(themeVM.accent)
@@ -183,5 +193,117 @@ struct ArcHUDBar: View {
         }
         .padding(.horizontal, 14).padding(.vertical, 6)
         .background(.ultraThinMaterial)
+    }
+}
+
+
+// MARK: — Arc Profile Sheet
+struct ArcProfileSheet: View {
+    @EnvironmentObject var authVM: ArcAuthViewModel
+    @EnvironmentObject var themeVM: ArcThemeViewModel
+    @Environment(\.dismiss) var dismiss
+    @State private var showApplePicker  = false
+    @State private var showGitHubPicker = false
+
+    var body: some View {
+        ZStack {
+            LinearGradient(
+                colors: [Color(hex: "#060a10"), Color(hex: "#0a0e14")],
+                startPoint: .top, endPoint: .bottom
+            ).ignoresSafeArea()
+            VStack(spacing: 0) {
+                Capsule().fill(Color.white.opacity(0.2))
+                    .frame(width: 40, height: 4).padding(.top, 12).padding(.bottom, 20)
+
+                ZStack {
+                    Circle().fill(themeVM.accent.opacity(0.12)).frame(width: 72, height: 72)
+                    Circle().stroke(themeVM.accent.opacity(0.4), lineWidth: 1.5).frame(width: 72, height: 72)
+                    Text(authVM.username.prefix(1).uppercased())
+                        .font(.custom("Orbitron-Bold", size: 28)).foregroundColor(themeVM.accent)
+                }
+                Spacer().frame(height: 12)
+                Text(authVM.username)
+                    .font(.custom("Orbitron-Bold", size: 16)).foregroundColor(.white)
+                Text("Arc Lake · Autumn-Ash Vault")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.35)).padding(.top, 3)
+                Spacer().frame(height: 24)
+
+                VStack(spacing: 0) {
+                    arcProfileRow("Apple ID",
+                        value: authVM.appleUserId.isEmpty ? "Not signed in" : authVM.username,
+                        status: authVM.appleUserId.isEmpty ? "—" : "Connected ✓",
+                        color: authVM.appleUserId.isEmpty ? .white.opacity(0.3) : .green
+                    ) { showApplePicker = true }
+                    Divider().background(Color.white.opacity(0.08))
+                    arcProfileRow("GitHub",
+                        value: authVM.githubConnected ? authVM.githubUsername : "Not connected",
+                        status: authVM.githubConnected ? "Connected ✓" : "Tap to connect",
+                        color: authVM.githubConnected ? themeVM.accent : .white.opacity(0.3)
+                    ) { showGitHubPicker = true }
+                    Divider().background(Color.white.opacity(0.08))
+                    HStack {
+                        Text("Vault").font(.system(size: 13, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.4))
+                        Spacer()
+                        Text("Autumn-Ash/ArcLake ✓")
+                            .font(.system(size: 13, design: .monospaced)).foregroundColor(themeVM.accent)
+                    }.padding(.horizontal, 16).padding(.vertical, 12)
+                    Divider().background(Color.white.opacity(0.08))
+                    HStack {
+                        Text("Build").font(.system(size: 13, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.4))
+                        Spacer()
+                        Text("1.4.5 (25)").font(.system(size: 13, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.3))
+                    }.padding(.horizontal, 16).padding(.vertical, 12)
+                }
+                .background(Color.white.opacity(0.04)).cornerRadius(12).padding(.horizontal, 20)
+
+                Spacer()
+                Button { authVM.signOut(); dismiss() } label: {
+                    Text("Sign Out").font(.custom("Exo2-SemiBold", size: 15)).foregroundColor(.red)
+                        .frame(maxWidth: .infinity).frame(height: 48)
+                        .background(Color.red.opacity(0.1)).cornerRadius(10)
+                }
+                .padding(.horizontal, 20).padding(.bottom, 40)
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .confirmationDialog("Switch Apple Account", isPresented: $showApplePicker) {
+            ForEach(authVM.savedAppleAccounts) { a in
+                Button(a.displayName) { authVM.switchAppleAccount(to: a) }
+            }
+            Button("Add New Apple ID") { authVM.signInWithApple() }
+            Button("Cancel", role: .cancel) {}
+        }
+        .confirmationDialog("Switch GitHub Account", isPresented: $showGitHubPicker) {
+            ForEach(authVM.savedGitHubAccounts) { a in
+                Button(a.displayName) { authVM.switchGitHubAccount(to: a); dismiss() }
+            }
+            Button("Connect New GitHub Account") {
+                Task { await authVM.startGitHubAuth() }; dismiss()
+            }
+            if authVM.githubConnected {
+                Button("Disconnect GitHub", role: .destructive) { authVM.disconnectGitHub() }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+    }
+
+    private func arcProfileRow(_ label: String, value: String, status: String, color: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(label).font(.system(size: 13, design: .monospaced)).foregroundColor(.white.opacity(0.4))
+                    Text(value).font(.system(size: 11, design: .monospaced)).foregroundColor(.white.opacity(0.25))
+                }
+                Spacer()
+                HStack(spacing: 5) {
+                    Text(status).font(.system(size: 13, design: .monospaced)).foregroundColor(color)
+                    Image(systemName: "chevron.right").font(.system(size: 9)).foregroundColor(.white.opacity(0.2))
+                }
+            }.padding(.horizontal, 16).padding(.vertical, 12)
+        }
     }
 }
