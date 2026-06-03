@@ -104,8 +104,8 @@ private struct SceneTabPill: View {
     @EnvironmentObject var themeVM: ArcThemeViewModel
 
     var isActive: Bool { labVM.activeTabIndex == index }
-    var name: String { labVM.sceneTabs_data[safe: index] ?? "" }
-    var isCFD: Bool { labVM.sceneTabsCFD[safe: index] ?? false }
+    var name: String { index < labVM.sceneTabs_data.count ? labVM.sceneTabs_data[index] : "" }
+    var isCFD: Bool { index < labVM.sceneTabsCFD.count ? labVM.sceneTabsCFD[index] : false }
 
     var body: some View {
         HStack(spacing: 4) {
