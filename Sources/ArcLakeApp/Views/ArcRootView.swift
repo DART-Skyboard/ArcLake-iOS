@@ -230,17 +230,15 @@ struct ArcProfileSheet: View {
                 Spacer().frame(height: 24)
 
                 VStack(spacing: 0) {
-                    arcProfileRow("Apple ID",
-                        value: authVM.appleUserId.isEmpty ? "Not signed in" : authVM.username,
-                        status: authVM.appleUserId.isEmpty ? "—" : "Connected ✓",
-                        color: authVM.appleUserId.isEmpty ? .white.opacity(0.3) : .green
-                    ) { showApplePicker = true }
+                    let appleValue  = authVM.appleUserId.isEmpty ? "Not signed in" : authVM.username
+                    let appleStatus = authVM.appleUserId.isEmpty ? "—" : "Connected ✓"
+                    let appleColor: Color = authVM.appleUserId.isEmpty ? .white.opacity(0.3) : .green
+                    arcProfileRow("Apple ID", value: appleValue, status: appleStatus, color: appleColor) { showApplePicker = true }
                     Divider().background(Color.white.opacity(0.08))
-                    arcProfileRow("GitHub",
-                        value: authVM.githubConnected ? authVM.githubUsername : "Not connected",
-                        status: authVM.githubConnected ? "Connected ✓" : "Tap to connect",
-                        color: authVM.githubConnected ? themeVM.accent : .white.opacity(0.3)
-                    ) { showGitHubPicker = true }
+                    let ghValue  = authVM.githubConnected ? authVM.githubUsername : "Not connected"
+                    let ghStatus = authVM.githubConnected ? "Connected ✓" : "Tap to connect"
+                    let ghColor: Color = authVM.githubConnected ? themeVM.accent : .white.opacity(0.3)
+                    arcProfileRow("GitHub", value: ghValue, status: ghStatus, color: ghColor) { showGitHubPicker = true }
                     Divider().background(Color.white.opacity(0.08))
                     HStack {
                         Text("Vault").font(.system(size: 13, design: .monospaced))
