@@ -70,7 +70,12 @@ public struct ArcSceneView: UIViewRepresentable {
         return v
     }
 
-    public func updateUIView(_ uiView: SCNView, context: Context) {}
+    public func updateUIView(_ uiView: SCNView, context: Context) {
+        // Swap scene when active tab changes — this is how tab switching works
+        if uiView.scene !== labVM.scene {
+            uiView.scene = labVM.scene
+        }
+    }
     public func makeCoordinator() -> Coordinator { Coordinator(labVM: labVM) }
 
     public final class Coordinator: NSObject,
