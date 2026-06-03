@@ -267,14 +267,6 @@ public struct MolCanvasView: View {
     }
 }
 
-extension ArcLabViewModel {
-    func addBond(from: UUID, to: UUID) {
-        molBonds.removeAll { ($0.fromId==from && $0.toId==to)||($0.fromId==to && $0.toId==from) }
-        molBonds.append(MolBond(from: from, to: to, order: molBondMode, isDelta: true))
-    }
-        set { MolCanvasState.shared.pendingAtom = newValue }
-    }
-}
 
 // MARK: — Individual mol atom node view
 struct MolAtomNodeView: View {
