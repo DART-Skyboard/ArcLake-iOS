@@ -37,33 +37,63 @@ public final class ArcLabViewModel: ObservableObject {
 
     public let physics = PhysicsState()
     public let sphEngine: SPHEngine
-    public let scene = SCNScene()
-    private var atomNodes: [Int: SCNNode] = [:]
-    private var atomPositions: [Int: SIMD3<Float>] = [:]  // physics positions
+
+    // MARK: — Per-tab scene state
+    // Each tab has its own SCNScene, elements, and atom nodes
+    private struct TabState {
+        var scene: SCNScene
+        var elements: [ArcElement]
+        var atomNodes: [Int: SCNNode]
+        var atomPositions: [Int: SIMD3<Float>]
+        var isCFDActive: Bool
+        init() {
+            scene = SCNScene()
+            elements = []
+            atomNodes = [:]
+            atomPositions = [:]
+            isCFDActive = false
+        }
+    }
+    private var tabStates: [TabState] = [TabState()]
+
+    // The active scene (bound to ArcSceneView)
+    @Published public var scene: SCNScene = SCNScene()
+    private var atomNodes: [Int: SCNNode] {
+        get { tabStates[safe: activeTabIndex]?.atomNodes ?? [:] }
+        set { if activeTabIndex < tabStates.count { tabStates[activeTabIndex].atomNodes = newValue } }
+    }
+    private var atomPositions: [Int: SIMD3<Float>] {
+        get { tabStates[safe: activeTabIndex]?.atomPositions ?? [:] }
+        set { if activeTabIndex < tabStates.count { tabStates[activeTabIndex].atomPositions = newValue } }
+    }
     private var cfdTimer: Timer?
     private var displayLink: CADisplayLink?
 
     public init() {
         sphEngine = SPHEngine(physicsState: PhysicsState())
-        setupScene()
+        // Setup the first tab's scene
+        tabStates[0].scene = SCNScene()
+        setupSceneBase(tabStates[0].scene)
+        scene = tabStates[0].scene
     }
 
     // MARK: — Scene setup
-    private func setupScene() {
-        scene.background.contents = UIColor(red:0.015, green:0.03, blue:0.07, alpha:1)
+    private func setupSceneBase(_ s: SCNScene) {
+        s.background.contents = UIColor(red:0.015, green:0.03, blue:0.07, alpha:1)
         let ambient = SCNLight(); ambient.type = .ambient
         ambient.intensity = 180; ambient.color = UIColor.white
         let an = SCNNode(); an.light = ambient
-        scene.rootNode.addChildNode(an)
+        s.rootNode.addChildNode(an)
         let key = SCNLight(); key.type = .omni; key.intensity = 500
         key.color = UIColor(red:0.5, green:0.9, blue:1.0, alpha:1)
         let kn = SCNNode(); kn.position = SCNVector3(8,8,8); kn.light = key
-        scene.rootNode.addChildNode(kn)
-        addGridFloor()
+        s.rootNode.addChildNode(kn)
+        addGridFloor(to: s)
     }
 
-    private func addGridFloor() {
-        let g = SCNNode()
+    private func addGridFloor(to s: SCNScene? = nil) {
+        let target = s ?? scene
+        let g = SCNNode(); g.name = "grid"
         for i in stride(from: -20, through: 20, by: 2) {
             [true, false].forEach { horiz in
                 let c = SCNCylinder(radius: 0.004, height: 40)
@@ -75,13 +105,17 @@ public final class ArcLabViewModel: ObservableObject {
                 g.addChildNode(n)
             }
         }
-        scene.rootNode.addChildNode(g)
+        target.rootNode.addChildNode(g)
     }
 
     // MARK: — Element management
     public func addElement(_ element: ArcElement) {
         guard !selectedElements.contains(where: { $0.id == element.id }) else { return }
         selectedElements.append(element)
+        // Sync to tab state
+        if activeTabIndex < tabStates.count {
+            tabStates[activeTabIndex].elements = selectedElements
+        }
         let pos = physicsPosition(for: element, index: selectedElements.count - 1)
         atomPositions[element.id] = pos
         buildPointCloudAtom(element, at: pos)
@@ -99,7 +133,11 @@ public final class ArcLabViewModel: ObservableObject {
     public func clearElements() {
         selectedElements.removeAll()
         atomNodes.values.forEach { $0.removeFromParentNode() }
-        atomNodes.removeAll(); atomPositions.removeAll()
+        if activeTabIndex < tabStates.count {
+            tabStates[activeTabIndex].elements = []
+            tabStates[activeTabIndex].atomNodes = [:]
+            tabStates[activeTabIndex].atomPositions = [:]
+        }
         log("Cleared all elements")
     }
 
@@ -113,15 +151,45 @@ public final class ArcLabViewModel: ObservableObject {
 
     public func switchTab(_ index: Int) {
         guard index < sceneTabs_data.count else { return }
+        // Save current CFD state
+        if activeTabIndex < tabStates.count {
+            tabStates[activeTabIndex].isCFDActive = isCFDActive
+        }
+        // Stop CFD if running
+        if isCFDActive { stopCFD() }
+
         activeTabIndex = index
+
+        // Ensure tab state exists
+        while tabStates.count <= index {
+            var newState = TabState()
+            newState.scene = SCNScene()
+            setupSceneBase(newState.scene)
+            tabStates.append(newState)
+        }
+
+        // Restore tab scene + elements
+        scene = tabStates[index].scene
+        selectedElements = tabStates[index].elements
+
+        // Restore CFD if this tab had it active
+        if tabStates[index].isCFDActive {
+            startCFD()
+        }
         log("Switched to \(sceneTabs_data[index])")
     }
 
     public func addSceneTab() {
-        sceneTabs_data.append("Scene \(sceneTabs_data.count + 1)")
+        let newIdx = sceneTabs_data.count
+        sceneTabs_data.append("Scene \(newIdx + 1)")
         sceneTabsCFD.append(false)
-        activeTabIndex = sceneTabs_data.count - 1
-        clearElements()
+        // Create fresh tab state
+        var newState = TabState()
+        newState.scene = SCNScene()
+        setupSceneBase(newState.scene)
+        tabStates.append(newState)
+        // Switch to new tab (saves current, loads new)
+        switchTab(newIdx)
         log("New scene tab: \(sceneTabs_data.last!)")
     }
 
@@ -129,7 +197,9 @@ public final class ArcLabViewModel: ObservableObject {
         guard sceneTabs_data.count > 1, index < sceneTabs_data.count else { return }
         sceneTabs_data.remove(at: index)
         sceneTabsCFD.remove(at: index)
-        if activeTabIndex >= sceneTabs_data.count { activeTabIndex = sceneTabs_data.count - 1 }
+        if index < tabStates.count { tabStates.remove(at: index) }
+        let newActive = min(activeTabIndex, sceneTabs_data.count - 1)
+        switchTab(newActive)
     }
 
     public func rebuildAllAtoms() {
@@ -381,7 +451,7 @@ public final class ArcLabViewModel: ObservableObject {
 
     public func rebuildGrid() {
         scene.rootNode.childNodes.filter{$0.name=="grid"}.forEach{$0.removeFromParentNode()}
-        if showGrid { addGridFloor() }
+        if showGrid { addGridFloor(to: scene) }
     }
 
     public func exportGLB() -> URL? { SCNExportHelper().exportScene(scene, name:"ArcLake_Export") }
