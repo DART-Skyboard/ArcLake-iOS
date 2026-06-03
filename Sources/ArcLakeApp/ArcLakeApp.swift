@@ -1,14 +1,14 @@
 import SwiftUI
 
 @main
-struct ArcLakeApp: App {
+struct DARTApp: App {
     @StateObject private var labVM   = ArcLabViewModel()
     @StateObject private var themeVM = ArcThemeViewModel()
     @StateObject private var authVM  = ArcAuthViewModel()
 
     var body: some Scene {
         WindowGroup {
-            ArcAppRootView()
+            DARTAppRootView()
                 .environmentObject(labVM)
                 .environmentObject(themeVM)
                 .environmentObject(authVM)
@@ -17,14 +17,12 @@ struct ArcLakeApp: App {
     }
 }
 
-// MARK: — App root — gates on sign-in
-struct ArcAppRootView: View {
+struct DARTAppRootView: View {
     @EnvironmentObject var authVM: ArcAuthViewModel
-
     var body: some View {
         Group {
             if authVM.isSignedIn {
-                ArcRootView()
+                DARTRootView()
             } else {
                 ArcWelcomeView()
             }
