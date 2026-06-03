@@ -8,7 +8,8 @@ public struct ArcRootView: View {
 
     public var body: some View {
         GeometryReader { geo in
-            ZStack {
+            let vm = labVM
+        ZStack {
                 themeVM.bg.ignoresSafeArea()
 
                 VStack(spacing: 0) {
