@@ -129,8 +129,6 @@ private struct SceneTabPill: View {
     }
 }
 
-}
-
 // MARK: — HUD Bar
 struct ArcHUDBar: View {
     @EnvironmentObject var labVM: ArcLabViewModel
