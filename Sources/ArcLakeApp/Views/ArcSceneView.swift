@@ -35,7 +35,7 @@ public struct ArcSceneView: UIViewRepresentable {
         camNode.name = "mainCamera"
         labVM.scene.rootNode.addChildNode(camNode)
         context.coordinator.cameraNode = camNode
-        context.coordinator.resetView(animated: false)
+        context.coordinator.resetView(nil)
 
         let orbit = UIPanGestureRecognizer(target: context.coordinator,
                                             action: #selector(Coordinator.handleOrbit(_:)))
