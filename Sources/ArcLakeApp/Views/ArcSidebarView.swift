@@ -206,19 +206,19 @@ struct DARTPhysicsPanel: View {
 
                 DARTPanelCard(title: "Environment Physics", icon: "waveform.path") {
                     VStack(spacing: 6) {
-                        DARTPhysicsRow("Temperature", value: labVM.physics.temperature,
+                        DARTPhysicsRow(label: "Temperature", value: labVM.physics.temperature,
                                        unit: "°F", range: -200...2000,
                                        binding: Binding(get:{labVM.physics.temperature},
                                                        set:{labVM.physics.temperature=$0}))
-                        DARTPhysicsRow("Gravity", value: labVM.physics.gravity,
+                        DARTPhysicsRow(label: "Gravity", value: labVM.physics.gravity,
                                        unit: "m/s²", range: 0...30,
                                        binding: Binding(get:{labVM.physics.gravity},
                                                        set:{labVM.physics.gravity=$0}))
-                        DARTPhysicsRow("Pressure", value: labVM.physics.pressure,
+                        DARTPhysicsRow(label: "Pressure", value: labVM.physics.pressure,
                                        unit: "psi", range: 0...100,
                                        binding: Binding(get:{labVM.physics.pressure},
                                                        set:{labVM.physics.pressure=$0}))
-                        DARTPhysicsRow("Viscosity", value: labVM.physics.viscosity,
+                        DARTPhysicsRow(label: "Viscosity", value: labVM.physics.viscosity,
                                        unit: "cP", range: 0...5000,
                                        binding: Binding(get:{labVM.physics.viscosity},
                                                        set:{labVM.physics.viscosity=$0}))
@@ -589,19 +589,19 @@ struct DARTEnvPanel: View {
                             }
                         }
 
-                        DARTPhysicsRow("Temperature", value: labVM.physics.tabs[selectedTab].temperature,
+                        DARTPhysicsRow(label: "Temperature", value: labVM.physics.tabs[selectedTab].temperature,
                                        unit: "°F", range: -200...2000,
                                        binding: Binding(get:{labVM.physics.tabs[selectedTab].temperature},
                                                        set:{labVM.physics.tabs[selectedTab].temperature=$0}))
-                        DARTPhysicsRow("Gravity", value: labVM.physics.tabs[selectedTab].gravity,
+                        DARTPhysicsRow(label: "Gravity", value: labVM.physics.tabs[selectedTab].gravity,
                                        unit: "m/s²", range: 0...30,
                                        binding: Binding(get:{labVM.physics.tabs[selectedTab].gravity},
                                                        set:{labVM.physics.tabs[selectedTab].gravity=$0}))
-                        DARTPhysicsRow("Pressure", value: labVM.physics.tabs[selectedTab].pressure,
+                        DARTPhysicsRow(label: "Pressure", value: labVM.physics.tabs[selectedTab].pressure,
                                        unit: "psi", range: 0...100,
                                        binding: Binding(get:{labVM.physics.tabs[selectedTab].pressure},
                                                        set:{labVM.physics.tabs[selectedTab].pressure=$0}))
-                        DARTPhysicsRow("Viscosity", value: labVM.physics.tabs[selectedTab].viscosity,
+                        DARTPhysicsRow(label: "Viscosity", value: labVM.physics.tabs[selectedTab].viscosity,
                                        unit: "cP", range: 0...5000,
                                        binding: Binding(get:{labVM.physics.tabs[selectedTab].viscosity},
                                                        set:{labVM.physics.tabs[selectedTab].viscosity=$0}))
