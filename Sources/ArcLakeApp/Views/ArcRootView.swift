@@ -175,7 +175,7 @@ struct ArcHUDBar: View {
                 Label("CFD ACTIVE", systemImage: "wind")
                     .font(.system(size: 8, design: .monospaced))
                     .foregroundColor(.blue)
-                    .padding(.horizontal, 5).padding(.vertical: 2)
+                    .padding(.horizontal, 5).padding(.vertical, 2)
                     .background(Color.blue.opacity(0.15)).clipShape(Capsule())
             }
             Spacer()
