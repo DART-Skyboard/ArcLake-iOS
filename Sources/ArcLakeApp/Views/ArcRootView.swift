@@ -284,6 +284,7 @@ struct DARTSceneTab: View {
 struct DARTSigmaStrip: View {
     @EnvironmentObject var labVM: ArcLabViewModel
     @EnvironmentObject var themeVM: ArcThemeViewModel
+    // Shows active scene name so user always knows which tab they're on
 
     var sigmaVal: Double {
         labVM.physics.tabs[labVM.physics.activeTabIndex].sigmaReadout
@@ -294,8 +295,22 @@ struct DARTSigmaStrip: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            // Left — element count + arc edge
+            // Left — active scene name + element count
             HStack(spacing: 12) {
+                // Active scene indicator
+                HStack(spacing: 4) {
+                    Circle().fill(themeVM.accent).frame(width:5, height:5)
+                    Text(labVM.activeTabIndex < labVM.sceneTabs_data.count
+                         ? labVM.sceneTabs_data[labVM.activeTabIndex].uppercased()
+                         : "SCENE 1")
+                        .font(.system(size:7, weight:.semibold, design:.monospaced))
+                        .foregroundColor(themeVM.accent.opacity(0.8))
+                        .tracking(1)
+                }
+                .padding(.horizontal, 6).padding(.vertical, 2)
+                .background(themeVM.accent.opacity(0.08))
+                .clipShape(Capsule())
+
                 sigmaItem("ATOMS", value: "\(labVM.selectedElements.count)", color: .white.opacity(0.7))
                 if let el = labVM.selectedElements.first {
                     sigmaItem("C=√(d×3)²",
