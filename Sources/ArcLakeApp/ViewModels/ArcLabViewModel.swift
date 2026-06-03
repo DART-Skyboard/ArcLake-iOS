@@ -32,6 +32,7 @@ public final class ArcLabViewModel: ObservableObject {
     @Published public var molDeltaMode: Bool = false
     @Published public var molLabelMode: Bool = false
     @Published public var sceneTabs_data: [String] = ["Scene 1"]
+    @Published public var sceneTabsCFD: [Bool] = [false]
     @Published public var activeTabIndex: Int = 0
 
     public let physics = PhysicsState()
@@ -103,6 +104,34 @@ public final class ArcLabViewModel: ObservableObject {
     }
 
     // Rebuild all atoms when particle resolution changes
+    // MARK: — Scene Tabs (wrappers for RootView)
+    public var sceneTabs: [(id: Int, name: String, isCFDMode: Bool)] {
+        sceneTabs_data.enumerated().map { (i, name) in
+            (id: i, name: name, isCFDMode: sceneTabsCFD[safe: i] ?? false)
+        }
+    }
+
+    public func switchTab(_ index: Int) {
+        guard index < sceneTabs_data.count else { return }
+        activeTabIndex = index
+        log("Switched to \(sceneTabs_data[index])")
+    }
+
+    public func addSceneTab() {
+        sceneTabs_data.append("Scene \(sceneTabs_data.count + 1)")
+        sceneTabsCFD.append(false)
+        activeTabIndex = sceneTabs_data.count - 1
+        clearElements()
+        log("New scene tab: \(sceneTabs_data.last!)")
+    }
+
+    public func removeSceneTab(_ index: Int) {
+        guard sceneTabs_data.count > 1, index < sceneTabs_data.count else { return }
+        sceneTabs_data.remove(at: index)
+        sceneTabsCFD.remove(at: index)
+        if activeTabIndex >= sceneTabs_data.count { activeTabIndex = sceneTabs_data.count - 1 }
+    }
+
     public func rebuildAllAtoms() {
         let elements = selectedElements
         clearElements()
@@ -309,6 +338,52 @@ public final class ArcLabViewModel: ObservableObject {
         log("CFD stopped")
     }
 
+    // MARK: — Mol canvas methods
+    public func addElementToCanvas(_ element: ArcElement) {
+        let pos = CGPoint(x: 80+Double(molAtoms.count%4)*80, y: 120+Double(molAtoms.count/4)*80)
+        molAtoms.append(MolAtomNode(symbol:element.elementSymbol, z:element.protons,
+                                    color:element.category.color, at:pos))
+        isMolCanvasVisible = true
+        log("Added \(element.elementSymbol) to Mol Canvas")
+    }
+
+    public func addToMolCanvas(element: ArcElement) { addElementToCanvas(element) }
+
+    public func addMolBond(from: UUID, to: UUID) {
+        molBonds.removeAll{($0.fromId==from&&$0.toId==to)||($0.fromId==to&&$0.toId==from)}
+        molBonds.append(MolBond(from:from, to:to, order:molBondMode, isDelta:molDeltaMode))
+    }
+
+    public func addBond(from: UUID, to: UUID) {
+        molBonds.removeAll{($0.fromId==from&&$0.toId==to)||($0.fromId==to&&$0.toId==from)}
+        molBonds.append(MolBond(from:from, to:to, order:molBondMode, isDelta:true))
+    }
+
+    public func addDeltaConnection(from: UUID, to: UUID, fromShell: Int, toShell: Int, op: String) {
+        deltaConnections.append(DeltaConnection(from:from, to:to,
+            fromShell:fromShell, toShell:toShell, op:op))
+        log("Δ: shell \(fromShell)→\(toShell) [\(op)]")
+    }
+
+    public func clearMolCanvas() {
+        molAtoms.removeAll(); molBonds.removeAll(); deltaConnections.removeAll()
+    }
+
+    public func addMolCanvasToScene(newTab: Bool) {
+        if newTab { addSceneTab() }
+        for node in molAtoms {
+            if let el = ElementStore.shared.elements.first(where:{$0.protons==node.atomicNumber}) {
+                addElement(el)
+            }
+        }
+        log("Mol Canvas added to \(newTab ? "new":"current") scene")
+    }
+
+    public func rebuildGrid() {
+        scene.rootNode.childNodes.filter{$0.name=="grid"}.forEach{$0.removeFromParentNode()}
+        if showGrid { addGridFloor() }
+    }
+
     public func exportGLB() -> URL? { SCNExportHelper().exportScene(scene, name:"ArcLake_Export") }
 
     public func rebuildGrid() {
@@ -343,17 +418,9 @@ public enum ArcTab: String, CaseIterable {
     }
 }
 public enum SceneMode { case atomic, cfd, mol2D }
-public struct LogEntry: Identifiable {
-    public let id = UUID()
-    public let message: String
-    public let timestamp = Date()
-    public var timeString: String {
-        let f = DateFormatter(); f.dateFormat = "HH:mm:ss"; return f.string(from: timestamp)
+
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
-}
-public struct AlloyComponent: Identifiable {
-    public var id = UUID()
-    public var element: ArcElement
-    public var percentage: Double
-    public var castingOrder: Int
 }

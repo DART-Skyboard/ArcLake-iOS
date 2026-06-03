@@ -39,33 +39,7 @@ public struct ArcRootView: View {
                         }
                 }
 
-                if labVM.isPeriodicTableVisible {
-                    PeriodicTableView()
-                        .frame(width: min(geo.size.width-16, 700),
-                               height: min(geo.size.height*0.62, 550))
-                        .transition(.move(edge:.bottom).combined(with:.opacity))
-                }
-
-                if labVM.isMolCanvasVisible {
-                    MolCanvasView()
-                        .frame(width: geo.size.width - 16,
-                               height: min(geo.size.height * 0.62, 500))
-                        .transition(.opacity)
-                }
-
-                if labVM.isOrbitDeltaVisible, let el = labVM.probeTarget {
-                    OrbitDeltaNodeView(element: el)
-                        .position(x: geo.size.width * 0.5,
-                                  y: geo.size.height * 0.45)
-                        .transition(.scale.combined(with:.opacity))
-                }
-
-                if labVM.isNodeEditorVisible {
-                    NodeEditorView()
-                        .frame(width: min(geo.size.width - 16, 700),
-                               height: min(geo.size.height * 0.8, 600))
-                        .transition(.opacity)
-                }
+                ArcOverlays(geoSize: geo.size)
 
                 // ── HUD bar ─────────────────────────────────────────
                 VStack {
@@ -104,21 +78,21 @@ struct SceneTabBar: View {
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 2) {
-                ForEach(labVM.sceneTabs.indices, id: \.self) { i in
+                ForEach(labVM.sceneTabs_data.indices, id: \.self) { i in
                     Button {
                         labVM.switchTab(i)
                     } label: {
                         HStack(spacing: 4) {
-                            if labVM.sceneTabs[i].isCFDMode {
+                            if labVM.sceneTabsCFD[safe: i] == true {
                                 Circle().fill(Color.blue).frame(width: 5, height: 5)
                             }
-                            Text(labVM.sceneTabs[i].name)
+                            Text(labVM.sceneTabs_data[i])
                                 .font(.system(size: 10, weight: .semibold, design: .monospaced))
                                 .foregroundColor(labVM.activeTabIndex == i ?
                                     themeVM.accent : .white.opacity(0.4))
-                            if labVM.sceneTabs.count > 1 {
+                            if labVM.sceneTabs_data.count > 1 {
                                 Button {
-                                    if labVM.sceneTabs.count > 1 {
+                                    if labVM.sceneTabs_data.count > 1 {
                                         labVM.sceneTabs.remove(at: i)
                                         if labVM.activeTabIndex >= labVM.sceneTabs.count {
                                             labVM.activeTabIndex = labVM.sceneTabs.count - 1

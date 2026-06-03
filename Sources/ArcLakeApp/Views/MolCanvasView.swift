@@ -236,31 +236,32 @@ public struct MolCanvasView: View {
     }
 
     private func handleAtomTap(_ atom: MolAtomNode) {
-        if labVM.molDeltaMode {
+        let vm = labVM  // capture before closure
+        if vm.molDeltaMode {
             // Delta mode — first tap selects from, second tap creates connection
             if let fromId = selectedForBond {
                 if fromId != atom.id {
-                    labVM.addBond(from: fromId, to: atom.id)  // adds as delta bond
+                    vm.addBond(from: fromId, to: atom.id)  // adds as delta bond
                     showDeltaTool = true
                 }
                 selectedForBond = nil
             } else {
                 selectedForBond = atom.id
             }
-            labVM.selectedMolAtomId = atom.id
-        } else if labVM.molLabelMode {
+            vm.selectedMolAtomId = atom.id
+        } else if vm.molLabelMode {
             labVM.selectedMolAtomId = atom.id
         } else {
             // Bond mode — connect atoms
             if let fromId = selectedForBond {
                 if fromId != atom.id {
-                    labVM.addMolBond(from: fromId, to: atom.id)
+                    vm.addMolBond(from: fromId, to: atom.id)
                 }
                 selectedForBond = nil
-                labVM.selectedMolAtomId = nil
+                vm.selectedMolAtomId = nil
             } else {
                 selectedForBond = atom.id
-                labVM.selectedMolAtomId = atom.id
+                vm.selectedMolAtomId = atom.id
             }
         }
     }
@@ -395,7 +396,8 @@ struct DeltaConnectionSheet: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Add") {
                         if labVM.molAtoms.count >= 2 {
-                            labVM.addDeltaConnection(
+                            let lvm = labVM
+                            lvm.addDeltaConnection(
                                 from: labVM.molAtoms[fromAtomIdx].id,
                                 to: labVM.molAtoms[toAtomIdx].id,
                                 fromShell: fromShell, toShell: toShell, op: op)
