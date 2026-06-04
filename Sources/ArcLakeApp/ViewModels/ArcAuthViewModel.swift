@@ -162,15 +162,7 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
         KeychainHelper.delete(key: "arc_github_username")
     }
 
-    // MARK: — PAT (Settings only)
-    // PAT not used in ArcLake standalone app
-        error = nil
-        KeychainHelper.save(key: "arc_github_pat", value: pat)
-        Task { await ArcGitHubClient.shared.setToken(pat) }
-        githubConnected = true; githubUsername = "dartsolarpunk"
-        if !isSignedIn { isSignedIn = true; username = "dartsolarpunk" }
-        Task { await ArcVaultService.shared.setup(githubUsername: "dartsolarpunk") }
-    }
+    // MARK: — PAT not used in ArcLake standalone app
 
     // MARK: — Guest
     public func continueAsGuest() {
