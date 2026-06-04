@@ -44,7 +44,7 @@ public final class ArcThemeViewModel: ObservableObject {
 
     public func cycle() {
         let all = Theme.allCases
-        let idx = (all.firstIndex(of: current) ?? 0 + 1) % all.count
+        let idx = ((all.firstIndex(of: current) ?? 0) + 1) % all.count
         current = all[idx]
     }
 }
