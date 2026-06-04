@@ -85,20 +85,28 @@ jobs:
 
       - name: Export IPA
         run: |
-          xcodebuild -exportArchive \
-            -archivePath "$RUNNER_TEMP/DART.xcarchive" \
-            -exportPath "$RUNNER_TEMP/export" \
-            -exportOptionsPlist ExportOptions.plist \
-            -authenticationKeyPath "$HOME/.appstoreconnect/private_keys/AuthKey_NQXQ595W59.p8" \
-            -authenticationKeyID NQXQ595W59 \
-            -authenticationKeyIssuerID "${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}"
+          # Direct zip method (Xcode 26 compatible, same as ArcLake pipeline)
+          ARCHIVE="$RUNNER_TEMP/DART.xcarchive"
+          APP=$(find "$ARCHIVE/Products/Applications" -name "*.app" | head -1)
+          echo "Packaging: $APP"
+          mkdir -p "$RUNNER_TEMP/Payload"
+          cp -r "$APP" "$RUNNER_TEMP/Payload/"
+          cd "$RUNNER_TEMP"
+          zip -qr "DART.ipa" Payload/
+          mkdir -p "$RUNNER_TEMP/export"
+          cp "$RUNNER_TEMP/DART.ipa" "$RUNNER_TEMP/export/DART.ipa"
+          ls -la "$RUNNER_TEMP/export/"
 
       - name: Upload to TestFlight
         run: |
           IPA=$(find $RUNNER_TEMP/export -name '*.ipa' | head -1)
-          xcrun altool --upload-app \
+          echo "Uploading: $IPA"
+          RESULT=$(xcrun altool --upload-app \
             --type ios \
             --file "$IPA" \
             --apiKey "NQXQ595W59" \
             --apiIssuer "${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}" \
-            --verbose
+            --verbose 2>&1)
+          echo "$RESULT"
+          echo "$RESULT" | grep -i "error\|failed\|invalid\|State_Error" && exit 1 || true
+          echo "✓ DART upload accepted"
