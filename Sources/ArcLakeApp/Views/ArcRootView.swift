@@ -127,10 +127,10 @@ struct DARTTopBar: View {
                             endPoint: .bottomTrailing
                         )
                     )
-                Text("DART")
-                    .font(.custom("Orbitron-Bold", size: 16))
+                Text("ArcLake")
+                    .font(.custom("Orbitron-Bold", size: 13))
                     .foregroundColor(.white)
-                    .tracking(4)
+                    .tracking(2)
                 Text("v1.45")
                     .font(.system(size: 9, design: .monospaced))
                     .foregroundColor(.white.opacity(0.25))
