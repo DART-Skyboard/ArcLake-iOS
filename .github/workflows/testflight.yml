@@ -74,6 +74,7 @@ jobs:
       - name: Archive
         run: |
           PP_FINAL="${PROFILE_UUID:-4f27288c-6ada-4a8b-b93a-b42dec94a720}"
+          /usr/local/bin/xcodegen generate || echo "xcodegen already ran"
           xcodebuild archive \
             -project ArcLake.xcodeproj \
             -scheme ArcLakeApp \
@@ -155,7 +156,9 @@ jobs:
           curl -sL https://github.com/yonaskolb/XcodeGen/releases/download/2.42.0/xcodegen.zip -o xcodegen.zip
           unzip -q xcodegen.zip
           sudo mv xcodegen /usr/local/bin/xcodegen
-          xcodegen generate
+          ls -la /usr/local/bin/xcodegen
+          /usr/local/bin/xcodegen generate
+          /usr/local/bin/xcodegen generate || echo "xcodegen already ran"
           xcodebuild archive \
             -scheme DARTApp -configuration Release \
             -archivePath $RUNNER_TEMP/DART.xcarchive \
