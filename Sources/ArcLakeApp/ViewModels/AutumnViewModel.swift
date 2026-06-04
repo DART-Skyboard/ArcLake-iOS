@@ -8,15 +8,15 @@ import Speech
 // and can control ArcLabViewModel (scene, elements, canvas, node editor).
 
 @MainActor
-public final class AutumnViewModel: ObservableObject {
-    public static let shared = AutumnViewModel()
+final class AutumnViewModel: ObservableObject {
+    static let shared = AutumnViewModel()
 
-    @Published public var messages: [AutumnMessage] = []
-    @Published public var attachments: [AutumnAttachment] = []
-    @Published public var isListening = false
-    @Published public var isTyping = false
-    @Published public var journalEntries: [JournalEntry] = []
-    @Published public var isConnected = false
+    @Published var messages: [AutumnMessage] = []
+    @Published var attachments: [AutumnAttachment] = []
+    @Published var isListening = false
+    @Published var isTyping = false
+    @Published var journalEntries: [JournalEntry] = []
+    @Published var isConnected = false
 
     // GAS presence URL (deployed from leatr-ash/presence.gs)
     private let gasURL = "https://script.google.com/macros/s/AKfycbzBRPNAutumnGASEndpointLEATR/exec"
@@ -36,7 +36,7 @@ public final class AutumnViewModel: ObservableObject {
     }
 
     // MARK: — Send message
-    public func send(_ text: String, labVM: ArcLabViewModel) async {
+    func send(_ text: String, labVM: ArcLabViewModel) async {
         // Add user message
         messages.append(AutumnMessage(role:.user, text:text, timestamp:Date(),
             attachment: attachments.first))
@@ -122,7 +122,7 @@ public final class AutumnViewModel: ObservableObject {
     }
 
     // MARK: — Voice input
-    public func startListening() {
+    func startListening() {
         SFSpeechRecognizer.requestAuthorization { status in
             guard status == .authorized else { return }
             DispatchQueue.main.async { self._startRecognition() }
@@ -153,7 +153,7 @@ public final class AutumnViewModel: ObservableObject {
         }
     }
 
-    public func stopListening() {
+    func stopListening() {
         isListening = false
         audioEngine.stop()
         audioEngine.inputNode.removeTap(onBus:0)
@@ -162,10 +162,10 @@ public final class AutumnViewModel: ObservableObject {
     }
 
     // MARK: — Attachments
-    public func addAttachments(_ atts: [AutumnAttachment]) {
+    func addAttachments(_ atts: [AutumnAttachment]) {
         attachments.append(contentsOf:atts)
     }
-    public func removeAttachment(id: UUID) {
+    func removeAttachment(id: UUID) {
         attachments.removeAll { $0.id == id }
     }
 
@@ -207,18 +207,18 @@ public final class AutumnViewModel: ObservableObject {
 }
 
 // MARK: — Models
-public struct AutumnMessage: Identifiable {
-    public let id = UUID()
-    public let role: Role
-    public let text: String
-    public let timestamp: Date
-    public var attachment: AutumnAttachment? = nil
-    public enum Role { case user, autumn }
+struct AutumnMessage: Identifiable {
+    let id = UUID()
+    let role: Role
+    let text: String
+    let timestamp: Date
+    var attachment: AutumnAttachment? = nil
+    enum Role { case user, autumn }
 }
 
-public struct JournalEntry: Codable, Identifiable {
+struct JournalEntry: Codable, Identifiable {
     public let id: String
     public let thought: String
     public let response: String
-    public let timestamp: Date
+    let timestamp: Date
 }
