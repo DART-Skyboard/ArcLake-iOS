@@ -103,6 +103,11 @@ jobs:
 
       - name: Upload to TestFlight
         run: |
+          KEY_PATH="$HOME/.appstoreconnect/private_keys/AuthKey_NQXQ595W59.p8"
+          # Copy key to ALL locations altool searches
+          mkdir -p ~/private_keys ~/.private_keys
+          cp "$KEY_PATH" ~/private_keys/AuthKey_NQXQ595W59.p8 2>/dev/null || true
+          cp "$KEY_PATH" ~/.private_keys/AuthKey_NQXQ595W59.p8 2>/dev/null || true
           IPA=$(find $RUNNER_TEMP/export -name '*.ipa' | head -1)
           echo "Uploading: $IPA"
           RESULT=$(xcrun altool --upload-app \
@@ -110,6 +115,7 @@ jobs:
             --file "$IPA" \
             --apiKey "NQXQ595W59" \
             --apiIssuer "${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}" \
+            --apiKeyPath "$KEY_PATH" \
             --verbose 2>&1)
           echo "$RESULT"
           if echo "$RESULT" | grep -iE "UPLOAD FAILED|State_Error|Validation failed" | grep -v "No errors"; then
