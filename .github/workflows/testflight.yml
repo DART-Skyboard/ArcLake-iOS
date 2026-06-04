@@ -150,13 +150,11 @@ jobs:
           echo "$DART_PROFILE_BASE64" | base64 --decode > \
             ~/Library/MobileDevice/Provisioning\ Profiles/DARTGitHubFlow.mobileprovision
 
-      - name: Install xcodegen
+      - name: Install xcodegen + Generate + Archive
         run: |
           curl -sL https://github.com/yonaskolb/XcodeGen/releases/download/2.42.0/xcodegen.zip -o xcodegen.zip
-          unzip -q xcodegen.zip && sudo mv xcodegen /usr/local/bin/xcodegen
-
-      - name: Generate + Archive
-        run: |
+          unzip -q xcodegen.zip
+          sudo mv xcodegen /usr/local/bin/xcodegen
           xcodegen generate
           xcodebuild archive \
             -scheme DARTApp -configuration Release \
