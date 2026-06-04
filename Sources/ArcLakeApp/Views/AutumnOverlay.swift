@@ -219,8 +219,6 @@ struct AutumnChatSheet: View {
         .presentationDetents([.fraction(0.7),.large])
         }
     }
-}
-
 // MARK: — Message bubble
 struct AutumnMessageBubble: View {
     let msg: AutumnMessage
