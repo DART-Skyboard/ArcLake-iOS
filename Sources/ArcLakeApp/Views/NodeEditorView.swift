@@ -104,6 +104,7 @@ struct NodeEditorView: View {
                             .offset(canvasOffset)
                     }
                 }
+                .coordinateSpace(name: "nodeCanvas")
                 .gesture(DragGesture().onChanged { val in
                     canvasOffset = CGSize(width: dragOffset.width + val.translation.width,
                                          height: dragOffset.height + val.translation.height)
@@ -233,9 +234,15 @@ struct EditorNodeView: View {
             .stroke(pendingFrom == node.id ? accent : node.color.opacity(0.4), lineWidth: 0.8))
         .shadow(color: node.color.opacity(0.1), radius: 4)
         .position(node.position)
-        .gesture(DragGesture().onChanged { val in
-            node.position = CGPoint(x: node.position.x + val.translation.width,
-                                    y: node.position.y + val.translation.height)
-        })
+        .gesture(
+            DragGesture(minimumDistance: 2, coordinateSpace: .named("nodeCanvas"))
+                .onChanged { val in
+                    // Use startLocation + translation for stable, non-accumulating drag
+                    node.position = CGPoint(
+                        x: val.startLocation.x + val.translation.width,
+                        y: val.startLocation.y + val.translation.height
+                    )
+                }
+        )
     }
 }
