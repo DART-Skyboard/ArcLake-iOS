@@ -43,38 +43,32 @@ public struct PeriodicTableView: View {
         GeometryReader { geo in
             VStack(spacing: 0) {
                 // ── Header — always visible, close button always reachable ──
-                HStack {
+                HStack(spacing: 8) {
                     Image(systemName: "tablecells")
                         .foregroundColor(themeVM.accent)
-                    HStack {
+                        .font(.system(size: 14))
                     Text("Periodic Table")
+                        .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                        .foregroundColor(.white)
                     Spacer()
                     // Mode toggle
                     Button {
                         labVM.periodicTableMode = labVM.periodicTableMode == .addToScene ? .addToCanvas : .addToScene
                     } label: {
-                        Label(labVM.periodicTableMode == .addToScene ? "→ 3D Scene" : "→ Canvas",
-                              systemImage: labVM.periodicTableMode == .addToScene ? "cube" : "scribble")
-                            .font(.system(size: 10, design: .monospaced))
+                        Text(labVM.periodicTableMode == .addToScene ? "→ Scene" : "→ Canvas")
+                            .font(.system(size: 9, design: .monospaced))
                             .foregroundColor(labVM.periodicTableMode == .addToCanvas ? .purple : themeVM.accent)
-                            .padding(.horizontal, 8).padding(.vertical, 4)
+                            .padding(.horizontal, 7).padding(.vertical, 3)
                             .background((labVM.periodicTableMode == .addToCanvas ? Color.purple : themeVM.accent).opacity(0.12))
                             .clipShape(Capsule())
                     }
-                }.frame(maxWidth: .infinity)
-                Text("ignored_placeholder_never_rendered")
-                        .font(.system(.subheadline, design: .monospaced, weight: .bold))
-                        .foregroundColor(themeVM.accent)
-                    Spacer()
                     Button {
-                        withAnimation(.spring()) {
-                            labVM.isPeriodicTableVisible = false
-                        }
+                        withAnimation(.spring()) { labVM.isPeriodicTableVisible = false }
                     } label: {
                         Image(systemName: "xmark.circle.fill")
-                            .font(.title3)
-                            .foregroundColor(.white.opacity(0.8))
-                            .frame(width: 44, height: 44)  // large tap target
+                            .font(.system(size: 18))
+                            .foregroundColor(.white.opacity(0.7))
+                            .frame(width: 36, height: 36)
                     }
                 }
                 .padding(.horizontal, 12)
