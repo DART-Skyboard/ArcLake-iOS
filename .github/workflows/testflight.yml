@@ -155,26 +155,28 @@ jobs:
         run: |
           curl -sL https://github.com/yonaskolb/XcodeGen/releases/download/2.42.0/xcodegen.zip -o xcodegen.zip
           unzip -q xcodegen.zip
-          # The zip extracts to a directory named 'xcodegen' containing the binary
-          sudo cp xcodegen/bin/xcodegen /usr/local/bin/xcodegen || sudo cp xcodegen/xcodegen /usr/local/bin/xcodegen || true
-          ls xcodegen/
-          which xcodegen || ls /usr/local/bin/xcodegen
+          sudo cp xcodegen/bin/xcodegen /usr/local/bin/xcodegen
           xcodegen generate
           xcodebuild archive \
-            -scheme DARTApp -configuration Release \
+            -scheme DARTApp \
+            -configuration Release \
             -archivePath $RUNNER_TEMP/DART.xcarchive \
             -destination "generic/platform=iOS" \
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="iPhone Distribution" \
             DEVELOPMENT_TEAM=L7AHWS9Q6V \
-            PROVISIONING_PROFILE_SPECIFIER=DARTGitHubFlow | xcpretty
+            PROVISIONING_PROFILE_SPECIFIER=DARTGitHubFlow
+          echo "Archive contents:"
+          ls $RUNNER_TEMP/DART.xcarchive/Products/Applications/ || true
 
       - name: Export IPA
         run: |
-          APP=$(find $RUNNER_TEMP/DART.xcarchive/Products -name "*.app" | head -1)
+          APP=$(find $RUNNER_TEMP/DART.xcarchive -name "*.app" | head -1)
+          echo "App found: $APP"
           mkdir -p $RUNNER_TEMP/Payload
           cp -r "$APP" $RUNNER_TEMP/Payload/
           cd $RUNNER_TEMP && zip -qr DART.ipa Payload/
+          echo "IPA size: $(du -sh $RUNNER_TEMP/DART.ipa)"
 
       - name: Upload to TestFlight
         run: |
