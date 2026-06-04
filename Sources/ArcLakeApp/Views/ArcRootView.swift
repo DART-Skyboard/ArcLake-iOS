@@ -29,7 +29,6 @@ public struct DARTRootView: View {
                     ZStack {
                         ArcSceneView()
                             .frame(height: geo.size.height * 0.44)
-                            .allowsHitTesting(true)
 
                         // CFD badge
                         if labVM.isCFDActive {
@@ -125,10 +124,10 @@ struct DARTTopBar: View {
                             endPoint: .bottomTrailing
                         )
                     )
-                Text("ArcLake")
-                    .font(.custom("Orbitron-Bold", size: 14))
+                Text("DART")
+                    .font(.custom("Orbitron-Bold", size: 16))
                     .foregroundColor(.white)
-                    .tracking(2)
+                    .tracking(4)
                 Text("v1.45")
                     .font(.system(size: 9, design: .monospaced))
                     .foregroundColor(.white.opacity(0.25))
