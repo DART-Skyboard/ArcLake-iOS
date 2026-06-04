@@ -9,7 +9,7 @@ import SwiftUI
 
 @MainActor
 public final class ArcSupportSubscriptionService: ObservableObject {
-    public static let shared = SupportSubscriptionService()
+    public static let shared = ArcSupportSubscriptionService()
 
     // Set this to the correct product ID for each app
     public var productID: String = "DART-Meadow-LLC.Cotharticren.support.monthly"
