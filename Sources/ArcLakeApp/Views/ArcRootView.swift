@@ -65,6 +65,7 @@ public struct DARTRootView: View {
 
 // MARK: — Background
 struct DARTBackground: View {
+    @EnvironmentObject var themeVM: ArcThemeViewModel
     var body: some View {
         ZStack {
             Color(red: 0.012, green: 0.020, blue: 0.042)
@@ -110,9 +111,11 @@ struct DARTTopBar: View {
                         )
                     )
                 Text("ArcLake")
-                    .font(.custom("Orbitron-Bold", size: 13))
+                    .font(.custom("Orbitron-Bold", size: 12))
                     .foregroundColor(.white)
-                    .tracking(2)
+                    .tracking(1)
+                    .lineLimit(1)
+                    .fixedSize()
                 Text("v1.45")
                     .font(.system(size: 9, design: .monospaced))
                     .foregroundColor(.white.opacity(0.25))
@@ -169,8 +172,8 @@ struct DARTTopBar: View {
                     withAnimation(.spring()) { labVM.isNodeEditorVisible.toggle() }
                 }
                 // Theme
-                DARTIconButton(icon: "paintpalette", active: false) {
-                    withAnimation { themeVM.cycle() }
+                DARTIconButton(icon: "paintpalette", active: themeVM.current != .stealth) {
+                    withAnimation(.easeInOut(duration: 0.25)) { themeVM.cycle() }
                 }
 
                 // Avatar
