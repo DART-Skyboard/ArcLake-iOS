@@ -292,3 +292,37 @@ public struct ArcSavedAccount: Codable, Identifiable {
     public let id: String
     public let displayName: String
 }
+
+
+// MARK: — KeychainHelper (local to ArcLake)
+struct KeychainHelper {
+    static func save(key: String, value: String) {
+        let data = Data(value.utf8)
+        let q: [String: Any] = [
+            kSecClass as String:       kSecClassGenericPassword,
+            kSecAttrAccount as String: key,
+            kSecValueData as String:   data
+        ]
+        SecItemDelete(q as CFDictionary)
+        SecItemAdd(q as CFDictionary, nil)
+    }
+    static func load(key: String) -> String? {
+        let q: [String: Any] = [
+            kSecClass as String:       kSecClassGenericPassword,
+            kSecAttrAccount as String: key,
+            kSecReturnData as String:  true,
+            kSecMatchLimit as String:  kSecMatchLimitOne
+        ]
+        var result: AnyObject?
+        guard SecItemCopyMatching(q as CFDictionary, &result) == errSecSuccess,
+              let data = result as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+    static func delete(key: String) {
+        let q: [String: Any] = [
+            kSecClass as String:       kSecClassGenericPassword,
+            kSecAttrAccount as String: key
+        ]
+        SecItemDelete(q as CFDictionary)
+    }
+}
