@@ -78,7 +78,6 @@ struct AutumnChatSheet: View {
     @EnvironmentObject var themeVM: ArcThemeViewModel
     @EnvironmentObject var vm: AutumnViewModel
     @State private var input = ""
-    @State private var showAttachPicker = false
     @FocusState private var focused: Bool
     @Environment(\.dismiss) var dismiss
 
@@ -165,13 +164,7 @@ struct AutumnChatSheet: View {
                     VStack(spacing:0) {
                         Divider().background(themeVM.accent.opacity(0.12))
                         HStack(spacing:8) {
-                            // Attach button
-                            Button { showAttachPicker=true } label: {
-                                Image(systemName:"paperclip")
-                                    .font(.system(size:16))
-                                    .foregroundColor(themeVM.accent.opacity(0.7))
-                                    .frame(width:32,height:32)
-                            }
+
 
                             // Text field
                             TextField("Ask Autumn...",text:$input,axis:.vertical)
@@ -224,8 +217,6 @@ struct AutumnChatSheet: View {
             .navigationBarHidden(true)
         }
         .presentationDetents([.fraction(0.7),.large])
-        .sheet(isPresented:$showAttachPicker) {
-            AutumnAttachPicker { items in vm.addAttachments(items) }
         }
     }
 }
@@ -246,9 +237,7 @@ struct AutumnMessageBubble: View {
                 }
             }
             VStack(alignment:isAutumn ? .leading : .trailing,spacing:3) {
-                if let att = msg.attachment {
-                    AttachmentPreview(att:att, accent:accent)
-                }
+// attachment preview (coming soon)
                 if !msg.text.isEmpty {
                     Text(msg.text)
                         .font(.system(size:12,design:.monospaced))
@@ -308,75 +297,8 @@ struct AutumnAttachment: Identifiable {
     }
 }
 
-struct AttachmentChip: View {
-    let att: AutumnAttachment
-    let accent: Color
-    let onRemove: () -> Void
-    var body: some View {
-        HStack(spacing:5) {
-            Image(systemName:att.icon).font(.system(size:10)).foregroundColor(accent)
-            Text(att.name).font(.system(size:9,design:.monospaced))
-                .foregroundColor(.white.opacity(0.7)).lineLimit(1)
-            Button(action:onRemove) {
-                Image(systemName:"xmark").font(.system(size:7)).foregroundColor(.white.opacity(0.4))
-            }
-        }
-        .padding(.horizontal,8).padding(.vertical,4)
-        .background(accent.opacity(0.08))
-        .clipShape(Capsule())
-        .overlay(Capsule().stroke(accent.opacity(0.2),lineWidth:0.6))
-    }
-}
 
-struct AttachmentPreview: View {
-    let att: AutumnAttachment
-    let accent: Color
-    var body: some View {
-        HStack(spacing:6) {
-            Image(systemName:att.icon).font(.system(size:12)).foregroundColor(accent)
-            Text(att.name).font(.system(size:10,design:.monospaced))
-                .foregroundColor(.white.opacity(0.6)).lineLimit(1)
-        }
-        .padding(.horizontal,8).padding(.vertical,5)
-        .background(accent.opacity(0.07))
-        .clipShape(RoundedRectangle(cornerRadius:7))
-    }
-}
 
-// MARK: — Attachment Picker
-struct AutumnAttachPicker: UIViewControllerRepresentable {
-    let onPick: ([AutumnAttachment]) -> Void
-    func makeUIViewController(context:Context) -> UIDocumentPickerViewController {
-        let types: [UTType] = [.image,.pdf,.text,.sourceCode,.movie,.audio,.data]
-        let vc = UIDocumentPickerViewController(forOpeningContentTypes:types,asCopy:true)
-        vc.allowsMultipleSelection = true
-        vc.delegate = context.coordinator
-        return vc
-    }
-    func updateUIViewController(_:UIDocumentPickerViewController,context:Context) {}
-    func makeCoordinator() -> Coordinator { Coordinator(onPick:onPick) }
-    class Coordinator: NSObject,UIDocumentPickerDelegate {
-        let onPick: ([AutumnAttachment]) -> Void
-        init(onPick:@escaping([AutumnAttachment])->Void) { self.onPick=onPick }
-        func documentPicker(_:UIDocumentPickerViewController,didPickDocumentsAt urls:[URL]) {
-            let atts = urls.map { url -> AutumnAttachment in
-                let ext = url.pathExtension.lowercased()
-                let type: AutumnAttachment.AttachmentType
-                switch ext {
-                case "jpg","jpeg","png","gif","heic","webp": type = .image
-                case "pdf": type = .pdf
-                case "txt","md": type = .text
-                case "swift","py","js","ts","html","css","json": type = .code
-                case "mp4","mov","m4v": type = .video
-                case "mp3","m4a","wav","aac": type = .audio
-                default: type = .unknown
-                }
-                let data = try? Data(contentsOf:url)
-                return AutumnAttachment(name:url.lastPathComponent,type:type,data:data,url:url)
-            }
-            onPick(atts)
-        }
-    }
-}
+
 
 import UniformTypeIdentifiers
