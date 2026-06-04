@@ -56,13 +56,12 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.dartmeadow.arclake
         DEVELOPMENT_TEAM: L7AHWS9Q6V
         CODE_SIGN_STYLE: Automatic
-        CODE_SIGN_IDENTITY: "iPhone Distribution"
         SWIFT_VERSION: "5.9"
         CODE_SIGN_ENTITLEMENTS: Sources/ArcLakeApp/ArcLakeApp.entitlements
         ENABLE_USER_SCRIPT_SANDBOXING: NO
         SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
         TARGETED_DEVICE_FAMILY: "1,2"
-        CURRENT_PROJECT_VERSION: "33"
+        CURRENT_PROJECT_VERSION: "34"
         MARKETING_VERSION: "1.5.0"
       configs:
         Debug:
