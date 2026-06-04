@@ -52,19 +52,24 @@ public struct DARTRootView: View {
                     DARTBottomPanel()
                 }
 
-                // ── Dim overlay ─────────────────────────────────────
+                // ── Dim overlay — only covers scene+panels, NOT the top bar ──
                 let showDim = labVM.isPeriodicTableVisible || labVM.isMolCanvasVisible ||
                               labVM.isOrbitDeltaVisible || labVM.isNodeEditorVisible
                 if showDim {
-                    Color.black.opacity(0.55).ignoresSafeArea()
-                        .onTapGesture {
-                            withAnimation(.easeOut(duration: 0.2)) {
-                                labVM.isPeriodicTableVisible = false
-                                labVM.isMolCanvasVisible     = false
-                                labVM.isOrbitDeltaVisible    = false
-                                labVM.isNodeEditorVisible    = false
+                    VStack(spacing: 0) {
+                        // Leave top bar height clear so buttons stay tappable
+                        Color.clear.frame(height: 44)
+                        Color.black.opacity(0.55)
+                            .ignoresSafeArea(edges: .bottom)
+                            .onTapGesture {
+                                withAnimation(.easeOut(duration: 0.2)) {
+                                    labVM.isPeriodicTableVisible = false
+                                    labVM.isMolCanvasVisible     = false
+                                    labVM.isOrbitDeltaVisible    = false
+                                    labVM.isNodeEditorVisible    = false
+                                }
                             }
-                        }
+                    }
                 }
 
                 // ── Overlay panels ──────────────────────────────────
@@ -124,10 +129,10 @@ struct DARTTopBar: View {
                             endPoint: .bottomTrailing
                         )
                     )
-                Text("DART")
-                    .font(.custom("Orbitron-Bold", size: 16))
+                Text("ArcLake")
+                    .font(.custom("Orbitron-Bold", size: 14))
                     .foregroundColor(.white)
-                    .tracking(4)
+                    .tracking(2)
                 Text("v1.45")
                     .font(.system(size: 9, design: .monospaced))
                     .foregroundColor(.white.opacity(0.25))
@@ -165,8 +170,7 @@ struct DARTTopBar: View {
             // Right controls
             HStack(spacing: 4) {
                 // Grid toggle
-                DARTIconButton(icon: labVM.showGrid ? "grid" : "grid.slash",
-                               active: labVM.showGrid) {
+                DARTIconButton(icon: "number", active: labVM.showGrid) {
                     labVM.showGrid.toggle()
                     labVM.rebuildGrid()
                 }
