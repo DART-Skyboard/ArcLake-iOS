@@ -60,6 +60,9 @@ public struct DARTRootView: View {
         }
         .preferredColorScheme(.dark)
         .sheet(isPresented: $showProfile) { ArcProfileSheet() }
+        .overlay(alignment: .bottomTrailing) {
+            AutumnOverlay()
+        }
     }
 }
 
@@ -153,12 +156,6 @@ struct DARTTopBar: View {
             // Right controls
             HStack(spacing: 4) {
                 // Grid toggle
-                DARTIconButton(icon: labVM.showGrid ? "grid" : "grid.slash",
-                               active: labVM.showGrid) {
-                    labVM.showGrid.toggle()
-                    labVM.rebuildGrid()
-                }
-                // PT
                 DARTIconButton(icon: "number", active: labVM.showGrid) {
                     labVM.showGrid.toggle(); labVM.rebuildGrid()
                 }
