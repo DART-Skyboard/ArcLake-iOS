@@ -1,132 +1,157 @@
 import SwiftUI
 
-/// Overlay panels — draggable via top grab bar, no whole-panel gesture conflict
+// MARK: — ArcOverlays
+// Single source of truth for all floating panels.
+// Each panel uses sheet-style presentation anchored to screen center,
+// draggable by its full header bar.
 struct ArcOverlays: View {
     let geoSize: CGSize
     @EnvironmentObject var labVM: ArcLabViewModel
     @EnvironmentObject var themeVM: ArcThemeViewModel
 
-    // Each panel remembers its drag position independently
-    @State private var ptPos    = CGPoint(x: 0, y: 0)   // periodic table
-    @State private var mcPos    = CGPoint(x: 0, y: 0)   // mol canvas
-    @State private var nodePos  = CGPoint(x: 0, y: 0)   // node editor
-    @State private var probePos = CGPoint(x: 0, y: 0)   // probe/orbit delta
-
     var body: some View {
+        // Use individual ZStacks so panels don't interfere with each other
         ZStack {
             if labVM.isPeriodicTableVisible {
-                FloatingPanel(
-                    pos: $ptPos, geoSize: geoSize,
-                    width: min(geoSize.width - 16, 700),
-                    height: min(geoSize.height * 0.62, 550)
+                ArcFloatingPanel(
+                    title:  "Periodic Table",
+                    icon:   "tablecells",
+                    color:  themeVM.accent,
+                    geoSize: geoSize,
+                    onClose: { labVM.isPeriodicTableVisible = false }
                 ) {
                     PeriodicTableView()
                 }
-                .transition(.scale(scale: 0.95).combined(with: .opacity))
+                .frame(width: geoSize.width - 20, height: min(geoSize.height * 0.64, 560))
+                .id("pt")
             }
 
             if labVM.isMolCanvasVisible {
-                FloatingPanel(
-                    pos: $mcPos, geoSize: geoSize,
-                    width: geoSize.width - 16,
-                    height: min(geoSize.height * 0.7, 560)
+                ArcFloatingPanel(
+                    title:  "Mol Canvas",
+                    icon:   "scribble",
+                    color:  .purple,
+                    geoSize: geoSize,
+                    onClose: { labVM.isMolCanvasVisible = false }
                 ) {
                     MolCanvasView()
                 }
-                .transition(.scale(scale: 0.95).combined(with: .opacity))
+                .frame(width: geoSize.width - 20, height: min(geoSize.height * 0.72, 580))
+                .id("mc")
             }
 
             if labVM.isNodeEditorVisible {
-                FloatingPanel(
-                    pos: $nodePos, geoSize: geoSize,
-                    width: min(geoSize.width - 16, 700),
-                    height: min(geoSize.height * 0.8, 600)
+                ArcFloatingPanel(
+                    title:  "Node Editor",
+                    icon:   "circle.connected.to.line.below",
+                    color:  .orange,
+                    geoSize: geoSize,
+                    onClose: { labVM.isNodeEditorVisible = false }
                 ) {
                     NodeEditorView()
                 }
-                .transition(.scale(scale: 0.95).combined(with: .opacity))
+                .frame(width: geoSize.width - 20, height: min(geoSize.height * 0.78, 620))
+                .id("ne")
             }
 
             if labVM.isOrbitDeltaVisible, let el = labVM.probeTarget {
-                FloatingPanel(
-                    pos: $probePos, geoSize: geoSize,
-                    width: min(geoSize.width - 16, 420),
-                    height: 380
+                ArcFloatingPanel(
+                    title:  "\(el.elementSymbol) — \(el.elementName)",
+                    icon:   "atom",
+                    color:  Color(el.elementColor),
+                    geoSize: geoSize,
+                    onClose: { labVM.isOrbitDeltaVisible = false }
                 ) {
                     OrbitDeltaNodeView(element: el)
                 }
-                .transition(.scale(scale: 0.9).combined(with: .opacity))
-                // Reset position when new probe opens so it appears centered
-                .onAppear {
-                    probePos = CGPoint(
-                        x: geoSize.width * 0.5,
-                        y: geoSize.height * 0.40)
-                }
+                .frame(width: min(geoSize.width - 20, 400), height: 360)
+                .id("probe-\(el.id)")
             }
         }
     }
 }
 
-// MARK: — FloatingPanel
-/// A panel that positions itself at `pos` and can be dragged by its grab bar.
-/// Uses position() not offset() to avoid the shaking/redraw issue that offset causes
-/// when a @State changes rapidly during drag.
-struct FloatingPanel<Content: View>: View {
-    @Binding var pos: CGPoint
+// MARK: — ArcFloatingPanel
+// A single draggable panel.
+// Key: offset() NOT position() — offset is relative to SwiftUI layout center,
+// which prevents the "panel jumps to 0,0" bug and the shaking.
+// Drag moves offset from its last resting place (stored in dragBase).
+struct ArcFloatingPanel<Content: View>: View {
+    let title: String
+    let icon: String
+    let color: Color
     let geoSize: CGSize
-    let width: CGFloat
-    let height: CGFloat
+    let onClose: () -> Void
     @ViewBuilder let content: () -> Content
 
-    // Drag state — track start position of each drag gesture
-    @State private var dragStart = CGPoint.zero
+    @State private var offset   = CGSize.zero   // current panel position offset
+    @State private var dragBase = CGSize.zero   // offset at gesture start
 
     var body: some View {
         VStack(spacing: 0) {
-            // ── Grab bar ─────────────────────────────────────────
-            HStack {
+            // ── Drag header ──────────────────────────────────────
+            HStack(spacing: 8) {
+                // Drag indicator
                 Capsule()
-                    .fill(Color.white.opacity(0.2))
-                    .frame(width: 36, height: 4)
+                    .fill(Color.white.opacity(0.25))
+                    .frame(width: 32, height: 3)
+                    .padding(.leading, 8)
+
+                Image(systemName: icon)
+                    .font(.system(size: 11))
+                    .foregroundColor(color)
+
+                Text(title.uppercased())
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundColor(.white)
+                    .tracking(1)
+                    .lineLimit(1)
+
+                Spacer()
+
+                Button { onClose() } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(.white.opacity(0.5))
+                        .frame(width: 28, height: 28)
+                        .background(Color.white.opacity(0.06))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+                .padding(.trailing, 10)
             }
-            .frame(maxWidth: .infinity)
-            .frame(height: 22)
-            .background(Color.white.opacity(0.03))
+            .frame(height: 40)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(color.opacity(0.08))
             .contentShape(Rectangle())
+            // ── Drag gesture on header only ──────────────────────
             .gesture(
-                DragGesture(minimumDistance: 1)
+                DragGesture(minimumDistance: 3, coordinateSpace: .global)
                     .onChanged { val in
-                        // Move panel: add delta from drag start
-                        pos = CGPoint(
-                            x: dragStart.x + val.translation.width,
-                            y: dragStart.y + val.translation.height)
+                        offset = CGSize(
+                            width:  dragBase.width  + val.translation.width,
+                            height: dragBase.height + val.translation.height)
                     }
                     .onEnded { _ in
-                        // Clamp to screen bounds so panel can't be lost off-screen
-                        let hw = width / 2; let hh = height / 2
-                        pos = CGPoint(
-                            x: min(max(pos.x, hw + 8), geoSize.width  - hw - 8),
-                            y: min(max(pos.y, hh + 8), geoSize.height - hh - 8))
-                        dragStart = pos
+                        dragBase = offset   // save resting position
                     }
             )
 
-            // ── Content ──────────────────────────────────────────
+            Divider().background(color.opacity(0.2))
+
+            // ── Panel content ────────────────────────────────────
             content()
         }
-        .frame(width: width, height: height)
-        .background(Color(red:0.06, green:0.09, blue:0.15).opacity(0.97))
+        .background(
+            Color(red:0.06, green:0.09, blue:0.16)
+                .opacity(0.97)
+        )
         .clipShape(RoundedRectangle(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14)
-            .stroke(Color.white.opacity(0.08), lineWidth: 0.7))
-        .shadow(color: .black.opacity(0.5), radius: 20)
-        .position(pos)  // position() not offset() — no shaking
-        .onAppear {
-            // Default: center the panel on first appear
-            if pos == .zero {
-                pos = CGPoint(x: geoSize.width / 2, y: geoSize.height / 2)
-                dragStart = pos
-            }
-        }
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(Color.white.opacity(0.09), lineWidth: 0.8)
+        )
+        .shadow(color: .black.opacity(0.6), radius: 24, y: 8)
+        .offset(offset)                 // move by drag offset, centered by default
+        .transition(.opacity.combined(with: .scale(scale: 0.96)))
     }
 }
