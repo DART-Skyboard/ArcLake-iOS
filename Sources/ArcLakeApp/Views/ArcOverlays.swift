@@ -58,7 +58,7 @@ struct ArcOverlays: View {
                 ArcFloatingPanel(
                     title:  "\(el.elementSymbol) — \(el.elementName)",
                     icon:   "atom",
-                    color:  Color(el.elementColor),
+                    color:  Color(el.category.color),
                     geoSize: geoSize,
                     onClose: { labVM.isOrbitDeltaVisible = false }
                 ) {
