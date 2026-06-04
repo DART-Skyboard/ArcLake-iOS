@@ -71,9 +71,16 @@ public struct ArcSceneView: UIViewRepresentable {
     }
 
     public func updateUIView(_ uiView: SCNView, context: Context) {
-        // Swap scene when active tab changes — this is how tab switching works
+        // Swap scene when active tab changes — ensure camera exists in new scene
         if uiView.scene !== labVM.scene {
             uiView.scene = labVM.scene
+            // Re-add camera to the new scene so orbit controls work immediately
+            let coord = context.coordinator
+            if let cam = coord.cameraNode {
+                cam.removeFromParentNode()
+                labVM.scene.rootNode.addChildNode(cam)
+                coord.resetView(nil)
+            }
         }
     }
     public func makeCoordinator() -> Coordinator { Coordinator(labVM: labVM) }
@@ -100,7 +107,7 @@ public struct ArcSceneView: UIViewRepresentable {
 
         // ── 1-finger = orbit ──────────────────────────────────────
         @objc func handleOrbit(_ g: UIPanGestureRecognizer) {
-            guard let v = scnView else { return }
+            guard let v = scnView, cameraNode != nil else { return }
             if g.state == .began { s_theta = theta; s_phi = phi }
             if g.state == .changed {
                 let t = g.translation(in: v)
