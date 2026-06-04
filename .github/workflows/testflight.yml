@@ -116,72 +116,9 @@ jobs:
           echo "✓ Upload accepted"
 
   build-dart:
-    runs-on: macos-15
-    timeout-minutes: 60
-    steps:
-      - name: Checkout DART-iOS
-        uses: actions/checkout@v4
-        with:
-          repository: DART-Skyboard/DART-iOS
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Select Xcode 26.3
-        run: sudo xcode-select -s /Applications/Xcode_26.3.app/Contents/Developer
-
-      - name: Install ASC key
-        run: |
-          mkdir -p ~/private_keys
-          echo "${{ secrets.ASC_KEY_CONTENT }}" > ~/private_keys/AuthKey_NQXQ595W59.p8
-
-      - name: Install cert + DART profile
-        env:
-          CERTIFICATE_BASE64:   ${{ secrets.CERTIFICATE_BASE64 }}
-          CERTIFICATE_PASSWORD: ${{ secrets.CERTIFICATE_PASSWORD }}
-          DART_PROFILE_BASE64:  ${{ secrets.DART_PROFILE_BASE64 }}
-        run: |
-          security create-keychain -p "ci" dart.keychain
-          security default-keychain -s dart.keychain
-          security unlock-keychain -p "ci" dart.keychain
-          security set-keychain-settings -lut 21600 dart.keychain
-          echo "$CERTIFICATE_BASE64" | base64 --decode > cert.p12
-          security import cert.p12 -k dart.keychain -P "$CERTIFICATE_PASSWORD" \
-            -T /usr/bin/codesign -T /usr/bin/xcodebuild
-          security set-key-partition-list -S apple-tool:,apple: -s -k "ci" dart.keychain
-          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          echo "$DART_PROFILE_BASE64" | base64 --decode > \
-            ~/Library/MobileDevice/Provisioning\ Profiles/DARTGitHubFlow.mobileprovision
-
-      - name: Install xcodegen + Generate + Archive
-        run: |
-          curl -sL https://github.com/yonaskolb/XcodeGen/releases/download/2.42.0/xcodegen.zip -o xcodegen.zip
-          unzip -q xcodegen.zip
-          sudo cp xcodegen/bin/xcodegen /usr/local/bin/xcodegen
-          xcodegen generate
-          xcodebuild archive \
-            -scheme DARTApp \
-            -configuration Release \
-            -archivePath $RUNNER_TEMP/DART.xcarchive \
-            -destination "generic/platform=iOS" \
-            CODE_SIGN_STYLE=Manual \
-            CODE_SIGN_IDENTITY="iPhone Distribution" \
-            DEVELOPMENT_TEAM=L7AHWS9Q6V \
-            PROVISIONING_PROFILE_SPECIFIER=DARTGitHubFlow
-          echo "Archive contents:"
-          ls $RUNNER_TEMP/DART.xcarchive/Products/Applications/ || true
-
-      - name: Export IPA
-        run: |
-          APP=$(find $RUNNER_TEMP/DART.xcarchive -name "*.app" | head -1)
-          echo "App found: $APP"
-          mkdir -p $RUNNER_TEMP/Payload
-          cp -r "$APP" $RUNNER_TEMP/Payload/
-          cd $RUNNER_TEMP && zip -qr DART.ipa Payload/
-          echo "IPA size: $(du -sh $RUNNER_TEMP/DART.ipa)"
-
-      - name: Upload to TestFlight
-        run: |
-          xcrun altool --upload-app --type ios \
-            --file $RUNNER_TEMP/DART.ipa \
-            --apiKey NQXQ595W59 \
-            --apiIssuer 90056871-d791-45f6-a770-21399c45e491 \
-            --show-progress
+    uses: DART-Skyboard/DART-iOS/.github/workflows/testflight.yml@main
+    secrets:
+      CERTIFICATE_BASE64:   ${{ secrets.CERTIFICATE_BASE64 }}
+      CERTIFICATE_PASSWORD: ${{ secrets.CERTIFICATE_PASSWORD }}
+      ASC_KEY_CONTENT:      ${{ secrets.ASC_KEY_CONTENT }}
+      DART_PROFILE_BASE64:  ${{ secrets.DART_PROFILE_BASE64 }}
