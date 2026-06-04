@@ -30,12 +30,14 @@ public final class ArcSupportSubscriptionService: ObservableObject {
     deinit { updateListenerTask?.cancel() }
 
     // MARK: — Load product from App Store
+    // Silently fails if product not set up in ASC yet (shows fallback $4.99 price)
     public func loadProducts() async {
         do {
             let products = try await Product.products(for: [productID])
             product = products.first
         } catch {
-            self.error = "Could not load subscription: \(error.localizedDescription)"
+            // Don't surface error — UI shows fallback price
+            product = nil
         }
     }
 
@@ -68,12 +70,16 @@ public final class ArcSupportSubscriptionService: ObservableObject {
     }
 
     // MARK: — Restore purchases
+    // AppStore.sync() can fail in sandbox/TestFlight when product doesn't exist yet.
+    // Always check entitlements directly regardless of sync result.
     public func restorePurchases() async {
-        do {
-            try await AppStore.sync()
-            await checkSubscriptionStatus()
-        } catch {
-            self.error = "Restore failed: \(error.localizedDescription)"
+        self.error = nil
+        // Best-effort sync — ignore errors (common in sandbox/TestFlight staging)
+        _ = try? await AppStore.sync()
+        await checkSubscriptionStatus()
+        // Only show message if nothing was found
+        if !isSubscribed {
+            self.error = "No active subscription found for this Apple ID."
         }
     }
 
