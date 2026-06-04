@@ -1,3 +1,6 @@
 import SwiftUI
 
-// AutumnOverlay stub
+// AutumnOverlay — stub (Autumn integration handled externally)
+struct AutumnOverlay: View {
+    var body: some View { EmptyView() }
+}

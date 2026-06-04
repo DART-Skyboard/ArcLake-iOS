@@ -1,3 +1,5 @@
 import Foundation
+import SwiftUI
 
-// AutumnViewModel stub — functionality handled by ArcLabViewModel
+// AutumnViewModel — stub
+class AutumnViewModel: ObservableObject {}
