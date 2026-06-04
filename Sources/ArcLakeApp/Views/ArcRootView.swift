@@ -29,6 +29,7 @@ public struct DARTRootView: View {
                     ZStack {
                         ArcSceneView()
                             .frame(height: geo.size.height * 0.44)
+                            .allowsHitTesting(true)
 
                         // CFD badge
                         if labVM.isCFDActive {
@@ -52,24 +53,19 @@ public struct DARTRootView: View {
                     DARTBottomPanel()
                 }
 
-                // ── Dim overlay — only covers scene+panels, NOT the top bar ──
+                // ── Dim overlay ─────────────────────────────────────
                 let showDim = labVM.isPeriodicTableVisible || labVM.isMolCanvasVisible ||
                               labVM.isOrbitDeltaVisible || labVM.isNodeEditorVisible
                 if showDim {
-                    VStack(spacing: 0) {
-                        // Leave top bar height clear so buttons stay tappable
-                        Color.clear.frame(height: 44)
-                        Color.black.opacity(0.55)
-                            .ignoresSafeArea(edges: .bottom)
-                            .onTapGesture {
-                                withAnimation(.easeOut(duration: 0.2)) {
-                                    labVM.isPeriodicTableVisible = false
-                                    labVM.isMolCanvasVisible     = false
-                                    labVM.isOrbitDeltaVisible    = false
-                                    labVM.isNodeEditorVisible    = false
-                                }
+                    Color.black.opacity(0.55).ignoresSafeArea()
+                        .onTapGesture {
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                labVM.isPeriodicTableVisible = false
+                                labVM.isMolCanvasVisible     = false
+                                labVM.isOrbitDeltaVisible    = false
+                                labVM.isNodeEditorVisible    = false
                             }
-                    }
+                        }
                 }
 
                 // ── Overlay panels ──────────────────────────────────
@@ -170,7 +166,8 @@ struct DARTTopBar: View {
             // Right controls
             HStack(spacing: 4) {
                 // Grid toggle
-                DARTIconButton(icon: "number", active: labVM.showGrid) {
+                DARTIconButton(icon: labVM.showGrid ? "grid" : "grid.slash",
+                               active: labVM.showGrid) {
                     labVM.showGrid.toggle()
                     labVM.rebuildGrid()
                 }
