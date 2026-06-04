@@ -108,5 +108,7 @@ jobs:
             --apiIssuer "${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}" \
             --verbose 2>&1)
           echo "$RESULT"
-          echo "$RESULT" | grep -i "error\|failed\|invalid\|State_Error" && exit 1 || true
+          if echo "$RESULT" | grep -iE "UPLOAD FAILED|State_Error|Validation failed" | grep -v "No errors"; then
+            echo "Upload failed — see above"; exit 1
+          fi
           echo "✓ DART upload accepted"
