@@ -52,22 +52,7 @@ public struct DARTRootView: View {
                     DARTBottomPanel()
                 }
 
-                // ── Dim overlay ─────────────────────────────────────
-                let showDim = labVM.isPeriodicTableVisible || labVM.isMolCanvasVisible ||
-                              labVM.isOrbitDeltaVisible || labVM.isNodeEditorVisible
-                if showDim {
-                    Color.black.opacity(0.55)
-                        .ignoresSafeArea()
-                        .padding(.top, 88) // leave top bar + scene tab bar clear
-                        .onTapGesture {
-                            withAnimation(.easeOut(duration: 0.2)) {
-                                labVM.isPeriodicTableVisible = false
-                                labVM.isMolCanvasVisible     = false
-                                labVM.isOrbitDeltaVisible    = false
-                                labVM.isNodeEditorVisible    = false
-                            }
-                        }
-                }
+                // No dim overlay — each panel has its own close button
 
                 // ── Overlay panels ──────────────────────────────────
                 ArcOverlays(geoSize: geo.size)
@@ -75,8 +60,6 @@ public struct DARTRootView: View {
         }
         .preferredColorScheme(.dark)
         .sheet(isPresented: $showProfile) { ArcProfileSheet() }
-        .animation(.spring(response: 0.3), value: labVM.isPeriodicTableVisible)
-        .animation(.spring(response: 0.3), value: labVM.isMolCanvasVisible)
     }
 }
 
@@ -173,6 +156,9 @@ struct DARTTopBar: View {
                     labVM.rebuildGrid()
                 }
                 // PT
+                DARTIconButton(icon: "number", active: labVM.showGrid) {
+                    labVM.showGrid.toggle(); labVM.rebuildGrid()
+                }
                 DARTIconButton(icon: "tablecells",
                                active: labVM.isPeriodicTableVisible) {
                     withAnimation(.spring()) { labVM.isPeriodicTableVisible.toggle() }
