@@ -1,97 +1,88 @@
 import SwiftUI
 import SceneKit
 
-/// ArcLake 3D Viewport
-/// allowsCameraControl = false — we own all gestures for correct dolly behavior
-/// → 1-finger drag   = orbit (rotate around target point)
-/// → 2-finger drag   = pan   (truck camera + target through world space)
-/// → pinch in/out    = DOLLY (camera physically moves closer/farther — NOT FOV zoom)
-/// → double-tap      = reset to default view
-/// → single tap      = probe atom
+/// ArcLake 3D Viewport — Free-fly spectator camera
+///
+/// Controls (no allowsCameraControl — we own everything):
+///   1-finger drag        → orbit around target (rotate view)
+///   2-finger drag        → truck/pedestal (physically move camera + target
+///                          left/right/up/down — like walking sideways)
+///   pinch in/out         → dolly (camera moves forward/back along view axis)
+///   double-tap           → reset to default view
+///   single tap on atom   → probe panel + fly to atom
+///
+/// The camera NEVER zooms with FOV. It physically moves. fieldOfView is locked
+/// at 60° at all times — exactly like a game spectator/free-fly camera.
 public struct ArcSceneView: UIViewRepresentable {
     @EnvironmentObject var labVM: ArcLabViewModel
     @EnvironmentObject var themeVM: ArcThemeViewModel
 
     public func makeUIView(context: Context) -> SCNView {
         let v = SCNView()
-        v.allowsCameraControl   = false  // we own gestures — no FOV zoom from SceneKit
+        v.allowsCameraControl   = false      // we own all camera movement
         v.autoenablesDefaultLighting = false
         v.backgroundColor = UIColor(red:0.015, green:0.03, blue:0.07, alpha:1)
         v.antialiasingMode = .multisampling4X
         v.rendersContinuously  = true
         v.scene = labVM.scene
 
-        // Camera — fixed FOV, position changes for dolly
-        let cam = SCNCamera()
-        cam.fieldOfView = 60    // NEVER changes — dolly moves camera not lens
-        cam.zFar = 100000
-        cam.zNear = 0.001
+        // Camera — 60° FOV locked, never changes
+        let cam     = SCNCamera()
+        cam.fieldOfView = 60
+        cam.zFar    = 500_000
+        cam.zNear   = 0.001
         let camNode = SCNNode()
-        camNode.camera = cam
-        camNode.name   = "mainCamera"
+        camNode.camera   = cam
+        camNode.name     = "arcCamera"
         labVM.scene.rootNode.addChildNode(camNode)
         v.pointOfView = camNode
 
-        context.coordinator.scnView    = v
-        context.coordinator.cameraNode = camNode
-        context.coordinator.lastScene  = labVM.scene
-        context.coordinator.resetView(nil)  // set initial position
+        let c = context.coordinator
+        c.scnView    = v
+        c.camNode    = camNode
+        c.lastScene  = labVM.scene
+        c.reset()                           // set initial orbit position
 
-        // ── Gestures ──────────────────────────────────────────────
-        // 1-finger orbit
-        let orbit = UIPanGestureRecognizer(
-            target: context.coordinator,
-            action: #selector(Coordinator.handleOrbit(_:)))
+        // Gestures
+        let orbit = UIPanGestureRecognizer(target:c, action:#selector(Coordinator.orbit(_:)))
         orbit.minimumNumberOfTouches = 1
         orbit.maximumNumberOfTouches = 1
 
-        // 2-finger pan (truck)
-        let pan = UIPanGestureRecognizer(
-            target: context.coordinator,
-            action: #selector(Coordinator.handlePan(_:)))
-        pan.minimumNumberOfTouches = 2
-        pan.maximumNumberOfTouches = 2
+        let truck = UIPanGestureRecognizer(target:c, action:#selector(Coordinator.truck(_:)))
+        truck.minimumNumberOfTouches = 2
+        truck.maximumNumberOfTouches = 2
 
-        // Pinch = DOLLY (camera moves, not FOV)
-        let pinch = UIPinchGestureRecognizer(
-            target: context.coordinator,
-            action: #selector(Coordinator.handleDolly(_:)))
+        let dolly = UIPinchGestureRecognizer(target:c, action:#selector(Coordinator.dolly(_:)))
 
-        // Double-tap = reset
-        let dblTap = UITapGestureRecognizer(
-            target: context.coordinator,
-            action: #selector(Coordinator.resetView(_:)))
-        dblTap.numberOfTapsRequired = 2
+        let dbl = UITapGestureRecognizer(target:c, action:#selector(Coordinator.reset))
+        dbl.numberOfTapsRequired = 2
 
-        // Single tap = probe
-        let tap = UITapGestureRecognizer(
-            target: context.coordinator,
-            action: #selector(Coordinator.handleTap(_:)))
+        let tap = UITapGestureRecognizer(target:c, action:#selector(Coordinator.tap(_:)))
         tap.numberOfTapsRequired = 1
-        tap.require(toFail: dblTap)
+        tap.require(toFail: dbl)
 
-        for g in [orbit, pan, pinch, dblTap, tap] as [UIGestureRecognizer] {
-            g.delegate = context.coordinator
+        for g: UIGestureRecognizer in [orbit, truck, dolly, dbl, tap] {
+            g.delegate = c
             v.addGestureRecognizer(g)
         }
-
-        v.addInteraction(UIDropInteraction(delegate: context.coordinator))
+        v.addInteraction(UIDropInteraction(delegate: c))
         return v
     }
 
-    public func updateUIView(_ uiView: SCNView, context: Context) {
-        let coord = context.coordinator
-        if uiView.scene !== labVM.scene {
-            coord.cameraNode?.removeFromParentNode()
-            uiView.scene = labVM.scene
-            if let cam = coord.cameraNode {
+    public func updateUIView(_ v: SCNView, context: Context) {
+        let c = context.coordinator
+        // Tab switched — move camera into new scene
+        if v.scene !== labVM.scene {
+            c.camNode?.removeFromParentNode()
+            v.scene = labVM.scene
+            if let cam = c.camNode {
                 labVM.scene.rootNode.addChildNode(cam)
-                uiView.pointOfView = cam
+                v.pointOfView = cam
             }
-            coord.lastScene = labVM.scene
+            c.lastScene = labVM.scene
         }
-        if let cam = coord.cameraNode, uiView.pointOfView !== cam {
-            uiView.pointOfView = cam
+        if let cam = c.camNode, v.pointOfView !== cam {
+            v.pointOfView = cam
         }
     }
 
@@ -103,86 +94,92 @@ public struct ArcSceneView: UIViewRepresentable {
 
         let labVM: ArcLabViewModel
         weak var scnView: SCNView?
-        var cameraNode: SCNNode?
+        var camNode: SCNNode?
         var lastScene: SCNScene?
 
-        // Spherical coordinates — camera orbits around `target`
-        private var theta:  Float = -0.4   // azimuth
-        private var phi:    Float =  0.5   // polar (from Y)
-        private var radius: Float = 18.0   // DISTANCE from target — pinch changes this
+        // Spherical orbit state (camera orbits around `target`)
+        private var theta:  Float =  0.4    // azimuth
+        private var phi:    Float =  0.6    // polar angle from Y
+        private var radius: Float = 20.0    // distance — dolly changes this
         private var target  = SIMD3<Float>.zero
 
-        // Gesture start snapshots
-        private var sTheta: Float = 0;  private var sPhi:    Float = 0
-        private var sRadius: Float = 0; private var sTarget  = SIMD3<Float>.zero
+        // Gesture snapshots captured at .began
+        private var θ0: Float = 0;  private var φ0:  Float = 0
+        private var r0: Float = 0;  private var tgt0 = SIMD3<Float>.zero
 
         init(labVM: ArcLabViewModel) { self.labVM = labVM }
 
-        // ── 1-finger: orbit ───────────────────────────────────────
-        @objc func handleOrbit(_ g: UIPanGestureRecognizer) {
+        // ── 1-finger orbit (rotate around target) ─────────────────
+        @objc func orbit(_ g: UIPanGestureRecognizer) {
             guard let v = scnView else { return }
-            if g.state == .began { sTheta = theta; sPhi = phi }
-            if g.state == .changed {
-                let t = g.translation(in: v)
-                theta = sTheta - Float(t.x) * 0.007
-                phi   = max(0.05, min(.pi - 0.05, sPhi - Float(t.y) * 0.007))
+            switch g.state {
+            case .began:  θ0 = theta; φ0 = phi
+            case .changed:
+                let d = g.translation(in: v)
+                theta = θ0 - Float(d.x) * 0.007
+                phi   = max(0.05, min(.pi - 0.05, φ0 - Float(d.y) * 0.007))
                 commit()
+            default: break
             }
         }
 
-        // ── 2-finger: pan (truck camera + target) ─────────────────
-        @objc func handlePan(_ g: UIPanGestureRecognizer) {
+        // ── 2-finger truck/pedestal (move camera + target) ────────
+        // This physically translates the camera's position in world space —
+        // left/right/up/down like walking sideways in a game.
+        @objc func truck(_ g: UIPanGestureRecognizer) {
             guard let v = scnView else { return }
-            if g.state == .began { sTarget = target }
-            if g.state == .changed {
-                let t = g.translation(in: v)
-                let speed = radius * 0.0018
-                // Camera-relative right and up vectors
-                let right = SIMD3<Float>(cos(theta), 0, -sin(theta))
+            switch g.state {
+            case .began:  tgt0 = target
+            case .changed:
+                let d     = g.translation(in: v)
+                let speed = radius * 0.0016
+                // Camera-relative right and world-up vectors
+                let right = SIMD3<Float>( cos(theta), 0, -sin(theta))
                 let up    = SIMD3<Float>(0, 1, 0)
-                target = sTarget
-                    - right * Float(t.x) * speed
-                    + up    * Float(t.y) * speed
+                target = tgt0
+                    - right * Float(d.x) * speed
+                    + up    * Float(d.y) * speed
                 commit()
+            default: break
             }
         }
 
-        // ── Pinch: DOLLY — camera moves in/out, FOV stays at 60° ──
-        @objc func handleDolly(_ g: UIPinchGestureRecognizer) {
-            if g.state == .began { sRadius = radius }
-            if g.state == .changed {
-                // Pinch out (scale > 1) = zoom in = camera moves closer
-                // Pinch in  (scale < 1) = zoom out = camera moves farther
-                radius = max(0.5, min(500.0, sRadius / Float(g.scale)))
+        // ── Pinch dolly (camera physically moves forward/back) ────
+        // scale > 1 = fingers spread = zoom in = camera closer
+        // scale < 1 = fingers pinch  = zoom out = camera farther
+        @objc func dolly(_ g: UIPinchGestureRecognizer) {
+            switch g.state {
+            case .began:  r0 = radius
+            case .changed:
+                // Divide — spreading fingers REDUCES radius (closer)
+                radius = max(0.3, min(1_000, r0 / Float(g.scale)))
                 commit()
+            default: break
             }
         }
 
-        // ── Double-tap: reset ─────────────────────────────────────
-        @objc func resetView(_ sender: Any? = nil) {
-            theta = -0.4; phi = 0.5; radius = 18.0; target = .zero
+        // ── Double-tap: reset view ────────────────────────────────
+        @objc func reset() {
+            theta = 0.4; phi = 0.6; radius = 20.0; target = .zero
             SCNTransaction.begin()
-            SCNTransaction.animationDuration = (sender == nil) ? 0.0 : 0.45
+            SCNTransaction.animationDuration = 0.4
             commit()
             SCNTransaction.commit()
         }
 
         // ── Single tap: probe atom ────────────────────────────────
-        @objc func handleTap(_ g: UITapGestureRecognizer) {
+        @objc func tap(_ g: UITapGestureRecognizer) {
             guard let v = scnView else { return }
             let hits = v.hitTest(g.location(in: v),
-                options: [.searchMode: SCNHitTestSearchMode.closest.rawValue])
+                options:[.searchMode: SCNHitTestSearchMode.closest.rawValue])
             guard let hit = hits.first else { return }
-            var node: SCNNode? = hit.node
-            while let cur = node {
+            var n: SCNNode? = hit.node
+            while let cur = n {
                 if let name = cur.name, name.hasPrefix("atomZ:"),
-                   let z = Int(name.dropFirst(6)),
-                   let el = ElementStore.shared.elements.first(where: { $0.id == z }) {
-                    // Fly camera to atom
-                    target = SIMD3<Float>(
-                        cur.worldPosition.x,
-                        cur.worldPosition.y,
-                        cur.worldPosition.z)
+                   let z  = Int(name.dropFirst(6)),
+                   let el = ElementStore.shared.elements.first(where:{ $0.id == z }) {
+                    let wp = cur.worldPosition
+                    target = SIMD3<Float>(wp.x, wp.y, wp.z)
                     SCNTransaction.begin()
                     SCNTransaction.animationDuration = 0.35
                     commit()
@@ -190,15 +187,14 @@ public struct ArcSceneView: UIViewRepresentable {
                     Task { @MainActor in self.labVM.openProbe(for: el) }
                     return
                 }
-                node = cur.parent
+                n = cur.parent
             }
         }
 
-        // ── Spherical → Cartesian camera position ─────────────────
-        // Camera moves to position on sphere around target.
-        // FOV is locked at 60° — only radius changes for zoom.
+        // ── Place camera on sphere around target ──────────────────
+        // fieldOfView stays 60° — only position changes
         func commit() {
-            guard let cam = cameraNode else { return }
+            guard let cam = camNode else { return }
             let sp = sin(phi);  let cp = cos(phi)
             let st = sin(theta); let ct = cos(theta)
             cam.position = SCNVector3(
@@ -208,32 +204,22 @@ public struct ArcSceneView: UIViewRepresentable {
             cam.look(at: SCNVector3(target.x, target.y, target.z))
         }
 
-        // Allow orbit + pinch simultaneously
         public func gestureRecognizer(
             _ g: UIGestureRecognizer,
             shouldRecognizeSimultaneouslyWith o: UIGestureRecognizer) -> Bool { true }
 
-        // ── Drop ──────────────────────────────────────────────────
-        public func dropInteraction(
-            _ i: UIDropInteraction,
-            canHandle s: UIDropSession) -> Bool {
-            s.canLoadObjects(ofClass: NSString.self)
-        }
-        public func dropInteraction(
-            _ i: UIDropInteraction,
+        // Drop
+        public func dropInteraction(_ i: UIDropInteraction,
+            canHandle s: UIDropSession) -> Bool { s.canLoadObjects(ofClass:NSString.self) }
+        public func dropInteraction(_ i: UIDropInteraction,
             sessionDidUpdate s: UIDropSession) -> UIDropProposal {
-            UIDropProposal(operation: .copy)
-        }
-        public func dropInteraction(
-            _ i: UIDropInteraction,
-            performDrop s: UIDropSession) {
-            s.loadObjects(ofClass: NSString.self) { items in
+            UIDropProposal(operation:.copy) }
+        public func dropInteraction(_ i: UIDropInteraction, performDrop s: UIDropSession) {
+            s.loadObjects(ofClass:NSString.self) { items in
                 guard let sym = items.first as? String else { return }
                 Task { @MainActor in
                     if let el = ElementStore.shared.elements.first(
-                        where: { $0.elementSymbol == sym }) {
-                        self.labVM.addElement(el)
-                    }
+                        where:{$0.elementSymbol == sym}) { self.labVM.addElement(el) }
                 }
             }
         }
