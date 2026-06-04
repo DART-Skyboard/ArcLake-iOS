@@ -1,4 +1,3 @@
-
 import SwiftUI
 import SceneKit
 
@@ -13,6 +12,13 @@ import SceneKit
 ///   Double tap          = reset to default view
 ///   Single tap on atom  = focus + probe
 ///   No min/max distance = infinite travel in any direction
+///
+/// Camera ownership model:
+///   The Coordinator OWNS the cameraNode. It is not permanently parented to
+///   any scene. On every updateUIView call we check if the current scene has
+///   changed — if so, we yank the camera out of the old scene and inject it
+///   into the new one. This matches the web app model where the camera is a
+///   standalone object handed to OrbitControls, independent of scene graph.
 public struct ArcSceneView: UIViewRepresentable {
     @EnvironmentObject var labVM: ArcLabViewModel
     @EnvironmentObject var themeVM: ArcThemeViewModel
@@ -26,6 +32,7 @@ public struct ArcSceneView: UIViewRepresentable {
         v.antialiasingMode = .multisampling4X
         v.rendersContinuously = true
 
+        // Create the camera once — coordinator owns it for the lifetime of this view
         let cam = SCNCamera()
         cam.fieldOfView = 60
         cam.zFar = 100000
@@ -35,6 +42,7 @@ public struct ArcSceneView: UIViewRepresentable {
         camNode.name = "mainCamera"
         labVM.scene.rootNode.addChildNode(camNode)
         context.coordinator.cameraNode = camNode
+        context.coordinator.lastScene = labVM.scene
         context.coordinator.resetView(nil)
 
         let orbit = UIPanGestureRecognizer(target: context.coordinator,
@@ -71,18 +79,23 @@ public struct ArcSceneView: UIViewRepresentable {
     }
 
     public func updateUIView(_ uiView: SCNView, context: Context) {
-        // Swap scene when active tab changes — ensure camera exists in new scene
+        let coord = context.coordinator
+        guard let cam = coord.cameraNode else { return }
+
+        // Scene changed (tab switched) — migrate camera into new scene
         if uiView.scene !== labVM.scene {
+            // Remove camera from old scene
+            cam.removeFromParentNode()
+            // Set new scene on the view
             uiView.scene = labVM.scene
-            // Re-add camera to the new scene so orbit controls work immediately
-            let coord = context.coordinator
-            if let cam = coord.cameraNode {
-                cam.removeFromParentNode()
-                labVM.scene.rootNode.addChildNode(cam)
-                coord.resetView(nil)
-            }
+            // Inject camera into new scene
+            labVM.scene.rootNode.addChildNode(cam)
+            coord.lastScene = labVM.scene
+            // Keep current orbit angles — don't reset, so user stays oriented
+            coord.commit()
         }
     }
+
     public func makeCoordinator() -> Coordinator { Coordinator(labVM: labVM) }
 
     public final class Coordinator: NSObject,
@@ -91,14 +104,16 @@ public struct ArcSceneView: UIViewRepresentable {
         let labVM: ArcLabViewModel
         weak var scnView: SCNView?
         var cameraNode: SCNNode?
+        var lastScene: SCNScene?
 
         // OrbitControls state — spherical coordinates around target
+        // Matches THREE.OrbitControls spherical math exactly
         private var theta:  Float = -0.6    // azimuth angle
         private var phi:    Float = 0.55    // polar angle from Y axis
         private var radius: Float = 16.0    // distance from target
         private var target  = SIMD3<Float>(0, 0, 0)  // controls.target
 
-        // Start snapshots
+        // Start snapshots (captured at gesture .began)
         private var s_theta:  Float = 0; private var s_phi:   Float = 0
         private var s_radius: Float = 0; private var s_target = SIMD3<Float>.zero
         private var s_rotate: Float = 0; private var s_theta2: Float = 0
@@ -119,14 +134,12 @@ public struct ArcSceneView: UIViewRepresentable {
         }
 
         // ── 2-finger pan = translate through space ────────────────
-        // Both camera AND target move — this is true "pan through world"
         @objc func handlePan(_ g: UIPanGestureRecognizer) {
             guard let v = scnView else { return }
             if g.state == .began { s_target = target }
             if g.state == .changed {
                 let t = g.translation(in: v)
                 let speed = radius * 0.0018
-                // Camera right vector from current theta
                 let right = SIMD3<Float>(cos(theta),  0, -sin(theta))
                 let up    = SIMD3<Float>(0, 1, 0)
                 target = s_target
@@ -136,9 +149,7 @@ public struct ArcSceneView: UIViewRepresentable {
             }
         }
 
-        // ── Pinch = DOLLY (move camera through space, not FOV) ────
-        // radius decreases = camera moves toward target (flies into scene)
-        // No min/max = fly through atoms if desired
+        // ── Pinch = DOLLY ─────────────────────────────────────────
         @objc func handleDolly(_ g: UIPinchGestureRecognizer) {
             if g.state == .began { s_radius = radius }
             if g.state == .changed {
@@ -191,7 +202,7 @@ public struct ArcSceneView: UIViewRepresentable {
 
         // ── Camera position from spherical coords ─────────────────
         // Identical math to THREE.OrbitControls
-        private func commit() {
+        func commit() {
             guard let cam = cameraNode else { return }
             let sp = sin(phi); let cp = cos(phi)
             let st = sin(theta); let ct = cos(theta)
