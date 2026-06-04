@@ -56,7 +56,9 @@ public struct DARTRootView: View {
                 let showDim = labVM.isPeriodicTableVisible || labVM.isMolCanvasVisible ||
                               labVM.isOrbitDeltaVisible || labVM.isNodeEditorVisible
                 if showDim {
-                    Color.black.opacity(0.55).ignoresSafeArea()
+                    Color.black.opacity(0.55)
+                        .ignoresSafeArea()
+                        .padding(.top, 88) // leave top bar + scene tab bar clear
                         .onTapGesture {
                             withAnimation(.easeOut(duration: 0.2)) {
                                 labVM.isPeriodicTableVisible = false
@@ -67,8 +69,9 @@ public struct DARTRootView: View {
                         }
                 }
 
-                // ── Overlay panels ──────────────────────────────────
+                // ── Overlay panels — only intercept touches when a panel is open ──
                 ArcOverlays(geoSize: geo.size)
+                    .allowsHitTesting(showDim)
             }
         }
         .preferredColorScheme(.dark)
