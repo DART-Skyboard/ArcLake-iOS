@@ -57,9 +57,9 @@ struct ArcWelcomeView: View {
 
                     // ① Sign in with Apple
                     SignInWithAppleButton(.signIn) { req in
-                        req.requestedScopes = [.fullName, .email]
-                    } onCompletion: { _ in
-                        authVM.signInWithApple()
+                        authVM.configureAppleRequest(req)
+                    } onCompletion: { result in
+                        authVM.handleAppleResult(result)
                     }
                     .signInWithAppleButtonStyle(.white)
                     .frame(height: 52)
