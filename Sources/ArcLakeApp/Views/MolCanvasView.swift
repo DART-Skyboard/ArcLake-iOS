@@ -304,11 +304,16 @@ struct MolAtomNodeView: View {
             if isLabelMode { isEditing = true; labelText = atom.label }
             else { onTap(atom) }
         }
-        .gesture(DragGesture().onChanged { val in
-            atom.position = CGPoint(
-                x: atom.position.x + val.translation.width,
-                y: atom.position.y + val.translation.height)
-        })
+        .gesture(
+            DragGesture(minimumDistance: 2)
+                .onChanged { val in
+                    // Use startLocation + translation — no accumulation, tracks finger exactly
+                    atom.position = CGPoint(
+                        x: val.startLocation.x + val.translation.width,
+                        y: val.startLocation.y + val.translation.height
+                    )
+                }
+        )
         .sheet(isPresented: $isEditing) {
             NavigationView {
                 Form {
