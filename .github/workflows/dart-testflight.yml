@@ -73,8 +73,6 @@ jobs:
             -authenticationKeyIssuerID "${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}"
 
       - name: Archive
-        env:
-          ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
         run: |
           xcodebuild archive \
             -project DART.xcodeproj \
@@ -82,11 +80,9 @@ jobs:
             -configuration Release \
             -destination "generic/platform=iOS" \
             -archivePath "$RUNNER_TEMP/DART.xcarchive" \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath "$HOME/.appstoreconnect/private_keys/AuthKey_NQXQ595W59.p8" \
-            -authenticationKeyID "NQXQ595W59" \
-            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
-            CODE_SIGN_STYLE=Automatic \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="iPhone Distribution" \
+            PROVISIONING_PROFILE="4f27288c-6ada-4a8b-b93a-b42dec94a720" \
             DEVELOPMENT_TEAM=L7AHWS9Q6V \
             OTHER_CODE_SIGN_FLAGS="--keychain $RUNNER_TEMP/signing.keychain-db"
           ls -la "$RUNNER_TEMP/DART.xcarchive" || (echo "Archive missing" && exit 1)
