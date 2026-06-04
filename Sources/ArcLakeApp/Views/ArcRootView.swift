@@ -69,9 +69,8 @@ public struct DARTRootView: View {
                         }
                 }
 
-                // ── Overlay panels — only intercept touches when a panel is open ──
+                // ── Overlay panels ──────────────────────────────────
                 ArcOverlays(geoSize: geo.size)
-                    .allowsHitTesting(showDim)
             }
         }
         .preferredColorScheme(.dark)
