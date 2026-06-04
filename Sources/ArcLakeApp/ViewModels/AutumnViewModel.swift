@@ -27,7 +27,7 @@ final class AutumnViewModel: ObservableObject {
     private init() {
         // Welcome message
         messages.append(AutumnMessage(
-            role: .autumn,
+            role: AutumnMessage.Role.autumn,
             text: "LEATR active. How can I help with your ArcLake session?",
             timestamp: Date()
         ))
@@ -38,8 +38,8 @@ final class AutumnViewModel: ObservableObject {
     // MARK: — Send message
     func send(_ text: String, labVM: ArcLabViewModel) async {
         // Add user message
-        messages.append(AutumnMessage(role:.user, text:text, timestamp:Date(),
-            attachment: attachments.first))
+        messages.append(AutumnMessage(role: AutumnMessage.Role.user, text:text, timestamp:Date(),
+            attachment: nil))
         attachments.removeAll()
 
         isTyping = true
@@ -50,7 +50,7 @@ final class AutumnViewModel: ObservableObject {
         try? await Task.sleep(nanoseconds: 300_000_000) // brief pause for realism
         isTyping = false
 
-        messages.append(AutumnMessage(role:.autumn, text:response, timestamp:Date()))
+        messages.append(AutumnMessage(role: AutumnMessage.Role.autumn, text:response, timestamp:Date()))
 
         // Speak response with emotion-matched neural voice
         let emotion = AutumnEmotion.infer(from: response)
@@ -166,12 +166,7 @@ final class AutumnViewModel: ObservableObject {
     }
 
     // MARK: — Attachments
-    func addAttachments(_ atts: [AutumnAttachment]) {
-        attachments.append(contentsOf:atts)
-    }
-    func removeAttachment(id: UUID) {
-        attachments.removeAll { $0.id == id }
-    }
+    func clearPendingText() { pendingText = "" }
 
     // MARK: — GAS presence + sentient journal
     private func pingPresence(message: String, response: String) async {
@@ -216,7 +211,7 @@ struct AutumnMessage: Identifiable {
     let role: Role
     let text: String
     let timestamp: Date
-    var attachment: AutumnAttachment? = nil
+    var attachmentName: String? = nil
     enum Role { case user, autumn }
 }
 
