@@ -1,157 +1,109 @@
 import SwiftUI
 
 // MARK: — ArcOverlays
-// Single source of truth for all floating panels.
-// Each panel uses sheet-style presentation anchored to screen center,
-// draggable by its full header bar.
+// Each panel wraps only in a thin transparent drag shell — NO extra header.
+// The content views (PeriodicTableView, MolCanvasView etc) already have
+// their own chrome with close buttons and titles. We just make them draggable.
 struct ArcOverlays: View {
     let geoSize: CGSize
     @EnvironmentObject var labVM: ArcLabViewModel
     @EnvironmentObject var themeVM: ArcThemeViewModel
 
     var body: some View {
-        // Use individual ZStacks so panels don't interfere with each other
         ZStack {
             if labVM.isPeriodicTableVisible {
-                ArcFloatingPanel(
-                    title:  "Periodic Table",
-                    icon:   "tablecells",
-                    color:  themeVM.accent,
+                DragShell(
                     geoSize: geoSize,
-                    onClose: { labVM.isPeriodicTableVisible = false }
+                    width:   geoSize.width - 20,
+                    height:  min(geoSize.height * 0.65, 580)
                 ) {
                     PeriodicTableView()
                 }
-                .frame(width: geoSize.width - 20, height: min(geoSize.height * 0.64, 560))
                 .id("pt")
+                .transition(.opacity.combined(with: .scale(scale: 0.97)))
             }
 
             if labVM.isMolCanvasVisible {
-                ArcFloatingPanel(
-                    title:  "Mol Canvas",
-                    icon:   "scribble",
-                    color:  .purple,
+                DragShell(
                     geoSize: geoSize,
-                    onClose: { labVM.isMolCanvasVisible = false }
+                    width:   geoSize.width - 20,
+                    height:  min(geoSize.height * 0.72, 600)
                 ) {
                     MolCanvasView()
                 }
-                .frame(width: geoSize.width - 20, height: min(geoSize.height * 0.72, 580))
                 .id("mc")
+                .transition(.opacity.combined(with: .scale(scale: 0.97)))
             }
 
             if labVM.isNodeEditorVisible {
-                ArcFloatingPanel(
-                    title:  "Node Editor",
-                    icon:   "circle.connected.to.line.below",
-                    color:  .orange,
+                DragShell(
                     geoSize: geoSize,
-                    onClose: { labVM.isNodeEditorVisible = false }
+                    width:   geoSize.width - 20,
+                    height:  min(geoSize.height * 0.80, 640)
                 ) {
                     NodeEditorView()
                 }
-                .frame(width: geoSize.width - 20, height: min(geoSize.height * 0.78, 620))
                 .id("ne")
+                .transition(.opacity.combined(with: .scale(scale: 0.97)))
             }
 
             if labVM.isOrbitDeltaVisible, let el = labVM.probeTarget {
-                ArcFloatingPanel(
-                    title:  "\(el.elementSymbol) — \(el.elementName)",
-                    icon:   "atom",
-                    color:  Color(el.category.color),
+                DragShell(
                     geoSize: geoSize,
-                    onClose: { labVM.isOrbitDeltaVisible = false }
+                    width:   min(geoSize.width - 20, 420),
+                    height:  380
                 ) {
                     OrbitDeltaNodeView(element: el)
                 }
-                .frame(width: min(geoSize.width - 20, 400), height: 360)
                 .id("probe-\(el.id)")
+                .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                .onAppear {
+                    // Probe appears centered when a new element is tapped
+                }
             }
         }
     }
 }
 
-// MARK: — ArcFloatingPanel
-// A single draggable panel.
-// Key: offset() NOT position() — offset is relative to SwiftUI layout center,
-// which prevents the "panel jumps to 0,0" bug and the shaking.
-// Drag moves offset from its last resting place (stored in dragBase).
-struct ArcFloatingPanel<Content: View>: View {
-    let title: String
-    let icon: String
-    let color: Color
+// MARK: — DragShell
+// A transparent wrapper that makes any content view draggable.
+// No extra chrome — content view supplies its own header/close button.
+// Drag gesture is registered on the WHOLE panel so any part can drag it.
+// The content view's own buttons still work because SwiftUI gesture priority
+// gives button taps higher priority than the DragGesture (minimumDistance > 0).
+struct DragShell<Content: View>: View {
     let geoSize: CGSize
-    let onClose: () -> Void
+    let width:   CGFloat
+    let height:  CGFloat
     @ViewBuilder let content: () -> Content
 
-    @State private var offset   = CGSize.zero   // current panel position offset
-    @State private var dragBase = CGSize.zero   // offset at gesture start
+    @State private var offset   = CGSize.zero
+    @State private var baseOff  = CGSize.zero
 
     var body: some View {
-        VStack(spacing: 0) {
-            // ── Drag header ──────────────────────────────────────
-            HStack(spacing: 8) {
-                // Drag indicator
-                Capsule()
-                    .fill(Color.white.opacity(0.25))
-                    .frame(width: 32, height: 3)
-                    .padding(.leading, 8)
-
-                Image(systemName: icon)
-                    .font(.system(size: 11))
-                    .foregroundColor(color)
-
-                Text(title.uppercased())
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .foregroundColor(.white)
-                    .tracking(1)
-                    .lineLimit(1)
-
-                Spacer()
-
-                Button { onClose() } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(.white.opacity(0.5))
-                        .frame(width: 28, height: 28)
-                        .background(Color.white.opacity(0.06))
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                }
-                .padding(.trailing, 10)
-            }
-            .frame(height: 40)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(color.opacity(0.08))
-            .contentShape(Rectangle())
-            // ── Drag gesture on header only ──────────────────────
+        content()
+            .frame(width: width, height: height)
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .shadow(color: .black.opacity(0.55), radius: 22, y: 6)
+            .offset(offset)
+            // Drag from anywhere — buttons still work because tap wins over drag
             .gesture(
-                DragGesture(minimumDistance: 3, coordinateSpace: .global)
+                DragGesture(minimumDistance: 6)
                     .onChanged { val in
                         offset = CGSize(
-                            width:  dragBase.width  + val.translation.width,
-                            height: dragBase.height + val.translation.height)
+                            width:  baseOff.width  + val.translation.width,
+                            height: baseOff.height + val.translation.height)
                     }
                     .onEnded { _ in
-                        dragBase = offset   // save resting position
+                        // Clamp so panel stays on screen
+                        let hw = width / 2;  let hh = height / 2
+                        let maxX = geoSize.width  / 2 - hw + 8
+                        let maxY = geoSize.height / 2 - hh + 8
+                        offset = CGSize(
+                            width:  min(max(offset.width,  -maxX), maxX),
+                            height: min(max(offset.height, -maxY), maxY))
+                        baseOff = offset
                     }
             )
-
-            Divider().background(color.opacity(0.2))
-
-            // ── Panel content ────────────────────────────────────
-            content()
-        }
-        .background(
-            Color(red:0.06, green:0.09, blue:0.16)
-                .opacity(0.97)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 14))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .stroke(Color.white.opacity(0.09), lineWidth: 0.8)
-        )
-        .shadow(color: .black.opacity(0.6), radius: 24, y: 8)
-        .offset(offset)                 // move by drag offset, centered by default
-        .transition(.opacity.combined(with: .scale(scale: 0.96)))
     }
 }
