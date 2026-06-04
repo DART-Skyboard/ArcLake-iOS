@@ -155,10 +155,11 @@ jobs:
         run: |
           curl -sL https://github.com/yonaskolb/XcodeGen/releases/download/2.42.0/xcodegen.zip -o xcodegen.zip
           unzip -q xcodegen.zip
-          sudo mv xcodegen /usr/local/bin/xcodegen
-          ls -la /usr/local/bin/xcodegen
-          /usr/local/bin/xcodegen generate
-          /usr/local/bin/xcodegen generate || echo "xcodegen already ran"
+          # The zip extracts to a directory named 'xcodegen' containing the binary
+          sudo cp xcodegen/bin/xcodegen /usr/local/bin/xcodegen || sudo cp xcodegen/xcodegen /usr/local/bin/xcodegen || true
+          ls xcodegen/
+          which xcodegen || ls /usr/local/bin/xcodegen
+          xcodegen generate
           xcodebuild archive \
             -scheme DARTApp -configuration Release \
             -archivePath $RUNNER_TEMP/DART.xcarchive \
