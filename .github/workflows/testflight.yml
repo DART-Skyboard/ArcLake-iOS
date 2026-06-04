@@ -108,5 +108,8 @@ jobs:
             --apiIssuer "90056871-d791-45f6-a770-21399c45e491" \
             --apiKeyPath ~/.appstoreconnect/private_keys/AuthKey_NQXQ595W59.p8 2>&1)
           echo "$RESULT"
-          echo "$RESULT" | grep -i "error\|failed\|invalid" && exit 1 || true
+          # Fail only on actual upload failure (not "No errors" false positive)
+          if echo "$RESULT" | grep -iE "UPLOAD FAILED|State_Error|Validation failed|^.*ERROR:" | grep -v "No errors"; then
+            echo "Upload failed — see above"; exit 1
+          fi
           echo "✓ Upload accepted"
