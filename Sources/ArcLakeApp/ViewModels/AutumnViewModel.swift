@@ -38,8 +38,7 @@ final class AutumnViewModel: ObservableObject {
     // MARK: — Send message
     func send(_ text: String, labVM: ArcLabViewModel) async {
         // Add user message
-        messages.append(AutumnMessage(role: AutumnMessage.Role.user, text:text, timestamp:Date(),
-            attachment: nil))
+        messages.append(AutumnMessage(role: AutumnMessage.Role.user, text:text, timestamp:Date()))
         attachments.removeAll()
 
         isTyping = true
