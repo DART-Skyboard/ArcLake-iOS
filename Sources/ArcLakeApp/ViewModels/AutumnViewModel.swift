@@ -98,7 +98,7 @@ final class AutumnViewModel: ObservableObject {
     }
     func stopListening() {
         isListening = false
-        AutumnVoice.shared.stop()
+        Task { @MainActor in AutumnVoice.shared.stop() }
     }
 
     // MARK: — Journal persistence
