@@ -31,13 +31,29 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
     public func restoreSession() {
         loadArcSavedAccounts()
 
-        // Restore GitHub first (always works from keychain)
+        // Restore GitHub silently — token in keychain means already authorized,
+        // never show OAuth flow again on relaunch
         if let pat = KeychainHelper.load(key: "arc_github_pat"), !pat.isEmpty {
-            Task { await ArcGitHubClient.shared.setToken(pat) }
+            Task {
+                await ArcGitHubClient.shared.setToken(pat)
+                // Verify token still valid
+                if let user = try? await ArcGitHubClient.shared.fetchAuthenticatedUser() {
+                    KeychainHelper.save(key: "arc_github_username", value: user)
+                    await MainActor.run {
+                        githubConnected = true
+                        githubUsername  = user
+                        if !isSignedIn {
+                            isSignedIn = true
+                            username   = user
+                        }
+                    }
+                }
+            }
             let ghUser = KeychainHelper.load(key: "arc_github_username") ?? ""
             if !ghUser.isEmpty {
                 githubConnected = true
                 githubUsername  = ghUser
+                if !isSignedIn { isSignedIn = true; username = ghUser }
             }
         }
 
@@ -89,6 +105,31 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
     }
 
     // MARK: — Explicit Sign in with Apple (user-initiated)
+    // signInWithApple() is called via SignInWithAppleButton's onRequest closure.
+    // The button handles presentation — we configure the request here.
+    public func configureAppleRequest(_ request: ASAuthorizationAppleIDRequest) {
+        error = nil
+        request.requestedScopes = [.fullName, .email]
+        request.nonce = "arcLakeNonce"  // for security
+    }
+
+    // Called by SignInWithAppleButton's onCompletion with the result
+    public func handleAppleResult(_ result: Result<ASAuthorization, Error>) {
+        switch result {
+        case .success(let auth):
+            authorizationController(
+                controller: ASAuthorizationController(authorizationRequests: []),
+                didCompleteWithAuthorization: auth)
+        case .failure(let err):
+            let asErr = err as? ASAuthorizationError
+            switch asErr?.code {
+            case .canceled, .unknown: break  // silent
+            default: self.error = "Sign in failed: enable iCloud in Settings."
+            }
+        }
+    }
+
+    // Legacy — kept for compatibility
     public func signInWithApple() {
         error = nil
         let request = ASAuthorizationAppleIDProvider().createRequest()
