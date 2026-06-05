@@ -325,7 +325,7 @@ struct DARTSceneTab: View {
                 .font(.system(size: 9, weight: isActive ? .semibold : .regular, design: .monospaced))
                 .foregroundColor(isActive ? themeVM.accent : .white.opacity(0.35))
             if labVM.sceneTabs_data.count > 1 {
-                Button { labVM.removeSceneTab(index) } label: {
+                Button { labVM.removeSceneTab(at: index) } label: {
                     Image(systemName: "xmark")
                         .font(.system(size: 6))
                         .foregroundColor(.white.opacity(0.25))
