@@ -64,18 +64,45 @@ struct AutumnChatSheet: View {
             ZStack {
                 themeVM.bg.ignoresSafeArea()
                 VStack(spacing: 0) {
-                    // Header
+                    // ── Top gap banner (like web app Ash Canvas drawer) ─────
+                    ZStack {
+                        // Subtle gradient glow at top
+                        LinearGradient(
+                            colors: [themeVM.accent.opacity(0.12), Color.clear],
+                            startPoint: .top, endPoint: .bottom)
+                        HStack {
+                            // Drag indicator
+                            Capsule()
+                                .fill(Color.white.opacity(0.2))
+                                .frame(width: 36, height: 4)
+                        }
+                    }
+                    .frame(height: 22)
+                    .background(themeVM.bg.opacity(0.98))
+
+                    // ── Avatar + title strip ────────────────────────────────
                     HStack(spacing: 10) {
                         ZStack {
-                            Circle().fill(themeVM.accent.opacity(0.15)).frame(width:36,height:36)
-                            Circle().stroke(themeVM.accent.opacity(0.4),lineWidth:1).frame(width:36,height:36)
-                            Text("A").font(.system(size:14,weight:.bold,design:.monospaced)).foregroundColor(themeVM.accent)
+                            Circle()
+                                .fill(LinearGradient(
+                                    colors: [themeVM.accent.opacity(0.3), themeVM.accent.opacity(0.08)],
+                                    startPoint:.topLeading, endPoint:.bottomTrailing))
+                                .frame(width:38,height:38)
+                            Circle().stroke(themeVM.accent.opacity(0.5),lineWidth:1.2)
+                                .frame(width:38,height:38)
+                            Text("A")
+                                .font(.system(size:15,weight:.bold,design:.monospaced))
+                                .foregroundColor(themeVM.accent)
                         }
-                        VStack(alignment:.leading,spacing:1) {
-                            Text("AUTUMN").font(.custom("Orbitron-Bold",size:13)).foregroundColor(.white).tracking(2)
+                        VStack(alignment:.leading,spacing:2) {
+                            Text("AUTUMN")
+                                .font(.custom("Orbitron-Bold",size:13))
+                                .foregroundColor(.white).tracking(2)
                             HStack(spacing:4) {
-                                Circle().fill(.green).frame(width:5,height:5)
-                                Text("LEATR · BRPN · Active").font(.system(size:8,design:.monospaced)).foregroundColor(.white.opacity(0.4))
+                                Circle().fill(Color(red:0.2,green:1,blue:0.4)).frame(width:5,height:5)
+                                Text("LEATR · BRPN · ArcLake")
+                                    .font(.system(size:8,design:.monospaced))
+                                    .foregroundColor(.white.opacity(0.4))
                             }
                         }
                         Spacer()
@@ -89,8 +116,9 @@ struct AutumnChatSheet: View {
                         }
                     }
                     .padding(.horizontal,16).padding(.vertical,10)
-                    .background(themeVM.bg.opacity(0.95))
-                    .overlay(Rectangle().frame(height:0.5).foregroundColor(themeVM.accent.opacity(0.15)),alignment:.bottom)
+                    .background(themeVM.bg.opacity(0.97))
+                    .overlay(Rectangle().frame(height:0.5)
+                        .foregroundColor(themeVM.accent.opacity(0.2)),alignment:.bottom)
 
                     // Messages
                     ScrollViewReader { proxy in
