@@ -12,6 +12,7 @@ public struct DARTRootView: View {
     @State private var showProfile  = false
     @State private var showAR       = false
     @State private var showImporter = false
+    @State private var showFeedback = false
     @State private var selectedTab: DARTTab = .scene
 
     public var body: some View {
@@ -22,7 +23,7 @@ public struct DARTRootView: View {
 
                 VStack(spacing: 0) {
                     // ── Top chrome ─────────────────────────────────
-                    DARTTopBar(showProfile: $showProfile, showAR: $showAR, showImporter: $showImporter)
+                    DARTTopBar(showProfile: $showProfile, showAR: $showAR, showImporter: $showImporter, showFeedback: $showFeedback)
 
                     // ── Scene tab bar ───────────────────────────────
                     DARTSceneTabBar()
@@ -88,6 +89,11 @@ public struct DARTRootView: View {
                 .padding(.top, 56).padding(.trailing, 16)
             }
         }
+        .sheet(isPresented: $showFeedback) {
+            FeedbackView()
+                .environmentObject(themeVM)
+                .environmentObject(authVM)
+        }
         .sheet(isPresented: $showImporter) {
             ArcAssetImporter { node in
                 labVM.importAssetNode(node)
@@ -128,6 +134,7 @@ struct DARTTopBar: View {
     @Binding var showProfile: Bool
     @Binding var showAR: Bool
     @Binding var showImporter: Bool
+    @Binding var showFeedback: Bool
     @EnvironmentObject var themeVM: ArcThemeViewModel
     @EnvironmentObject var labVM: ArcLabViewModel
     @EnvironmentObject var authVM: ArcAuthViewModel
@@ -212,6 +219,10 @@ struct DARTTopBar: View {
                 // AR mode
                 DARTIconButton(icon: "arkit", active: showAR) {
                     showAR.toggle()
+                }
+                // Feedback
+                DARTIconButton(icon: "bubble.left.and.bubble.right", active: false) {
+                    showFeedback = true
                 }
 
                 // Avatar
