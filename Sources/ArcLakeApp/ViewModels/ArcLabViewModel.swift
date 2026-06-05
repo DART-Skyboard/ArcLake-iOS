@@ -112,11 +112,65 @@ public final class ArcLabViewModel: ObservableObject {
             return n
         }
 
+        // Axis shaft — full-length cylinder
         func axisNode(_ color: UIColor, _ rx: Float, _ rz: Float) -> SCNNode {
             let c=SCNCylinder(radius:0.015, height:CGFloat(ext*2))
             c.firstMaterial?.emission.contents=color; c.firstMaterial?.lightingModel = .constant
             let n=SCNNode(geometry:c); n.eulerAngles=SCNVector3(rx,0,rz); return n
         }
+
+        // Arrowhead cone at the positive tip of each axis
+        // X=red(+X), Y=green(+Y), Z=blue(+Z)
+        func arrowHead(color: UIColor, pos: SCNVector3, rx: Float, rz: Float) -> SCNNode {
+            let cone = SCNCone(topRadius: 0, bottomRadius: 0.08, height: 0.28)
+            cone.firstMaterial?.emission.contents = color
+            cone.firstMaterial?.lightingModel = .constant
+            let n = SCNNode(geometry: cone)
+            n.position = pos
+            n.eulerAngles = SCNVector3(rx, 0, rz)
+            return n
+        }
+
+        // Axis label text at tip
+        func axisLabel(_ text: String, color: UIColor, pos: SCNVector3) -> SCNNode {
+            let t = SCNText(string: text, extrusionDepth: 0.02)
+            t.font = UIFont.systemFont(ofSize: 0.3, weight: .bold)
+            t.firstMaterial?.emission.contents = color
+            t.firstMaterial?.lightingModel = .constant
+            let n = SCNNode(geometry: t)
+            n.position = pos
+            n.scale = SCNVector3(1, 1, 1)
+            return n
+        }
+
+        let xCol = UIColor(red:1,   green:0.2, blue:0.2, alpha:0.9)
+        let yCol = UIColor(red:0.2, green:1,   blue:0.3, alpha:0.9)
+        let zCol = UIColor(red:0.2, green:0.4, blue:1.0, alpha:0.9)
+        let axisGroup = SCNNode(); axisGroup.name = "axis_origin"
+
+        // X axis — red — shaft + arrowhead at +X edge
+        let xShaft = axisNode(xCol.withAlphaComponent(0.65), 0, Float.pi/2)
+        axisGroup.addChildNode(xShaft)
+        axisGroup.addChildNode(arrowHead(color: xCol,
+            pos: SCNVector3(ext, 0, 0), rx: 0, rz: -Float.pi/2))
+        axisGroup.addChildNode(axisLabel("+X", color: xCol,
+            pos: SCNVector3(ext + 0.3, -0.1, -0.15)))
+
+        // Y axis — green — shaft + arrowhead at +Y
+        let yShaft = axisNode(yCol.withAlphaComponent(0.65), 0, 0)
+        axisGroup.addChildNode(yShaft)
+        axisGroup.addChildNode(arrowHead(color: yCol,
+            pos: SCNVector3(0, ext, 0), rx: 0, rz: 0))
+        axisGroup.addChildNode(axisLabel("+Y", color: yCol,
+            pos: SCNVector3(0.1, ext + 0.3, -0.15)))
+
+        // Z axis — blue — shaft + arrowhead at +Z
+        let zShaft = axisNode(zCol.withAlphaComponent(0.65), Float.pi/2, 0)
+        axisGroup.addChildNode(zShaft)
+        axisGroup.addChildNode(arrowHead(color: zCol,
+            pos: SCNVector3(0, 0, ext), rx: Float.pi/2, rz: 0))
+        axisGroup.addChildNode(axisLabel("+Z", color: zCol,
+            pos: SCNVector3(0.1, -0.1, ext + 0.3)))
 
         if showGridXZ {
             let g=SCNNode(); g.name="grid_xz"
@@ -126,9 +180,6 @@ public final class ArcLabViewModel: ObservableObject {
                 g.addChildNode(makeLine(SCNVector3(-ext,0,o),SCNVector3(ext,0,o),alpha:a))
                 g.addChildNode(makeLine(SCNVector3(o,0,-ext),SCNVector3(o,0,ext),alpha:a))
             }
-            g.addChildNode(axisNode(UIColor(red:1,green:0.2,blue:0.2,alpha:0.6), 0, Float.pi/2))
-            g.addChildNode(axisNode(UIColor(red:0.2,green:1,blue:0.3,alpha:0.6), 0, 0))
-            g.addChildNode(axisNode(UIColor(red:0.2,green:0.4,blue:1,alpha:0.6), Float.pi/2, 0))
             target.rootNode.addChildNode(g)
         }
         if showGridXY {
@@ -149,6 +200,8 @@ public final class ArcLabViewModel: ObservableObject {
             }
             target.rootNode.addChildNode(g)
         }
+        // Axes always rendered on top of grid planes
+        target.rootNode.addChildNode(axisGroup)
     }
 
     // MARK: — Element management
@@ -550,7 +603,8 @@ public final class ArcLabViewModel: ObservableObject {
         if showGrid { addGridFloor(to: scene) }
     }
 
-    public func exportGLB() -> URL? { SCNExportHelper().exportScene(scene, name:"ArcLake_Export") }
+    public func exportGLB() -> URL? { SCNExportHelper().exportScene(scene, name:"ArcLake_Export", format: .glb) }
+    public func exportUSDZ() -> URL? { SCNExportHelper().exportScene(scene, name:"ArcLake_Export", format: .usdz) }
 
 
     public func log(_ message: String) {
@@ -585,3 +639,4 @@ private extension Array {
         indices.contains(index) ? self[index] : nil
     }
 }
+
