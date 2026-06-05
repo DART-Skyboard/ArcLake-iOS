@@ -94,17 +94,62 @@ public final class ArcLabViewModel: ObservableObject {
     private func addGridFloor(to s: SCNScene? = nil) {
         let target = s ?? scene
         let g = SCNNode(); g.name = "grid"
-        for i in stride(from: -20, through: 20, by: 2) {
-            [true, false].forEach { horiz in
-                let c = SCNCylinder(radius: 0.004, height: 40)
-                c.firstMaterial?.diffuse.contents = UIColor.cyan.withAlphaComponent(0.05)
-                c.firstMaterial?.lightingModel = .constant
-                let n = SCNNode(geometry: c)
-                n.position = horiz ? SCNVector3(Float(i), -4, 0) : SCNVector3(0, -4, Float(i))
-                n.eulerAngles.x = .pi/2
-                g.addChildNode(n)
-            }
+        let gridSize: Int = 24        // number of lines each side
+        let step: Float   = 1.5       // spacing between lines
+        let extent: Float = Float(gridSize) * step
+        let lineR: CGFloat = 0.007
+
+        for i in stride(from: -gridSize, through: gridSize, by: 1) {
+            let offset = Float(i) * step
+            let isMajor = i % 4 == 0
+            let alpha: CGFloat = isMajor ? 0.18 : 0.06
+            let color = UIColor.cyan.withAlphaComponent(alpha)
+
+            // X-axis lines (run along X)
+            let xLine = SCNCylinder(radius: lineR, height: CGFloat(extent * 2))
+            xLine.firstMaterial?.diffuse.contents  = color
+            xLine.firstMaterial?.emission.contents = color
+            xLine.firstMaterial?.lightingModel = .constant
+            xLine.firstMaterial?.writesToDepthBuffer = false
+            let xNode = SCNNode(geometry: xLine)
+            xNode.position = SCNVector3(0, 0, offset)
+            xNode.eulerAngles = SCNVector3(0, 0, .pi/2)
+            g.addChildNode(xNode)
+
+            // Z-axis lines (run along Z)
+            let zLine = SCNCylinder(radius: lineR, height: CGFloat(extent * 2))
+            zLine.firstMaterial?.diffuse.contents  = color
+            zLine.firstMaterial?.emission.contents = color
+            zLine.firstMaterial?.lightingModel = .constant
+            zLine.firstMaterial?.writesToDepthBuffer = false
+            let zNode = SCNNode(geometry: zLine)
+            zNode.position = SCNVector3(offset, 0, 0)
+            g.addChildNode(zNode)
         }
+
+        // X axis — red
+        let xAxis = SCNCylinder(radius: 0.018, height: CGFloat(extent * 2))
+        xAxis.firstMaterial?.emission.contents = UIColor(red:1,green:0.2,blue:0.2,alpha:0.55)
+        xAxis.firstMaterial?.lightingModel = .constant
+        let xAxisNode = SCNNode(geometry: xAxis); xAxisNode.eulerAngles.z = .pi/2
+        g.addChildNode(xAxisNode)
+
+        // Z axis — blue
+        let zAxis = SCNCylinder(radius: 0.018, height: CGFloat(extent * 2))
+        zAxis.firstMaterial?.emission.contents = UIColor(red:0.2,green:0.4,blue:1,alpha:0.55)
+        zAxis.firstMaterial?.lightingModel = .constant
+        g.addChildNode(SCNNode(geometry: zAxis))  // already along Y, rotate not needed... 
+        // Actually Z axis needs rotation
+        let zAxisNode = SCNNode(geometry: zAxis); zAxisNode.eulerAngles.x = .pi/2
+        g.addChildNode(zAxisNode)
+
+        // Y axis — green
+        let yAxis = SCNCylinder(radius: 0.018, height: CGFloat(extent * 2))
+        yAxis.firstMaterial?.emission.contents = UIColor(red:0.2,green:1,blue:0.3,alpha:0.55)
+        yAxis.firstMaterial?.lightingModel = .constant
+        g.addChildNode(SCNNode(geometry: yAxis))
+
+        g.position = SCNVector3(0, 0, 0)
         target.rootNode.addChildNode(g)
     }
 
@@ -128,6 +173,12 @@ public final class ArcLabViewModel: ObservableObject {
         atomNodes.removeValue(forKey: element.id)
         atomPositions.removeValue(forKey: element.id)
         log("Removed \(element.elementName)")
+    }
+
+    // MARK: — 3D Asset Import
+    public func importAssetNode(_ node: SCNNode) {
+        scene.rootNode.addChildNode(node)
+        log("Imported asset: \(node.name ?? "model")")
     }
 
     public func clearElements() {
