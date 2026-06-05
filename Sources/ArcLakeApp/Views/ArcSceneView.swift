@@ -9,7 +9,6 @@ import RealityKit
 //   1-finger drag       → ORBIT   (tumble camera around pivot)
 //   2-finger drag       → PAN     (truck/pedestal — physically move camera+pivot)
 //   Pinch               → DOLLY   (camera moves closer/farther, FOV locked at 60°)
-//   2-finger rotate     → ROLL    (twist camera around look axis — barrel roll)
 //   Double-tap          → RESET   (return to default view, animated)
 //   Single tap on atom  → FOCUS   (fly pivot to atom, open probe panel)
 //
@@ -65,9 +64,6 @@ public struct ArcSceneView: UIViewRepresentable {
         // Pinch dolly
         let pinch = UIPinchGestureRecognizer(target:c, action:#selector(Coordinator.handleDolly(_:)))
 
-        // 2-finger rotate (roll — Nomad Sculpt twist)
-        let rotate = UIRotationGestureRecognizer(target:c, action:#selector(Coordinator.handleRoll(_:)))
-
         // Double-tap reset
         let dbl = UITapGestureRecognizer(target:c, action:#selector(Coordinator.resetView))
         dbl.numberOfTapsRequired = 2
@@ -77,7 +73,7 @@ public struct ArcSceneView: UIViewRepresentable {
         tap.numberOfTapsRequired = 1
         tap.require(toFail: dbl)
 
-        for g: UIGestureRecognizer in [orbit, pan, pinch, rotate, dbl, tap] {
+        for g: UIGestureRecognizer in [orbit, pan, pinch, dbl, tap] {
             g.delegate = c
             v.addGestureRecognizer(g)
         }
@@ -115,7 +111,6 @@ public struct ArcSceneView: UIViewRepresentable {
         private var theta:  Float = 0.4       // azimuth
         private var phi:    Float = 0.6       // polar angle from Y-up
         private var radius: Float = 20.0      // distance (dolly changes this)
-        private var roll:   Float = 0.0       // camera roll (twist gesture)
         private var pivot   = SIMD3<Float>.zero
 
         // Gesture start snapshots
@@ -175,21 +170,10 @@ public struct ArcSceneView: UIViewRepresentable {
             }
         }
 
-        // ── 2-finger rotate: ROLL ────────────────────────────────
-        // Twists camera around its look axis (barrel roll).
-        // Matches Nomad Sculpt's 2-finger twist gesture.
-        @objc func handleRoll(_ g: UIRotationGestureRecognizer) {
-            if g.state == .began { roll0 = roll }
-            if g.state == .changed {
-                roll = roll0 - Float(g.rotation)
-                commit()
-            }
-        }
-
         // ── Double-tap: RESET ────────────────────────────────────
         @objc func resetView() {
             theta = 0.4;  phi = 0.6;  radius = 20.0
-            roll = 0.0;   pivot = .zero
+            pivot = .zero
             SCNTransaction.begin()
             SCNTransaction.animationDuration = 0.45
             SCNTransaction.animationTimingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
