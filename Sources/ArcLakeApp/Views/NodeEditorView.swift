@@ -381,7 +381,7 @@ struct NodeEditorView: View {
     private func syncFromMolCanvas() {
         guard !labVM.molAtoms.isEmpty else { return }
         // Find linked pairs — create auto-group
-        let linked = labVM.molAtoms.filter { !$0.bonds.isEmpty }
+        let linked = labVM.molAtoms  // all atoms in mol canvas
         guard !linked.isEmpty else { return }
 
         let groupName = "Bond Group \(nodeGroups.count + 1)"
