@@ -67,8 +67,10 @@ struct NodeEditorView: View {
             canvasArea
             footer
         }
-        .onAppear { syncFromMolCanvas() }
-        .onChange(of: labVM.molAtoms.count) { _ in syncFromMolCanvas() }
+        .background(Color(red:0.03, green:0.06, blue:0.12))   // opaque — prevents see-through
+        .onAppear { syncFromMolCanvas(); syncFromSceneAtoms() }
+        .onChange(of: labVM.molAtoms.count)       { _ in syncFromMolCanvas() }
+        .onChange(of: labVM.selectedElements.count) { _ in syncFromSceneAtoms() }
     }
 
     // MARK: — Header
@@ -398,13 +400,11 @@ struct NodeEditorView: View {
     // Auto-sync nodes from MolCanvas atom bonds
     private func syncFromMolCanvas() {
         guard !labVM.molAtoms.isEmpty else { return }
-        // Find linked pairs — create auto-group
-        let linked = labVM.molAtoms  // all atoms in mol canvas
+        let linked = labVM.molAtoms
         guard !linked.isEmpty else { return }
 
         let groupName = "Bond Group \(nodeGroups.count + 1)"
         var newNodeIds: [UUID] = []
-
         for atom in linked {
             if !nodes.contains(where: { $0.title == atom.symbol }) {
                 let n = EditorNode(
@@ -422,6 +422,30 @@ struct NodeEditorView: View {
             nodeGroups.append(NodeGroup(name: groupName, nodeIds: newNodeIds))
             for i in nodes.indices where newNodeIds.contains(nodes[i].id) {
                 nodes[i].groupId = nodeGroups.last?.id
+            }
+        }
+    }
+
+    // Sync nodes from 3D scene elements — runs when selectedElements changes
+    private func syncFromSceneAtoms() {
+        let colors: [String: Color] = [
+            "alkali metal": .orange, "alkaline earth metal": .yellow,
+            "transition metal": .cyan, "post-transition metal": .green,
+            "metalloid": .purple, "nonmetal": .mint, "halogen": .pink,
+            "noble gas": .indigo, "lanthanide": .red, "actinide": .brown,
+        ]
+        for el in labVM.selectedElements {
+            let title = "\(el.elementSymbol) (\(el.elementName))"
+            if !nodes.contains(where: { $0.title == title }) {
+                let col = colors[el.category.rawValue.lowercased()] ?? Color(el.category.color)
+                let n = EditorNode(
+                    type: .element, title: title,
+                    position: CGPoint(
+                        x: 60 + CGFloat(nodes.count % 5) * 95,
+                        y: 70 + CGFloat(nodes.count / 5) * 85),
+                    color: col,
+                    ports: ["in","out"])
+                nodes.append(n)
             }
         }
     }
@@ -526,4 +550,5 @@ struct EditorNodeView: View {
         .onTapGesture { onTap() }
     }
 }
+
 
