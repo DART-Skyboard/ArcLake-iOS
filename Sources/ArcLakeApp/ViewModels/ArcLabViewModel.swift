@@ -21,7 +21,10 @@ public final class ArcLabViewModel: ObservableObject {
     // Default 30, user-adjustable in Physics tab
     @Published public var ptsPerComponent: Int = 30
     @Published public var isNodeEditorVisible = false
-    @Published public var showGrid = true
+    @Published public var showGrid    = true   // master toggle
+    @Published public var showGridXZ  = true   // floor plane (horizontal)
+    @Published public var showGridXY  = true   // front wall (vertical, facing Z)
+    @Published public var showGridYZ  = true   // side wall (vertical, facing X)
     @Published public var showFloor = false
     @Published public var showAxisLabels = true
     @Published public var periodicTableMode: PeriodicTableMode = .addToScene
@@ -94,448 +97,102 @@ public final class ArcLabViewModel: ObservableObject {
 
     private func addGridFloor(to s: SCNScene? = nil) {
         let target = s ?? scene
-        let g = SCNNode(); g.name = "grid"
-        let gridSize: Int = 24        // number of lines each side
-        let step: Float   = 1.5       // spacing between lines
+        let gridSize: Int = 20
+        let step: Float   = 1.5
         let extent: Float = Float(gridSize) * step
-        let lineR: CGFloat = 0.007
 
-        for i in stride(from: -gridSize, through: gridSize, by: 1) {
-            let offset = Float(i) * step
-            let isMajor = i % 4 == 0
-            let alpha: CGFloat = isMajor ? 0.18 : 0.06
-            let color = UIColor.cyan.withAlphaComponent(alpha)
+        func makePlane(name: String, lines: [(SCNVector3, SCNVector3)],
+                       axisColors: (SCNVector3, SCNVector3, SCNVector3)?) -> SCNNode {
+            let planeNode = SCNNode(); planeNode.name = name
+            let lineR: CGFloat = 0.006
 
-            // X-axis lines (run along X)
-            let xLine = SCNCylinder(radius: lineR, height: CGFloat(extent * 2))
-            xLine.firstMaterial?.diffuse.contents  = color
-            xLine.firstMaterial?.emission.contents = color
-            xLine.firstMaterial?.lightingModel = .constant
-            xLine.firstMaterial?.writesToDepthBuffer = false
-            let xNode = SCNNode(geometry: xLine)
-            xNode.position = SCNVector3(0, 0, offset)
-            xNode.eulerAngles = SCNVector3(0, 0, Float.pi/2)
-            g.addChildNode(xNode)
-
-            // Z-axis lines (run along Z)
-            let zLine = SCNCylinder(radius: lineR, height: CGFloat(extent * 2))
-            zLine.firstMaterial?.diffuse.contents  = color
-            zLine.firstMaterial?.emission.contents = color
-            zLine.firstMaterial?.lightingModel = .constant
-            zLine.firstMaterial?.writesToDepthBuffer = false
-            let zNode = SCNNode(geometry: zLine)
-            zNode.position = SCNVector3(offset, 0, 0)
-            g.addChildNode(zNode)
-        }
-
-        // X axis — red
-        let xAxis = SCNCylinder(radius: 0.018, height: CGFloat(extent * 2))
-        xAxis.firstMaterial?.emission.contents = UIColor(red:1,green:0.2,blue:0.2,alpha:0.55)
-        xAxis.firstMaterial?.lightingModel = .constant
-        let xAxisNode = SCNNode(geometry: xAxis); xAxisNode.eulerAngles.z = Float.pi/2
-        g.addChildNode(xAxisNode)
-
-        // Z axis — blue
-        let zAxis = SCNCylinder(radius: 0.018, height: CGFloat(extent * 2))
-        zAxis.firstMaterial?.emission.contents = UIColor(red:0.2,green:0.4,blue:1,alpha:0.55)
-        zAxis.firstMaterial?.lightingModel = .constant
-        g.addChildNode(SCNNode(geometry: zAxis))  // already along Y, rotate not needed... 
-        // Actually Z axis needs rotation
-        let zAxisNode = SCNNode(geometry: zAxis); zAxisNode.eulerAngles.x = Float.pi/2
-        g.addChildNode(zAxisNode)
-
-        // Y axis — green
-        let yAxis = SCNCylinder(radius: 0.018, height: CGFloat(extent * 2))
-        yAxis.firstMaterial?.emission.contents = UIColor(red:0.2,green:1,blue:0.3,alpha:0.55)
-        yAxis.firstMaterial?.lightingModel = .constant
-        g.addChildNode(SCNNode(geometry: yAxis))
-
-        g.position = SCNVector3(0, 0, 0)
-        target.rootNode.addChildNode(g)
-    }
-
-    // MARK: — Element management
-    public func addElement(_ element: ArcElement) {
-        guard !selectedElements.contains(where: { $0.id == element.id }) else { return }
-        selectedElements.append(element)
-        // Sync to tab state
-        if activeTabIndex < tabStates.count {
-            tabStates[activeTabIndex].elements = selectedElements
-        }
-        let pos = physicsPosition(for: element, index: selectedElements.count - 1)
-        atomPositions[element.id] = pos
-        buildPointCloudAtom(element, at: pos)
-        log("Added \(element.elementName) (Z=\(element.protons))")
-    }
-
-    // Add multiple copies of the same element to the scene
-    // (unlike addElement which blocks duplicates)
-    public func addElementInstance(_ element: ArcElement) {
-        selectedElements.append(element)
-        if activeTabIndex < tabStates.count {
-            tabStates[activeTabIndex].elements = selectedElements
-        }
-        // Offset each instance slightly so they don't stack on top
-        let instanceIdx = selectedElements.count - 1
-        let angle = Float(instanceIdx) * 0.618 * Float.pi * 2.0   // golden angle spread
-        let r = Float(instanceIdx / 6 + 1) * 2.5
-        let pos = SIMD3<Float>(r * cos(angle), 0, r * sin(angle))
-        atomPositions[element.id] = pos
-        buildPointCloudAtom(element, at: pos)
-        log("Added instance of \(element.elementName) (\(instanceIdx + 1) in scene)")
-    }
-
-    // Add element to Mol Canvas instead of 3D scene
-    public func addToMolCanvas(_ element: ArcElement) {
-        // Set pending atom in MolCanvasState — MolCanvasView picks it up on next appear/onChange
-        MolCanvasState.shared.pendingAtom = (
-            symbol: element.elementSymbol,
-            z: element.protons,
-            color: element.category.color
-        )
-        // Open the canvas if not already open
-        if !isMolCanvasVisible {
-            withAnimation(.spring()) { isMolCanvasVisible = true }
-        }
-        log("Sent \(element.elementSymbol) to Mol Canvas")
-    }
-
-    public func removeElement(_ element: ArcElement) {
-        selectedElements.removeAll { $0.id == element.id }
-        atomNodes[element.id]?.removeFromParentNode()
-        atomNodes.removeValue(forKey: element.id)
-        atomPositions.removeValue(forKey: element.id)
-        log("Removed \(element.elementName)")
-    }
-
-    // MARK: — 3D Asset Import
-    public func importAssetNode(_ node: SCNNode) {
-        scene.rootNode.addChildNode(node)
-        log("Imported asset: \(node.name ?? "model")")
-    }
-
-    public func clearElements() {
-        selectedElements.removeAll()
-        atomNodes.values.forEach { $0.removeFromParentNode() }
-        if activeTabIndex < tabStates.count {
-            tabStates[activeTabIndex].elements = []
-            tabStates[activeTabIndex].atomNodes = [:]
-            tabStates[activeTabIndex].atomPositions = [:]
-        }
-        log("Cleared all elements")
-    }
-
-    // Rebuild all atoms when particle resolution changes
-    // MARK: — Scene Tabs (wrappers for RootView)
-    public var sceneTabs: [(id: Int, name: String, isCFDMode: Bool)] {
-        sceneTabs_data.enumerated().map { (i, name) in
-            (id: i, name: name, isCFDMode: sceneTabsCFD[safe: i] ?? false)
-        }
-    }
-
-    public func switchTab(_ index: Int) {
-        guard index < sceneTabs_data.count else { return }
-        // Save current CFD state
-        if activeTabIndex < tabStates.count {
-            tabStates[activeTabIndex].isCFDActive = isCFDActive
-        }
-        // Stop CFD if running
-        if isCFDActive { stopCFD() }
-
-        activeTabIndex = index
-
-        // Ensure tab state exists
-        while tabStates.count <= index {
-            var newState = TabState()
-            newState.scene = SCNScene()
-            setupSceneBase(newState.scene)
-            tabStates.append(newState)
-        }
-
-        // Restore tab scene + elements
-        scene = tabStates[index].scene
-        selectedElements = tabStates[index].elements
-
-        // Restore CFD if this tab had it active
-        if tabStates[index].isCFDActive {
-            startCFD()
-        }
-        log("Switched to \(sceneTabs_data[index])")
-    }
-
-    public func addSceneTab() {
-        let newIdx = sceneTabs_data.count
-        sceneTabs_data.append("Scene \(newIdx + 1)")
-        sceneTabsCFD.append(false)
-        // Create fresh tab state
-        var newState = TabState()
-        newState.scene = SCNScene()
-        setupSceneBase(newState.scene)
-        tabStates.append(newState)
-        // Switch to new tab (saves current, loads new)
-        switchTab(newIdx)
-        log("New scene tab: \(sceneTabs_data.last!)")
-    }
-
-    public func removeSceneTab(_ index: Int) {
-        guard sceneTabs_data.count > 1, index < sceneTabs_data.count else { return }
-        sceneTabs_data.remove(at: index)
-        sceneTabsCFD.remove(at: index)
-        if index < tabStates.count { tabStates.remove(at: index) }
-        let newActive = min(activeTabIndex, sceneTabs_data.count - 1)
-        switchTab(newActive)
-    }
-
-    public func rebuildAllAtoms() {
-        let elements = selectedElements
-        clearElements()
-        for el in elements { addElement(el) }
-        log("Rebuilt \(elements.count) atoms @ \(ptsPerComponent) pts/component")
-    }
-
-    // MARK: — Physics-based positioning
-    // Atoms auto-space based on atomic radius, charge, and environment physics
-    // They repel each other so they never overlap — just like the web app
-    private func physicsPosition(for element: ArcElement, index: Int) -> SIMD3<Float> {
-        let gravity   = Float(physics.gravity)
-        let pressure  = Float(physics.pressure)
-        let temp      = Float(physics.temperature)
-
-        // Base atomic radius influences spacing
-        let atomicRadius = Float(element.neutrons + element.protons) * 0.04 + 0.8
-
-        // Place atoms in a spiral pattern, repelling from existing atoms
-        var candidate = spiralPosition(index: index, spacing: atomicRadius * 3.5)
-
-        // Apply physics offsets
-        // Higher gravity pulls atoms down
-        candidate.y -= gravity * 0.05
-        // Higher pressure compresses the arrangement
-        let pressureFactor = max(0.3, 1.0 - pressure * 0.005)
-        candidate.x *= pressureFactor
-        candidate.z *= pressureFactor
-        // Temperature adds thermal jitter
-        let thermalJitter = (temp - 72.0) * 0.002
-        candidate.x += Float.random(in: -thermalJitter...thermalJitter)
-        candidate.z += Float.random(in: -thermalJitter...thermalJitter)
-
-        // Repulsion from existing atoms — push away from neighbors
-        for (_, existingPos) in atomPositions {
-            let diff = candidate - existingPos
-            let dist = simd_length(diff)
-            let minDist = atomicRadius * 2.5
-            if dist < minDist && dist > 0.001 {
-                let push = (diff / dist) * (minDist - dist) * 0.5
-                candidate += push
+            for (i, (start, end)) in lines.enumerated() {
+                let isMajor = i % 4 == 0
+                let alpha: CGFloat = isMajor ? 0.18 : 0.06
+                let col = UIColor.cyan.withAlphaComponent(alpha)
+                let dx = end.x - start.x, dy = end.y - start.y, dz = end.z - start.z
+                let length = sqrt(dx*dx + dy*dy + dz*dz)
+                let cyl = SCNCylinder(radius: lineR, height: CGFloat(length))
+                cyl.firstMaterial?.diffuse.contents = col
+                cyl.firstMaterial?.emission.contents = col
+                cyl.firstMaterial?.lightingModel = .constant
+                let n = SCNNode(geometry: cyl)
+                n.position = SCNVector3((start.x+end.x)/2,(start.y+end.y)/2,(start.z+end.z)/2)
+                if abs(dx) > 0.001 { n.eulerAngles = SCNVector3(0, 0, Float.pi/2) }
+                else if abs(dz) > 0.001 { n.eulerAngles = SCNVector3(Float.pi/2, 0, 0) }
+                planeNode.addChildNode(n)
             }
-        }
-
-        return candidate
-    }
-
-    // Archimedean spiral for initial placement
-    private func spiralPosition(index: Int, spacing: Float) -> SIMD3<Float> {
-        if index == 0 { return SIMD3<Float>(0, 0, 0) }
-        let turns: Float = 0.618  // golden ratio turns
-        let angle = Float(index) * turns * 2 * Float.pi
-        let radius = sqrt(Float(index)) * spacing * 0.7
-        return SIMD3<Float>(cos(angle) * radius, 0, sin(angle) * radius)
-    }
-
-    // MARK: — Point cloud atom builder
-    // Each component (proton/neutron/electron) gets ptsPerComponent particles
-    private func buildPointCloudAtom(_ element: ArcElement, at position: SIMD3<Float>) {
-        let root = SCNNode()
-        root.name = "atomZ:\(element.id)"
-        root.position = SCNVector3(position.x, position.y, position.z)
-
-        let pts = ptsPerComponent  // e.g. 30 default
-
-        // ── Nucleus ──────────────────────────────────────────────────
-        // neutrons × pts + protons × pts points packed into nucleus sphere
-        let nucleusR = Float(element.neutrons + element.protons) * 0.018 + 0.22
-        let nucleusR_cg = CGFloat(nucleusR)
-
-        // Proton cloud — pts per proton
-        let totalProtonPts = element.protons * pts
-        let protonPts = fibonacciSphere(n: totalProtonPts, radius: nucleusR * 0.75)
-        buildParticleCloud(parent: root, points: protonPts, ptSize: 0.011,
-            diffuse: UIColor(red:1.0, green:0.42, blue:0.08, alpha:1),
-            emissive: UIColor(red:0.4, green:0.15, blue:0.0, alpha:1))
-
-        // Neutron cloud — pts per neutron
-        let totalNeutronPts = element.neutrons * pts
-        let neutronPts = fibonacciSphere(n: totalNeutronPts, radius: nucleusR * 0.85)
-        buildParticleCloud(parent: root, points: neutronPts, ptSize: 0.013,
-            diffuse: UIColor(red:0.55, green:0.55, blue:0.65, alpha:1),
-            emissive: UIColor(red:0.15, green:0.15, blue:0.25, alpha:1))
-
-        // Nucleus glow
-        let glow = SCNSphere(radius: nucleusR_cg)
-        glow.firstMaterial?.diffuse.contents  = UIColor(red:1.0, green:0.5, blue:0.1, alpha:0.07)
-        glow.firstMaterial?.emission.contents = UIColor(red:1.0, green:0.4, blue:0.0, alpha:0.10)
-        glow.firstMaterial?.isDoubleSided = true
-        glow.firstMaterial?.lightingModel = .constant
-        root.addChildNode(SCNNode(geometry: glow))
-
-        // ── Electron shells ───────────────────────────────────────────
-        // electrons × pts points distributed across orbital shells
-        let catColor = element.category.color
-
-        for (shellIdx, electronCount) in element.electronOrbits.enumerated() {
-            let shellR = Float(shellIdx + 1) * 1.15 + nucleusR + 0.25
-            let shellR_cg = CGFloat(shellR)
-
-            // Orbital ring
-            let torus = SCNTorus(ringRadius: shellR_cg, pipeRadius: 0.007)
-            torus.firstMaterial?.diffuse.contents  = catColor.withAlphaComponent(0.20)
-            torus.firstMaterial?.emission.contents = catColor.withAlphaComponent(0.08)
-            torus.firstMaterial?.lightingModel = .constant
-            let torusNode = SCNNode(geometry: torus)
-            // Each shell tilted differently for 3D look
-            torusNode.eulerAngles = SCNVector3(
-                Float.pi/2 + Float(shellIdx) * 0.28,
-                Float(shellIdx) * 0.52,
-                Float(shellIdx) * 0.18)
-            root.addChildNode(torusNode)
-
-            // Electron point cloud — electronCount × pts points on this shell
-            let totalElectronPts = electronCount * pts
-            let ePts = shellSphere(n: totalElectronPts, radius: shellR)
-            buildParticleCloud(parent: torusNode, points: ePts, ptSize: 0.020,
-                diffuse: catColor, emissive: catColor.withAlphaComponent(0.5))
-
-            // Orbital animation — inner shells faster
-            let period = Double(2.2 + Float(shellIdx) * 0.6)
-            torusNode.runAction(SCNAction.repeatForever(
-                SCNAction.rotateBy(x: 0, y: CGFloat.pi*2, z: 0, duration: period)))
-        }
-
-        // Atom label
-        let text = SCNText(string: element.elementSymbol, extrusionDepth: 0.01)
-        text.font = UIFont.systemFont(ofSize: 0.35, weight: .bold)
-        text.firstMaterial?.diffuse.contents  = UIColor.white
-        text.firstMaterial?.emission.contents = UIColor(red:0.3, green:0.8, blue:1.0, alpha:0.4)
-        text.firstMaterial?.lightingModel = .constant
-        let lbl = SCNNode(geometry: text)
-        let (mn, mx) = text.boundingBox
-        lbl.position = SCNVector3(-(mx.x-mn.x)/2, -(nucleusR + 0.7), 0)
-        lbl.scale = SCNVector3(0.75, 0.75, 0.75)
-        root.addChildNode(lbl)
-
-        scene.rootNode.addChildNode(root)
-        atomNodes[element.id] = root
-    }
-
-    // Create a node of tiny spheres at given positions
-    private func buildParticleCloud(parent: SCNNode, points: [SIMD3<Float>],
-                                     ptSize: CGFloat, diffuse: UIColor, emissive: UIColor) {
-        let geo = SCNSphere(radius: ptSize)
-        geo.segmentCount = 4   // low poly for performance
-        geo.firstMaterial?.diffuse.contents  = diffuse
-        geo.firstMaterial?.emission.contents = emissive
-        geo.firstMaterial?.lightingModel = .constant
-
-        // Use SCNInstancedGeometry pattern via multiple nodes
-        // Group under a container to minimize scene graph overhead
-        let container = SCNNode()
-        for pt in points {
-            let n = SCNNode(geometry: geo)
-            n.position = SCNVector3(pt.x, pt.y, pt.z)
-            container.addChildNode(n)
-        }
-        parent.addChildNode(container)
-    }
-
-    // Fibonacci sphere — evenly distributed points on sphere surface
-    private func fibonacciSphere(n: Int, radius: Float) -> [SIMD3<Float>] {
-        guard n > 0 else { return [] }
-        return (0..<n).map { i in
-            let theta = Float.pi * (3.0 - sqrt(5.0)) * Float(i)
-            let y = (1.0 - Float(i) / Float(max(n-1,1)) * 2.0) * radius
-            let r = sqrt(max(0, radius*radius - y*y))
-            return SIMD3<Float>(cos(theta)*r, y, sin(theta)*r)
-        }
-    }
-
-    // Shell sphere — points distributed on spherical shell surface
-    private func shellSphere(n: Int, radius: Float) -> [SIMD3<Float>] {
-        guard n > 0 else { return [] }
-        let jitter: Float = radius * 0.08  // slight random spread
-        return (0..<n).map { i in
-            let theta = Float.pi * (3.0 - sqrt(5.0)) * Float(i)
-            let phi   = acos(1.0 - 2.0 * Float(i) / Float(max(n-1,1)))
-            let r = radius + Float.random(in: -jitter...jitter)
-            return SIMD3<Float>(
-                sin(phi)*cos(theta)*r,
-                cos(phi)*r,
-                sin(phi)*sin(theta)*r)
-        }
-    }
-
-    // MARK: — CFD
-    public func startCFD() {
-        guard let first = selectedElements.first else { return }
-        isCFDActive = true
-        sphEngine.initializeForElement(first, count: physics.activeTab.particleCount)
-        cfdTimer = Timer.scheduledTimer(withTimeInterval: 0.016, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.sphEngine.tick()
-                self?.cfdParticles = self?.sphEngine.particles ?? []
+            // Axis lines
+            if let (xColor, yColor, zColor) = axisColors {
+                func axis(_ color: SCNVector3, _ e: SCNVector3) -> SCNNode {
+                    let c = SCNCylinder(radius: 0.016, height: CGFloat(extent*2))
+                    c.firstMaterial?.emission.contents = UIColor(red:CGFloat(color.x),green:CGFloat(color.y),blue:CGFloat(color.z),alpha:0.6)
+                    c.firstMaterial?.lightingModel = .constant
+                    let n = SCNNode(geometry: c)
+                    if e.x > 0 { n.eulerAngles = SCNVector3(0,0,Float.pi/2) }
+                    else if e.z > 0 { n.eulerAngles = SCNVector3(Float.pi/2,0,0) }
+                    return n
+                }
+                planeNode.addChildNode(axis(SCNVector3(1,0.2,0.2), SCNVector3(1,0,0))) // X red
+                planeNode.addChildNode(axis(SCNVector3(0.2,1,0.3), SCNVector3(0,1,0))) // Y green
+                planeNode.addChildNode(axis(SCNVector3(0.2,0.4,1), SCNVector3(0,0,1))) // Z blue
             }
+            return planeNode
         }
-        log("CFD started — Tab \(physics.activeTabIndex + 1)")
-    }
 
-    public func stopCFD() {
-        isCFDActive = false; cfdTimer?.invalidate(); cfdTimer = nil
-        log("CFD stopped")
-    }
-
-    // MARK: — Mol canvas methods
-    public func addElementToCanvas(_ element: ArcElement) {
-        let pos = CGPoint(x: 80+Double(molAtoms.count%4)*80, y: 120+Double(molAtoms.count/4)*80)
-        molAtoms.append(MolAtomNode(symbol:element.elementSymbol, z:element.protons,
-                                    color:element.category.color, at:pos))
-        isMolCanvasVisible = true
-        log("Added \(element.elementSymbol) to Mol Canvas")
-    }
-
-    public func addToMolCanvas(element: ArcElement) { addElementToCanvas(element) }
-
-    public func addMolBond(from: UUID, to: UUID) {
-        molBonds.removeAll{($0.fromId==from&&$0.toId==to)||($0.fromId==to&&$0.toId==from)}
-        molBonds.append(MolBond(from:from, to:to, order:molBondMode, isDelta:molDeltaMode))
-    }
-
-    public func addBond(from: UUID, to: UUID) {
-        molBonds.removeAll{($0.fromId==from&&$0.toId==to)||($0.fromId==to&&$0.toId==from)}
-        molBonds.append(MolBond(from:from, to:to, order:molBondMode, isDelta:true))
-    }
-
-    public func addDeltaConnection(from: UUID, to: UUID, fromShell: Int, toShell: Int, op: String) {
-        deltaConnections.append(DeltaConnection(from:from, to:to,
-            fromShell:fromShell, toShell:toShell, op:op))
-        log("Δ: shell \(fromShell)→\(toShell) [\(op)]")
-    }
-
-    public func clearMolCanvas() {
-        molAtoms.removeAll(); molBonds.removeAll(); deltaConnections.removeAll()
-    }
-
-    public func addMolCanvasToScene(newTab: Bool) {
-        if newTab { addSceneTab() }
-        for node in molAtoms {
-            if let el = ElementStore.shared.elements.first(where:{$0.protons==node.atomicNumber}) {
-                addElement(el)
+        // XZ floor plane — horizontal grid at y=0
+        if showGridXZ {
+            var lines = [(SCNVector3, SCNVector3)]()
+            for i in stride(from: -gridSize, through: gridSize, by: 1) {
+                let o = Float(i) * step
+                lines.append((SCNVector3(-extent,0,o), SCNVector3(extent,0,o)))  // rows
+                lines.append((SCNVector3(o,0,-extent), SCNVector3(o,0,extent)))  // cols
             }
+            let plane = makePlane(name: "grid_xz", lines: lines,
+                axisColors: (SCNVector3(1,0.2,0.2), SCNVector3(0.2,1,0.3), SCNVector3(0.2,0.4,1)))
+            target.rootNode.addChildNode(plane)
         }
-        log("Mol Canvas added to \(newTab ? "new":"current") scene")
+
+        // XY wall plane — vertical grid facing Z at z=0
+        if showGridXY {
+            var lines = [(SCNVector3, SCNVector3)]()
+            for i in stride(from: -gridSize, through: gridSize, by: 1) {
+                let o = Float(i) * step
+                lines.append((SCNVector3(-extent,o,0), SCNVector3(extent,o,0)))  // horizontal
+                lines.append((SCNVector3(o,-extent,0), SCNVector3(o,extent,0)))  // vertical
+            }
+            let plane = makePlane(name: "grid_xy", lines: lines, axisColors: nil)
+            target.rootNode.addChildNode(plane)
+        }
+
+        // YZ wall plane — vertical grid facing X at x=0
+        if showGridYZ {
+            var lines = [(SCNVector3, SCNVector3)]()
+            for i in stride(from: -gridSize, through: gridSize, by: 1) {
+                let o = Float(i) * step
+                lines.append((SCNVector3(0,-extent,o), SCNVector3(0,extent,o)))   // vertical
+                lines.append((SCNVector3(0,o,-extent), SCNVector3(0,o,extent)))   // depth
+            }
+            let plane = makePlane(name: "grid_yz", lines: lines, axisColors: nil)
+            target.rootNode.addChildNode(plane)
+        }
     }
 
-    public func rebuildGrid() {
-        scene.rootNode.childNodes.filter{$0.name=="grid"}.forEach{$0.removeFromParentNode()}
+        public func rebuildGrid() {
+        scene.rootNode.childNodes
+            .filter{["grid","grid_xz","grid_xy","grid_yz","grid_floor"].contains($0.name ?? "")}
+            .forEach{$0.removeFromParentNode()}
         if showGrid { addGridFloor(to: scene) }
+    }
+    
+    public func toggleGridPlane(_ plane: String) {
+        switch plane {
+        case "xz": showGridXZ.toggle()
+        case "xy": showGridXY.toggle()
+        case "yz": showGridYZ.toggle()
+        default: break
+        }
+        rebuildGrid()
     }
 
     public func exportGLB() -> URL? { SCNExportHelper().exportScene(scene, name:"ArcLake_Export") }
