@@ -9,7 +9,9 @@ public struct DARTRootView: View {
     @EnvironmentObject var labVM: ArcLabViewModel
     @EnvironmentObject var themeVM: ArcThemeViewModel
     @EnvironmentObject var authVM: ArcAuthViewModel
-    @State private var showProfile = false
+    @State private var showProfile  = false
+    @State private var showAR       = false
+    @State private var showImporter = false
     @State private var selectedTab: DARTTab = .scene
 
     public var body: some View {
@@ -62,6 +64,29 @@ public struct DARTRootView: View {
         .sheet(isPresented: $showProfile) { ArcProfileSheet() }
         .overlay(alignment: .bottomTrailing) {
             AutumnOverlay()
+        }
+        .fullScreenCover(isPresented: $showAR) {
+            ZStack(alignment: .topTrailing) {
+                ArcARView()
+                    .environmentObject(labVM)
+                    .ignoresSafeArea()
+                Button {
+                    showAR = false
+                } label: {
+                    Label("Exit AR", systemImage: "xmark.circle.fill")
+                        .font(.system(size: 14, weight: .semibold))
+                        .padding(.horizontal, 14).padding(.vertical, 8)
+                        .background(.ultraThinMaterial, in: Capsule())
+                        .foregroundColor(.white)
+                }
+                .padding(.top, 56).padding(.trailing, 16)
+            }
+        }
+        .sheet(isPresented: $showImporter) {
+            ArcAssetImporter { node in
+                labVM.importAssetNode(node)
+                showImporter = false
+            }
         }
     }
 }
@@ -171,6 +196,14 @@ struct DARTTopBar: View {
                 // Theme
                 DARTIconButton(icon: "paintpalette", active: themeVM.current != .stealth) {
                     withAnimation(.easeInOut(duration: 0.25)) { themeVM.cycle() }
+                }
+                // Import 3D asset (GLB/USDZ/OBJ)
+                DARTIconButton(icon: "square.and.arrow.down", active: false) {
+                    showImporter = true
+                }
+                // AR mode
+                DARTIconButton(icon: "arkit", active: showAR) {
+                    showAR.toggle()
                 }
 
                 // Avatar
