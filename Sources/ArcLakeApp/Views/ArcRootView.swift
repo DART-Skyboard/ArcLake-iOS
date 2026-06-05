@@ -58,6 +58,12 @@ public struct DARTRootView: View {
 
                 // ── Overlay panels ──────────────────────────────────
                 ArcOverlays(geoSize: geo.size)
+                    .animation(.spring(response: 0.3, dampingFraction: 0.8),
+                               value: labVM.isNodeEditorVisible)
+                    .animation(.spring(response: 0.3, dampingFraction: 0.8),
+                               value: labVM.isPeriodicTableVisible)
+                    .animation(.spring(response: 0.3, dampingFraction: 0.8),
+                               value: labVM.isMolCanvasVisible)
             }
         }
         .preferredColorScheme(.dark)
@@ -191,7 +197,7 @@ struct DARTTopBar: View {
                     withAnimation(.spring()) { labVM.isPeriodicTableVisible.toggle() }
                 }
                 // Node editor
-                DARTIconButton(icon: "circle.connected.to.line.below",
+                DARTIconButton(icon: "network",
                                active: labVM.isNodeEditorVisible) {
                     withAnimation(.spring()) { labVM.isNodeEditorVisible.toggle() }
                 }
