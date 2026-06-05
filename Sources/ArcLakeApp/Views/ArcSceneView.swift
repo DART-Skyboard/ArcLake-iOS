@@ -115,6 +115,7 @@ public struct ArcSceneView: UIViewRepresentable {
 
         // Gesture start snapshots
         private var θ0: Float = 0;  private var φ0: Float = 0
+        private var r0: Float = 0;  private var roll0: Float = 0
         private var pivot0 = SIMD3<Float>.zero
 
         init(labVM: ArcLabViewModel) { self.labVM = labVM }
@@ -209,6 +210,7 @@ public struct ArcSceneView: UIViewRepresentable {
         }
 
         // ── Place camera on sphere around pivot ───────────────────
+        // Converts spherical (theta, phi, radius) + roll into a camera transform.
         // FOV stays at 60° always.
         func commit() {
             guard let cam = camNode else { return }
@@ -221,12 +223,17 @@ public struct ArcSceneView: UIViewRepresentable {
                 pivot.y + radius * cp,
                 pivot.z + radius * sp * ct)
 
+            // Look at pivot, then apply roll rotation
             cam.look(at: SCNVector3(pivot.x, pivot.y, pivot.z))
 
+            // Apply roll around look axis
+            if roll != 0 {
                 let lookAxis = simd_normalize(SIMD3<Float>(
                     pivot.x - cam.position.x,
                     pivot.y - cam.position.y,
                     pivot.z - cam.position.z))
+                let rollQ = simd_quatf(angle: roll, axis: lookAxis)
+                cam.simdOrientation = rollQ * cam.simdOrientation
             }
         }
 
@@ -310,20 +317,25 @@ struct ArcARView: UIViewRepresentable {
 }
 
 // MARK: — 3D Asset Import
+struct ArcAssetImporter: UIViewControllerRepresentable {
     let onLoad: (SCNNode) -> Void
+    func makeUIViewController(context:Context)->UIDocumentPickerViewController {
         let types: [UTType] = [
             UTType(filenameExtension:"usdz") ?? .data,
             UTType(filenameExtension:"glb")  ?? .data,
             UTType(filenameExtension:"obj")  ?? .data,
             UTType(filenameExtension:"dae")  ?? .data,
         ].compactMap{$0}
+        let vc = UIDocumentPickerViewController(forOpeningContentTypes:types, asCopy:true)
         vc.delegate = context.coordinator
         return vc
     }
+    func updateUIViewController(_:UIDocumentPickerViewController, context:Context) {}
     func makeCoordinator() -> Coordinator { Coordinator(onLoad:onLoad) }
     final class Coordinator: NSObject, UIDocumentPickerDelegate {
         let onLoad: (SCNNode) -> Void
         init(onLoad:@escaping(SCNNode)->Void){self.onLoad=onLoad}
+        func documentPicker(_:UIDocumentPickerViewController, didPickDocumentsAt urls:[URL]) {
             guard let url = urls.first else { return }
             do {
                 let scene = try SCNScene(url:url, options:[
