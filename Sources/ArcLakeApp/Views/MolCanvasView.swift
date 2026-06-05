@@ -147,6 +147,9 @@ private struct MolCanvas: View {
             }
             .gesture(panGesture)
             .onAppear { receivePendingAtom(geo: geo) }
+            .onChange(of: MolCanvasState.shared.pendingAtom?.z) { _ in
+                receivePendingAtom(geo: geo)
+            }
         }
     }
 
