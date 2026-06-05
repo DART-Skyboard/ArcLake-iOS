@@ -341,7 +341,6 @@ struct NodeEditorView: View {
     private func nodeView(_ node: EditorNode) -> some View {
         EditorNodeView(
             node: binding(for: node.id),
-            canvasScale: canvasScale,
             isSelected: selectedForGroup.contains(node.id),
             accent: themeVM.accent,
             onTap: { zTop = node.id },
@@ -355,7 +354,8 @@ struct NodeEditorView: View {
                     }
                     pendingFrom = nil
                 } else { pendingFrom = node.id }
-            }
+            },
+            canvasScale: canvasScale
         )
     }
 
