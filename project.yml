@@ -42,8 +42,8 @@ targets:
         UIApplicationSupportsIndirectInputEvents: true
         NSCameraUsageDescription: Used for AR mode atom visualization
         NSPhotoLibraryAddUsageDescription: Save GLB exports and screenshots
-        NSMicrophoneUsageDescription: Voice commands for ArcLake lab assistant
-    NSSpeechRecognitionUsageDescription: Autumn uses speech recognition to understand voice commands for the ArcLake molecular lab
+        NSMicrophoneUsageDescription: Voice commands for the ArcLake lab assistant
+        NSSpeechRecognitionUsageDescription: Autumn uses speech recognition to understand your voice commands for the ArcLake molecular lab
     entitlements:
       path: Sources/ArcLakeApp/ArcLakeApp.entitlements
     dependencies:
