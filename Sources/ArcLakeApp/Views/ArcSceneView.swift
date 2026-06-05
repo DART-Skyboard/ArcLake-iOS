@@ -335,18 +335,56 @@ struct ArcAssetImporter: UIViewControllerRepresentable {
     final class Coordinator: NSObject, UIDocumentPickerDelegate {
         let onLoad: (SCNNode) -> Void
         init(onLoad:@escaping(SCNNode)->Void){self.onLoad=onLoad}
+
         func documentPicker(_:UIDocumentPickerViewController, didPickDocumentsAt urls:[URL]) {
             guard let url = urls.first else { return }
+            let ext = url.pathExtension.lowercased()
+
+            // GLB: convert to USDZ first via ModelIO, then load as SCNScene
+            if ext == "glb" {
+                loadGLB(url: url)
+            } else {
+                loadDirect(url: url)
+            }
+        }
+
+        private func loadDirect(url: URL) {
             do {
-                let scene = try SCNScene(url:url, options:[
-                    .convertToYUp:true, .convertUnitsToMeters:1.0])
-                let root = scene.rootNode.clone(); root.name="imported_\(url.lastPathComponent)"
-                let bbox = root.boundingBox
-                let sz = max(bbox.max.x-bbox.min.x,
-                             max(bbox.max.y-bbox.min.y, bbox.max.z-bbox.min.z))
-                if sz > 0 { let s=6.0/Float(sz); root.scale=SCNVector3(s,s,s) }
+                let scene = try SCNScene(url: url, options:[
+                    .convertToYUp: true, .convertUnitsToMeters: 1.0])
+                let root = scene.rootNode.clone()
+                root.name = "imported_\(url.deletingPathExtension().lastPathComponent)"
+                normalizeScale(root)
                 DispatchQueue.main.async { self.onLoad(root) }
-            } catch { print("Import failed: \(error)") }
+            } catch { print("[ArcImport] direct load error: \(error)") }
+        }
+
+        private func loadGLB(url: URL) {
+            // ModelIO reads GLB natively — export to USDZ tmp, then SCNScene
+            let tmp = FileManager.default.temporaryDirectory
+                .appendingPathComponent(url.deletingPathExtension().lastPathComponent + "_arc.usdz")
+            do {
+                let asset = MDLAsset(url: url)
+                asset.loadTextures()
+                try asset.export(to: tmp)
+                let scene = try SCNScene(url: tmp, options:[
+                    .convertToYUp: true, .convertUnitsToMeters: 1.0])
+                let root = scene.rootNode.clone()
+                root.name = "imported_\(url.deletingPathExtension().lastPathComponent)"
+                normalizeScale(root)
+                try? FileManager.default.removeItem(at: tmp)
+                DispatchQueue.main.async { self.onLoad(root) }
+            } catch {
+                print("[ArcImport] GLB conversion error: \(error) — trying direct SCNScene load")
+                loadDirect(url: url)
+            }
+        }
+
+        private func normalizeScale(_ root: SCNNode) {
+            let bbox = root.boundingBox
+            let sz = max(bbox.max.x - bbox.min.x,
+                         max(bbox.max.y - bbox.min.y, bbox.max.z - bbox.min.z))
+            if sz > 0 { let s = 6.0 / Float(sz); root.scale = SCNVector3(s, s, s) }
         }
     }
 }
