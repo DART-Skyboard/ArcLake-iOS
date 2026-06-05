@@ -10,8 +10,8 @@ public struct DARTRootView: View {
     @EnvironmentObject var themeVM: ArcThemeViewModel
     @EnvironmentObject var authVM: ArcAuthViewModel
     @State private var showProfile  = false
-    // showAR moved to labVM
-    // showImporter moved to labVM
+    @State private var showAR       = false
+    @State private var showImporter = false
     @State private var selectedTab: DARTTab = .scene
 
     public var body: some View {
@@ -65,13 +65,13 @@ public struct DARTRootView: View {
         .overlay(alignment: .bottomTrailing) {
             AutumnOverlay()
         }
-        .fullScreenCover(isPresented: $labVM.showAR) {
+        .fullScreenCover(isPresented: $showAR) {
             ZStack(alignment: .topTrailing) {
                 ArcARView()
                     .environmentObject(labVM)
                     .ignoresSafeArea()
                 Button {
-                    labVM.showAR = false
+                    showAR = false
                 } label: {
                     Label("Exit AR", systemImage: "xmark.circle.fill")
                         .font(.system(size: 14, weight: .semibold))
@@ -82,10 +82,10 @@ public struct DARTRootView: View {
                 .padding(.top, 56).padding(.trailing, 16)
             }
         }
-        .sheet(isPresented: $labVM.showImporter) {
+        .sheet(isPresented: $showImporter) {
             ArcAssetImporter { node in
                 labVM.importAssetNode(node)
-                labVM.showImporter = false
+                showImporter = false
             }
         }
     }
@@ -199,11 +199,11 @@ struct DARTTopBar: View {
                 }
                 // Import 3D asset (GLB/USDZ/OBJ)
                 DARTIconButton(icon: "square.and.arrow.down", active: false) {
-                    labVM.showImporter = true
+                    showImporter = true
                 }
                 // AR mode
-                DARTIconButton(icon: "arkit", active: labVM.showAR) {
-                    labVM.showAR.toggle()
+                DARTIconButton(icon: "arkit", active: showAR) {
+                    showAR.toggle()
                 }
 
                 // Avatar
