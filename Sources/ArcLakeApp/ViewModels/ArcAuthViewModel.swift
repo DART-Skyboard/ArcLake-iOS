@@ -250,13 +250,13 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
 
     // MARK: — Sign out
     public func signOut() {
+        // Clear SESSION state only — keep Keychain tokens so "Continue as [user]"
+        // appears on the welcome screen. Tokens are only deleted on revocation.
         isSignedIn = false; isGuest = false; githubConnected = false
         username = ""; githubUsername = ""; appleUserId = ""
         deviceFlowCode = nil; error = nil
-        KeychainHelper.delete(key: keychainKey)
-        KeychainHelper.delete(key: displayNameKey)
-        KeychainHelper.delete(key: "arc_github_pat")
-        KeychainHelper.delete(key: "arc_github_username")
+        // Keep: arc_github_pat, arc_github_username — enables instant re-login
+        // Keep: Apple keychainKey / displayNameKey — Fruta restore handles those
     }
 
     @AppStorage("policy_accepted_v1") public var hasAcceptedPolicy = false
