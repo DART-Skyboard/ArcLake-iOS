@@ -1,4 +1,3 @@
-
 import SwiftUI
 
 public struct PhysicsTabView: View {
@@ -52,7 +51,6 @@ public struct PhysicsTabView: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 6))
                         }
 
-                        // Quick presets
                         HStack(spacing: 6) {
                             ForEach([("Low",5),("Def",30),("Med",100),("High",250),("Max",500)], id: \.0) { label, val in
                                 Button {
@@ -91,6 +89,16 @@ public struct PhysicsTabView: View {
                     PhysicsSlider(label: "Magnetism",   unit: "T",
                         value: Binding(get:{labVM.physics.magnetism},  set:{labVM.physics.magnetism=$0}),
                         range: 0...10, accent: themeVM.accent)
+                    Button("Reset to Standard Atmosphere") {
+                        labVM.physics.pressure  = 14.7
+                        labVM.physics.viscosity = 1.0
+                        labVM.physics.temperature = 68.0
+                        labVM.physics.gravity   = 9.81
+                        labVM.log("Physics reset to standard atmosphere")
+                    }
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.35))
+                    .padding(.top, 4)
                 }
 
                 // ── Nucleus ─────────────────────────────────────────
@@ -119,30 +127,59 @@ public struct PhysicsTabView: View {
                     }
                 }
 
-                // ── CFD ─────────────────────────────────────────────
-                SectionCard(title: "CFD Controls", icon: "wind") {
-                    HStack(spacing: 12) {
+                // ── FLUID DYNAMICS ──────────────────────────────────
+                SectionCard(title: "Fluid Dynamics", icon: "wind") {
+                    VStack(spacing: 10) {
+                        // Particle count
+                        HStack {
+                            Text("Particles")
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundColor(.white.opacity(0.5))
+                            Spacer()
+                            Text("\(labVM.physics.activeTab.particleCount)")
+                                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                .foregroundColor(themeVM.accent)
+                            Text("SPH engine")
+                                .font(.system(size: 8, design: .monospaced))
+                                .foregroundColor(.white.opacity(0.25))
+                        }
+                        Slider(value: Binding(
+                            get:{Double(labVM.physics.activeTab.particleCount)},
+                            set:{labVM.physics.activeTab.particleCount=Int($0)}),
+                               in: 50...2000, step: 50)
+                            .tint(themeVM.accent)
+
+                        // Start/Stop CFD — full width, no HStack overflow
                         Button {
                             if labVM.isCFDActive { labVM.stopCFD() } else { labVM.startCFD() }
                         } label: {
-                            Label(labVM.isCFDActive ? "Stop CFD" : "Start CFD",
-                                  systemImage: labVM.isCFDActive ? "stop.fill" : "play.fill")
-                                .font(.caption)
-                                .foregroundColor(labVM.isCFDActive ? .red : .green)
-                                .padding(.horizontal, 12).padding(.vertical, 6)
-                                .background((labVM.isCFDActive ? Color.red : Color.green).opacity(0.15))
-                                .clipShape(Capsule())
-                        }
-                        if labVM.isCFDActive {
-                            Text("\(labVM.cfdParticles.count) particles")
-                                .font(.system(size: 10, design: .monospaced)).foregroundColor(themeVM.accent)
+                            HStack(spacing: 8) {
+                                Image(systemName: labVM.isCFDActive ? "stop.fill" : "play.fill")
+                                    .font(.system(size: 12))
+                                Text(labVM.isCFDActive ? "Stop CFD" : "Start CFD")
+                                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                                Spacer()
+                                if labVM.isCFDActive {
+                                    Text("\(labVM.cfdParticles.count) particles")
+                                        .font(.system(size: 9, design: .monospaced))
+                                        .opacity(0.7)
+                                    Text("SPH engine")
+                                        .font(.system(size: 8, design: .monospaced))
+                                        .opacity(0.4)
+                                }
+                            }
+                            .foregroundColor(labVM.isCFDActive ? .white : .black)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 12)
+                            .frame(maxWidth: .infinity)
+                            .background(
+                                labVM.isCFDActive
+                                    ? Color.red.opacity(0.75)
+                                    : themeVM.accent
+                            )
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
                         }
                     }
-                    PhysicsSlider(label: "Particle Count", unit: "",
-                        value: Binding(
-                            get:{Double(labVM.physics.activeTab.particleCount)},
-                            set:{labVM.physics.activeTab.particleCount=Int($0)}),
-                        range: 50...2000, accent: themeVM.accent)
                 }
 
                 Button {
