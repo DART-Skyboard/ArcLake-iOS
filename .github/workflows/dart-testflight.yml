@@ -36,6 +36,7 @@ jobs:
           CERTIFICATE_BASE64:          ${{ secrets.CERTIFICATE_BASE64 }}
           CERTIFICATE_PASSWORD:        ${{ secrets.CERTIFICATE_PASSWORD }}
           PROVISIONING_PROFILE_BASE64: ${{ secrets.PROVISIONING_PROFILE_BASE64 }}
+          DART_PROFILE_BASE64:          ${{ secrets.DART_PROFILE_BASE64 }}
           KEYCHAIN_PASSWORD:           ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           KEYCHAIN_PATH="$RUNNER_TEMP/signing.keychain-db"
@@ -48,10 +49,18 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security list-keychain -d user -s "$KEYCHAIN_PATH"
           PP_PATH="$RUNNER_TEMP/profile.mobileprovision"
-          echo "$PROVISIONING_PROFILE_BASE64" | base64 --decode -o "$PP_PATH"
+          # Try DART-specific profile first, fall back to shared profile
+          if [ -n "$DART_PROFILE_BASE64" ]; then
+            echo "$DART_PROFILE_BASE64" | base64 --decode -o "$PP_PATH"
+          else
+            echo "$PROVISIONING_PROFILE_BASE64" | base64 --decode -o "$PP_PATH"
+          fi
           PP_UUID=$(security cms -D -i "$PP_PATH" | plutil -extract UUID xml1 -o - - | sed -n 's/.*<string>\(.*\)<\/string>.*/\1/p')
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           cp "$PP_PATH" ~/Library/MobileDevice/Provisioning\ Profiles/"$PP_UUID".mobileprovision
+          # Also install under the hardcoded DART UUID so Xcode can find by specifier
+          DART_UUID="64f748bb-0b11-4c41-a20a-3e2e11722e50"
+          cp "$PP_PATH" ~/Library/MobileDevice/Provisioning\ Profiles/"$DART_UUID".mobileprovision
           echo "PROFILE_UUID=$PP_UUID" >> $GITHUB_ENV
 
       - name: Install xcodegen
