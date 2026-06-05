@@ -13,6 +13,7 @@ public final class ArcLabViewModel: ObservableObject {
     @Published public var logEntries: [LogEntry] = []
     @Published public var probeTarget: ArcElement? = nil
     @Published public var isOrbitDeltaVisible = false
+    @Published public var molCanvasPendingElement: ArcElement? = nil
     @Published public var cfdParticles: [SPHEngine.Particle] = []
     @Published public var alloyComponents: [AlloyComponent] = []
 
@@ -20,8 +21,6 @@ public final class ArcLabViewModel: ObservableObject {
     // Default 30, user-adjustable in Physics tab
     @Published public var ptsPerComponent: Int = 30
     @Published public var isNodeEditorVisible = false
-    @Published public var showAR = false
-    @Published public var showImporter = false
     @Published public var showGrid = true
     @Published public var showFloor = false
     @Published public var showAxisLabels = true
@@ -115,7 +114,7 @@ public final class ArcLabViewModel: ObservableObject {
             xLine.firstMaterial?.writesToDepthBuffer = false
             let xNode = SCNNode(geometry: xLine)
             xNode.position = SCNVector3(0, 0, offset)
-            xNode.eulerAngles = SCNVector3(0, 0, Float.pi/2)
+            xNode.eulerAngles = SCNVector3(0, 0, .pi/2)
             g.addChildNode(xNode)
 
             // Z-axis lines (run along Z)
@@ -133,7 +132,7 @@ public final class ArcLabViewModel: ObservableObject {
         let xAxis = SCNCylinder(radius: 0.018, height: CGFloat(extent * 2))
         xAxis.firstMaterial?.emission.contents = UIColor(red:1,green:0.2,blue:0.2,alpha:0.55)
         xAxis.firstMaterial?.lightingModel = .constant
-        let xAxisNode = SCNNode(geometry: xAxis); xAxisNode.eulerAngles.z = Float.pi/2
+        let xAxisNode = SCNNode(geometry: xAxis); xAxisNode.eulerAngles.z = .pi/2
         g.addChildNode(xAxisNode)
 
         // Z axis — blue
@@ -142,7 +141,7 @@ public final class ArcLabViewModel: ObservableObject {
         zAxis.firstMaterial?.lightingModel = .constant
         g.addChildNode(SCNNode(geometry: zAxis))  // already along Y, rotate not needed... 
         // Actually Z axis needs rotation
-        let zAxisNode = SCNNode(geometry: zAxis); zAxisNode.eulerAngles.x = Float.pi/2
+        let zAxisNode = SCNNode(geometry: zAxis); zAxisNode.eulerAngles.x = .pi/2
         g.addChildNode(zAxisNode)
 
         // Y axis — green
@@ -167,6 +166,42 @@ public final class ArcLabViewModel: ObservableObject {
         atomPositions[element.id] = pos
         buildPointCloudAtom(element, at: pos)
         log("Added \(element.elementName) (Z=\(element.protons))")
+    }
+
+    // Add multiple copies of the same element to the scene
+    // (unlike addElement which blocks duplicates)
+    public func addElementInstance(_ element: ArcElement) {
+        selectedElements.append(element)
+        if activeTabIndex < tabStates.count {
+            tabStates[activeTabIndex].elements = selectedElements
+        }
+        // Offset each instance slightly so they don't stack on top
+        let instanceIdx = selectedElements.count - 1
+        let angle = Float(instanceIdx) * 0.618 * .pi * 2   // golden angle spread
+        let radius = Float(instanceIdx / 6 + 1) * 2.5
+        let pos = SIMD3<Float>(
+            radius * cos(angle),
+            0,
+            radius * sin(angle)
+        )
+        atomPositions[element.id + instanceIdx * 1000] = pos
+        buildPointCloudAtomAt(element, at: pos, uid: element.id + instanceIdx * 1000)
+        log("Added instance of \(element.elementName) (\(instanceIdx + 1) in scene)")
+    }
+
+    // Add element to Mol Canvas instead of 3D scene
+    public func addToMolCanvas(_ element: ArcElement) {
+        // Set pending atom in MolCanvasState — MolCanvasView picks it up on next appear/onChange
+        MolCanvasState.shared.pendingAtom = (
+            symbol: element.elementSymbol,
+            z: element.protons,
+            color: element.category.color
+        )
+        // Open the canvas if not already open
+        if !isMolCanvasVisible {
+            withAnimation(.spring()) { isMolCanvasVisible = true }
+        }
+        log("Sent \(element.elementSymbol) to Mol Canvas")
     }
 
     public func removeElement(_ element: ArcElement) {
