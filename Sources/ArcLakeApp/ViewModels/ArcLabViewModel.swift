@@ -177,15 +177,11 @@ public final class ArcLabViewModel: ObservableObject {
         }
         // Offset each instance slightly so they don't stack on top
         let instanceIdx = selectedElements.count - 1
-        let angle = Float(instanceIdx) * 0.618 * .pi * 2   // golden angle spread
-        let radius = Float(instanceIdx / 6 + 1) * 2.5
-        let pos = SIMD3<Float>(
-            radius * cos(angle),
-            0,
-            radius * sin(angle)
-        )
-        atomPositions[element.id + instanceIdx * 1000] = pos
-        buildPointCloudAtomAt(element, at: pos, uid: element.id + instanceIdx * 1000)
+        let angle = Float(instanceIdx) * 0.618 * Float.pi * 2   // golden angle spread
+        let r = Float(instanceIdx / 6 + 1) * 2.5
+        let pos = SIMD3<Float>(r * cos(angle), 0, r * sin(angle))
+        atomPositions[element.id] = pos
+        buildPointCloudAtom(element, at: pos)
         log("Added instance of \(element.elementName) (\(instanceIdx + 1) in scene)")
     }
 
