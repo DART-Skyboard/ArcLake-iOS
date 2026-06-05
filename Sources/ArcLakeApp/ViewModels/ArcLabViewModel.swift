@@ -177,7 +177,7 @@ public final class ArcLabViewModel: ObservableObject {
         }
         // Offset each instance slightly so they don't stack on top
         let instanceIdx = selectedElements.count - 1
-        let angle = Float(instanceIdx) * 0.618 * Float.pi * 2   // golden angle spread
+        let angle = Float(instanceIdx) * 0.618 * Float.pi * 2.0   // golden angle spread
         let r = Float(instanceIdx / 6 + 1) * 2.5
         let pos = SIMD3<Float>(r * cos(angle), 0, r * sin(angle))
         atomPositions[element.id] = pos
