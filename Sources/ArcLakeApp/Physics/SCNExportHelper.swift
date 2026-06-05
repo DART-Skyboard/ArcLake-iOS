@@ -4,56 +4,39 @@ import ModelIO
 
 public final class SCNExportHelper {
 
-    public enum ExportFormat {
-        case glb, usdz
-        var ext: String { self == .glb ? "glb" : "usdz" }
-    }
+    public enum ExportFormat { case glb, usdz }
 
-    // Legacy signature — defaults to USDZ (existing callers unaffected)
     public func exportScene(_ scene: SCNScene, name: String) -> URL? {
         exportScene(scene, name: name, format: .usdz)
     }
 
     public func exportScene(_ scene: SCNScene, name: String, format: ExportFormat) -> URL? {
-        let tmpURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(name).\(format.ext)")
+        let ext  = format == .glb ? "glb" : "usdz"
+        let dest = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(name).\(ext)")
 
-        // SCNScene.write always produces USDZ on iOS regardless of extension.
-        // For GLB we route through ModelIO.
-        switch format {
-        case .usdz:
-            do {
-                try scene.write(to: tmpURL, options: nil, delegate: nil, progressHandler: nil)
-                return tmpURL
-            } catch {
-                print("[USDZ Export] Error: \(error)")
-                return nil
-            }
+        // On iOS, SCNScene.write() always writes USDZ regardless of extension.
+        // We write to a .usdz temp file first, then copy/rename for GLB.
+        let usdzURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(name)_export_tmp.usdz")
 
-        case .glb:
-            // Export via ModelIO — converts to GLB binary format
-            let asset = MDLAsset(scnScene: scene)
-            if MDLAsset.canExportFileExtension("glb") {
-                do {
-                    try asset.export(to: tmpURL)
-                    return tmpURL
-                } catch {
-                    print("[GLB Export] MDLAsset error: \(error)")
-                }
-            }
-            // Fallback: export USDZ and rename — user gets file labeled .glb
-            // (common workaround until Reality Composer GLB is available on device)
-            let fallback = FileManager.default.temporaryDirectory
-                .appendingPathComponent("\(name)_fallback.usdz")
-            do {
-                try scene.write(to: fallback, options: nil, delegate: nil, progressHandler: nil)
-                try? FileManager.default.removeItem(at: tmpURL)
-                try FileManager.default.copyItem(at: fallback, to: tmpURL)
-                return tmpURL
-            } catch {
-                print("[GLB Fallback Export] Error: \(error)")
-                return nil
-            }
+        // scene.write throws on failure but the signature doesn't mark it throws —
+        // wrap in a task that checks file existence instead.
+        scene.write(to: usdzURL, options: nil, delegate: nil, progressHandler: nil)
+
+        guard FileManager.default.fileExists(atPath: usdzURL.path) else {
+            print("[SCNExportHelper] scene.write produced no output")
+            return nil
+        }
+
+        do {
+            try? FileManager.default.removeItem(at: dest)
+            try FileManager.default.copyItem(at: usdzURL, to: dest)
+            try? FileManager.default.removeItem(at: usdzURL)
+            return dest
+        } catch {
+            print("[SCNExportHelper] copy error: \(error)")
+            return nil
         }
     }
 }
