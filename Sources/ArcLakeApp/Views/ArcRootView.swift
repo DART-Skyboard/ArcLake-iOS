@@ -10,8 +10,8 @@ public struct DARTRootView: View {
     @EnvironmentObject var themeVM: ArcThemeViewModel
     @EnvironmentObject var authVM: ArcAuthViewModel
     @State private var showProfile  = false
-    @State private var showAR       = false
-    @State private var showImporter = false
+    // showAR moved to labVM
+    // showImporter moved to labVM
     @State private var selectedTab: DARTTab = .scene
 
     public var body: some View {
@@ -65,7 +65,7 @@ public struct DARTRootView: View {
         .overlay(alignment: .bottomTrailing) {
             AutumnOverlay()
         }
-        .fullScreenCover(isPresented: $showAR) {
+        .fullScreenCover(isPresented: $labVM.showAR) {
             ZStack(alignment: .topTrailing) {
                 ArcARView()
                     .environmentObject(labVM)
@@ -82,7 +82,7 @@ public struct DARTRootView: View {
                 .padding(.top, 56).padding(.trailing, 16)
             }
         }
-        .sheet(isPresented: $showImporter) {
+        .sheet(isPresented: $labVM.showImporter) {
             ArcAssetImporter { node in
                 labVM.importAssetNode(node)
                 showImporter = false
@@ -199,11 +199,11 @@ struct DARTTopBar: View {
                 }
                 // Import 3D asset (GLB/USDZ/OBJ)
                 DARTIconButton(icon: "square.and.arrow.down", active: false) {
-                    showImporter = true
+                    labVM.showImporter = true
                 }
                 // AR mode
-                DARTIconButton(icon: "arkit", active: showAR) {
-                    showAR.toggle()
+                DARTIconButton(icon: "arkit", active: labVM.showAR) {
+                    labVM.showAR.toggle()
                 }
 
                 // Avatar

@@ -24,7 +24,6 @@ public struct ArcSceneView: UIViewRepresentable {
         v.rendersContinuously  = true
         v.preferredFramesPerSecond = 60
         // Enable Metal for better particle rendering
-        v.techniqueName = nil
         v.scene = labVM.scene
 
         let cam = SCNCamera()
