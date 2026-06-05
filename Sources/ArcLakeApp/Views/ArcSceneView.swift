@@ -226,15 +226,7 @@ public struct ArcSceneView: UIViewRepresentable {
             // Look at pivot, then apply roll rotation
             cam.look(at: SCNVector3(pivot.x, pivot.y, pivot.z))
 
-            // Apply roll around look axis
-            if roll != 0 {
-                let lookAxis = simd_normalize(SIMD3<Float>(
-                    pivot.x - cam.position.x,
-                    pivot.y - cam.position.y,
-                    pivot.z - cam.position.z))
-                let rollQ = simd_quatf(angle: roll, axis: lookAxis)
-                cam.simdOrientation = rollQ * cam.simdOrientation
-            }
+
         }
 
         // All gestures can fire simultaneously
