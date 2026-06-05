@@ -136,8 +136,14 @@ public struct PeriodicTableView: View {
                                             (!searchText.isEmpty || selectedCategory != nil)
                                         PTCell(element: el, size: cellSize, dimmed: dimmed)
                                             .onTapGesture {
-                                                labVM.addElement(el)
-                                                labVM.log("Added \(el.elementSymbol) from periodic table")
+                                                if labVM.periodicTableMode == .addToCanvas {
+                                                    labVM.addToMolCanvas(el)
+                                                    labVM.log("Added \(el.elementSymbol) to Mol Canvas")
+                                                } else {
+                                                    // Allow multiple copies — don't guard duplicates
+                                                    labVM.addElementInstance(el)
+                                                    labVM.log("Added \(el.elementSymbol) to scene")
+                                                }
                                             }
                                             .onDrag {
                                                 NSItemProvider(object: el.elementSymbol as NSString)
