@@ -69,6 +69,8 @@ public struct DARTRootView: View {
                                value: labVM.isPeriodicTableVisible)
                     .animation(.spring(response: 0.3, dampingFraction: 0.8),
                                value: labVM.isMolCanvasVisible)
+                    .animation(.spring(response: 0.3, dampingFraction: 0.8),
+                               value: labVM.isMantisNavVisible)
             }
         }
         .preferredColorScheme(.dark)
@@ -234,6 +236,10 @@ struct DARTTopBar: View {
                     }
                     DARTIconButton(icon: "arkit", active: showAR) {
                         showAR.toggle()
+                    }
+                    // Mantis Navigation
+                    DARTIconButton(icon: "airplane", active: labVM.isMantisNavVisible) {
+                        withAnimation(.spring()) { labVM.isMantisNavVisible.toggle() }
                     }
                     DARTIconButton(icon: "bubble.left.and.bubble.right", active: false) {
                         showFeedback = true
