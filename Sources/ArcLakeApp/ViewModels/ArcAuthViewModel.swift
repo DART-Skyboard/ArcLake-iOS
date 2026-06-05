@@ -205,6 +205,43 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
 
     // MARK: — PAT not used in ArcLake standalone app
 
+
+    // MARK: — resumeStoredGitHubSession
+    // Called from WelcomeView "Continue as [user]" button.
+    // Token already in Keychain — instant re-entry, zero Device Flow.
+    public func resumeStoredGitHubSession() {
+        guard let token = KeychainHelper.load(key: "arc_github_pat"), !token.isEmpty else {
+            Task { await startGitHubAuth() }
+            return
+        }
+        let cachedUser = KeychainHelper.load(key: "arc_github_username") ?? "GitHub User"
+        // Instant local restore — UI unblocks immediately
+        isSignedIn      = true
+        isGuest         = false
+        githubConnected = true
+        githubUsername  = cachedUser
+        username        = cachedUser
+        error           = nil
+        Task {
+            await ArcGitHubClient.shared.setToken(token)
+            // Background verify — refresh username if token still valid
+            if let fresh = try? await ArcGitHubClient.shared.fetchAuthenticatedUser() {
+                KeychainHelper.save(key: "arc_github_username", value: fresh)
+                await MainActor.run { self.githubUsername = fresh; self.username = fresh }
+                await ArcVaultService.shared.setup(githubUsername: fresh)
+            } else {
+                // Token expired / revoked — evict and show error
+                await MainActor.run {
+                    KeychainHelper.delete(key: "arc_github_pat")
+                    KeychainHelper.delete(key: "arc_github_username")
+                    self.githubConnected = false
+                    self.isSignedIn      = false
+                    self.error = "GitHub session expired — please reconnect."
+                }
+            }
+        }
+    }
+
     // MARK: — Guest
     public func continueAsGuest() {
         isGuest = true; isSignedIn = true; username = "Guest"; error = nil
@@ -367,3 +404,4 @@ struct KeychainHelper {
         SecItemDelete(q as CFDictionary)
     }
 }
+
