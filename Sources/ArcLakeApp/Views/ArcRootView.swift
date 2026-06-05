@@ -71,7 +71,7 @@ public struct DARTRootView: View {
                     .environmentObject(labVM)
                     .ignoresSafeArea()
                 Button {
-                    showAR = false
+                    labVM.showAR = false
                 } label: {
                     Label("Exit AR", systemImage: "xmark.circle.fill")
                         .font(.system(size: 14, weight: .semibold))
@@ -85,7 +85,7 @@ public struct DARTRootView: View {
         .sheet(isPresented: $labVM.showImporter) {
             ArcAssetImporter { node in
                 labVM.importAssetNode(node)
-                showImporter = false
+                labVM.showImporter = false
             }
         }
     }

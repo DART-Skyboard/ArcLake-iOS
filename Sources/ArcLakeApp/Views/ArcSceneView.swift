@@ -47,7 +47,7 @@ public struct ArcSceneView: UIViewRepresentable {
         c.scnView   = v
         c.camNode   = camNode
         c.lastScene = labVM.scene
-        c.reset()
+        c.resetView()
 
         // Gestures
         let orbit = UIPanGestureRecognizer(target:c, action:#selector(Coordinator.orbit(_:)))
