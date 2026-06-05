@@ -21,6 +21,7 @@ public final class ArcLabViewModel: ObservableObject {
     // Default 30, user-adjustable in Physics tab
     @Published public var ptsPerComponent: Int = 30
     @Published public var isNodeEditorVisible = false
+    @Published public var isMantisNavVisible = false
     @Published public var showGrid   = true
     @Published public var showGridXZ = true
     @Published public var showGridXY = true
@@ -264,6 +265,7 @@ public final class ArcLabViewModel: ObservableObject {
 
     // MARK: — 3D Asset Import
     public func importAssetNode(_ node: SCNNode) {
+        node.removeFromParentNode()
         scene.rootNode.addChildNode(node)
         log("Imported asset: \(node.name ?? "model")")
     }
