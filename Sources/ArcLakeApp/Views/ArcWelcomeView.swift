@@ -199,40 +199,55 @@ struct ArcGitHubDeviceFlowSheet: View {
 
                 if let flow = authVM.deviceFlowCode {
                     VStack(spacing: 16) {
-                        Button {
-                            UIPasteboard.general.string = flow.userCode
-                        } label: {
-                            VStack(spacing: 6) {
-                                Text(flow.userCode)
-                                    .font(.custom("Orbitron-Bold", size: 30))
-                                    .foregroundColor(.white).tracking(8)
-                                    .padding(.horizontal, 20).padding(.vertical, 14)
-                                    .background(Color.white.opacity(0.08)).cornerRadius(12)
-                                Label("Tap to copy", systemImage: "doc.on.doc")
-                                    .font(.system(size: 11))
-                                    .foregroundColor(.white.opacity(0.4))
+                        // Step 1: Show the code prominently — user can copy it BEFORE going to GitHub
+                        VStack(spacing: 8) {
+                            Text("STEP 1 — Copy this code")
+                                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                .foregroundColor(.white.opacity(0.4))
+                                .tracking(1)
+
+                            Button {
+                                UIPasteboard.general.string = flow.userCode
+                            } label: {
+                                VStack(spacing: 6) {
+                                    Text(flow.userCode)
+                                        .font(.custom("Orbitron-Bold", size: 32))
+                                        .foregroundColor(.white).tracking(10)
+                                        .padding(.horizontal, 20).padding(.vertical, 14)
+                                        .background(Color.white.opacity(0.08)).cornerRadius(12)
+                                    Label("Tap to copy", systemImage: "doc.on.doc")
+                                        .font(.system(size: 11))
+                                        .foregroundColor(.white.opacity(0.4))
+                                }
                             }
                         }
 
-                        Button {
-                            UIPasteboard.general.string = flow.userCode
-                            showSafari = true
-                        } label: {
-                            HStack(spacing: 8) {
-                                Image(systemName: "safari.fill").font(.system(size: 15))
-                                Text("Open GitHub Authorization")
-                                    .font(.custom("Exo2-SemiBold", size: 14))
-                            }
-                            .foregroundColor(.black)
-                            .frame(maxWidth: .infinity).frame(height: 48)
-                            .background(themeVM.accent).cornerRadius(12)
-                        }
-                        .padding(.horizontal, 28)
+                        // Step 2: Open GitHub (code is already in clipboard)
+                        VStack(spacing: 6) {
+                            Text("STEP 2 — Authorize on GitHub")
+                                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                .foregroundColor(.white.opacity(0.4))
+                                .tracking(1)
 
-                        Text("Code copied — paste it on the GitHub page.")
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundColor(.white.opacity(0.4))
-                            .multilineTextAlignment(.center).padding(.horizontal, 24)
+                            Button {
+                                UIPasteboard.general.string = flow.userCode
+                                showSafari = true
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "safari.fill").font(.system(size: 15))
+                                    Text("Open GitHub Authorization")
+                                        .font(.custom("Exo2-SemiBold", size: 14))
+                                }
+                                .foregroundColor(.black)
+                                .frame(maxWidth: .infinity).frame(height: 48)
+                                .background(themeVM.accent).cornerRadius(12)
+                            }
+                            .padding(.horizontal, 28)
+
+                            Text("Paste the code when GitHub asks for it.")
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundColor(.white.opacity(0.35))
+                        }
 
                         HStack(spacing: 10) {
                             ProgressView().tint(themeVM.accent).scaleEffect(0.9)
@@ -243,10 +258,11 @@ struct ArcGitHubDeviceFlowSheet: View {
                     }
                     .padding(.horizontal, 24)
                     .onAppear {
+                        // Auto-copy code on appear — but do NOT auto-open Safari
+                        // so the user has time to read/copy the code first
                         if !didAutoOpen {
                             didAutoOpen = true
                             UIPasteboard.general.string = flow.userCode
-                            showSafari = true
                         }
                     }
                 } else {
