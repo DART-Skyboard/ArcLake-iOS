@@ -21,10 +21,10 @@ public final class ArcLabViewModel: ObservableObject {
     // Default 30, user-adjustable in Physics tab
     @Published public var ptsPerComponent: Int = 30
     @Published public var isNodeEditorVisible = false
-    @Published public var showGrid    = true   // master toggle
-    @Published public var showGridXZ  = true   // floor plane (horizontal)
-    @Published public var showGridXY  = true   // front wall (vertical, facing Z)
-    @Published public var showGridYZ  = true   // side wall (vertical, facing X)
+    @Published public var showGrid   = true    // master
+    @Published public var showGridXZ = true    // XZ floor
+    @Published public var showGridXY = true    // XY wall  
+    @Published public var showGridYZ = true    // YZ wall
     @Published public var showFloor = false
     @Published public var showAxisLabels = true
     @Published public var periodicTableMode: PeriodicTableMode = .addToScene
@@ -97,124 +97,77 @@ public final class ArcLabViewModel: ObservableObject {
 
     private func addGridFloor(to s: SCNScene? = nil) {
         let target = s ?? scene
-        let gridSize: Int = 20
-        let step: Float   = 1.5
-        let extent: Float = Float(gridSize) * step
+        let N = 20; let step: Float = 1.5
+        let ext = Float(N) * step
 
-        func makePlane(name: String, lines: [(SCNVector3, SCNVector3)],
-                       axisColors: (SCNVector3, SCNVector3, SCNVector3)?) -> SCNNode {
-            let planeNode = SCNNode(); planeNode.name = name
-            let lineR: CGFloat = 0.006
-
-            for (i, (start, end)) in lines.enumerated() {
-                let isMajor = i % 4 == 0
-                let alpha: CGFloat = isMajor ? 0.18 : 0.06
+        func lines3D(_ pts: [(SCNVector3, SCNVector3)], name: String) -> SCNNode {
+            let g = SCNNode(); g.name = name
+            for (i,(a,b)) in pts.enumerated() {
+                let major = i % 4 == 0
+                let alpha: CGFloat = major ? 0.18 : 0.06
                 let col = UIColor.cyan.withAlphaComponent(alpha)
-                let dx = end.x - start.x, dy = end.y - start.y, dz = end.z - start.z
-                let length = sqrt(dx*dx + dy*dy + dz*dz)
-                let cyl = SCNCylinder(radius: lineR, height: CGFloat(length))
-                cyl.firstMaterial?.diffuse.contents = col
-                cyl.firstMaterial?.emission.contents = col
-                cyl.firstMaterial?.lightingModel = .constant
-                let n = SCNNode(geometry: cyl)
-                n.position = SCNVector3((start.x+end.x)/2,(start.y+end.y)/2,(start.z+end.z)/2)
-                if abs(dx) > 0.001 { n.eulerAngles = SCNVector3(0, 0, Float.pi/2) }
-                else if abs(dz) > 0.001 { n.eulerAngles = SCNVector3(Float.pi/2, 0, 0) }
-                planeNode.addChildNode(n)
+                let dx=b.x-a.x, dy=b.y-a.y, dz=b.z-a.z
+                let len = sqrt(dx*dx+dy*dy+dz*dz)
+                let cyl = SCNCylinder(radius:0.006, height:CGFloat(len))
+                cyl.firstMaterial?.emission.contents=col; cyl.firstMaterial?.lightingModel = .constant
+                let n=SCNNode(geometry:cyl)
+                n.position=SCNVector3((a.x+b.x)/2,(a.y+b.y)/2,(a.z+b.z)/2)
+                if abs(dx)>0.001 { n.eulerAngles=SCNVector3(0,0,Float.pi/2) }
+                else if abs(dz)>0.001 { n.eulerAngles=SCNVector3(Float.pi/2,0,0) }
+                g.addChildNode(n)
             }
-            // Axis lines
-            if let (xColor, yColor, zColor) = axisColors {
-                func axis(_ color: SCNVector3, _ e: SCNVector3) -> SCNNode {
-                    let c = SCNCylinder(radius: 0.016, height: CGFloat(extent*2))
-                    c.firstMaterial?.emission.contents = UIColor(red:CGFloat(color.x),green:CGFloat(color.y),blue:CGFloat(color.z),alpha:0.6)
-                    c.firstMaterial?.lightingModel = .constant
-                    let n = SCNNode(geometry: c)
-                    if e.x > 0 { n.eulerAngles = SCNVector3(0,0,Float.pi/2) }
-                    else if e.z > 0 { n.eulerAngles = SCNVector3(Float.pi/2,0,0) }
-                    return n
-                }
-                planeNode.addChildNode(axis(SCNVector3(1,0.2,0.2), SCNVector3(1,0,0))) // X red
-                planeNode.addChildNode(axis(SCNVector3(0.2,1,0.3), SCNVector3(0,1,0))) // Y green
-                planeNode.addChildNode(axis(SCNVector3(0.2,0.4,1), SCNVector3(0,0,1))) // Z blue
-            }
-            return planeNode
+            return g
         }
 
-        // XZ floor plane — horizontal grid at y=0
+        func axisLine(color: UIColor, euler: SCNVector3, ext: Float) -> SCNNode {
+            let c=SCNCylinder(radius:0.016,height:CGFloat(ext*2))
+            c.firstMaterial?.emission.contents=color; c.firstMaterial?.lightingModel = .constant
+            let n=SCNNode(geometry:c); n.eulerAngles=euler; return n
+        }
+
         if showGridXZ {
-            var lines = [(SCNVector3, SCNVector3)]()
-            for i in stride(from: -gridSize, through: gridSize, by: 1) {
-                let o = Float(i) * step
-                lines.append((SCNVector3(-extent,0,o), SCNVector3(extent,0,o)))  // rows
-                lines.append((SCNVector3(o,0,-extent), SCNVector3(o,0,extent)))  // cols
+            var pts=[(SCNVector3,SCNVector3)]()
+            for i in stride(from: -N, through: N, by: 1) {
+                let o=Float(i)*step
+                pts.append((SCNVector3(-ext,0,o),SCNVector3(ext,0,o)))
+                pts.append((SCNVector3(o,0,-ext),SCNVector3(o,0,ext)))
             }
-            let plane = makePlane(name: "grid_xz", lines: lines,
-                axisColors: (SCNVector3(1,0.2,0.2), SCNVector3(0.2,1,0.3), SCNVector3(0.2,0.4,1)))
-            target.rootNode.addChildNode(plane)
+            let g=lines3D(pts,name:"grid_xz")
+            g.addChildNode(axisLine(color:UIColor(red:1,green:0.2,blue:0.2,alpha:0.6),
+                euler:SCNVector3(0,0,Float.pi/2),ext:ext))  // X red
+            g.addChildNode(axisLine(color:UIColor(red:0.2,green:1,blue:0.3,alpha:0.6),
+                euler:SCNVector3(0,0,0),ext:ext))            // Y green
+            g.addChildNode(axisLine(color:UIColor(red:0.2,green:0.4,blue:1,alpha:0.6),
+                euler:SCNVector3(Float.pi/2,0,0),ext:ext))  // Z blue
+            target.rootNode.addChildNode(g)
         }
-
-        // XY wall plane — vertical grid facing Z at z=0
         if showGridXY {
-            var lines = [(SCNVector3, SCNVector3)]()
-            for i in stride(from: -gridSize, through: gridSize, by: 1) {
-                let o = Float(i) * step
-                lines.append((SCNVector3(-extent,o,0), SCNVector3(extent,o,0)))  // horizontal
-                lines.append((SCNVector3(o,-extent,0), SCNVector3(o,extent,0)))  // vertical
+            var pts=[(SCNVector3,SCNVector3)]()
+            for i in stride(from: -N, through: N, by: 1) {
+                let o=Float(i)*step
+                pts.append((SCNVector3(-ext,o,0),SCNVector3(ext,o,0)))
+                pts.append((SCNVector3(o,-ext,0),SCNVector3(o,ext,0)))
             }
-            let plane = makePlane(name: "grid_xy", lines: lines, axisColors: nil)
-            target.rootNode.addChildNode(plane)
+            target.rootNode.addChildNode(lines3D(pts,name:"grid_xy"))
         }
-
-        // YZ wall plane — vertical grid facing X at x=0
         if showGridYZ {
-            var lines = [(SCNVector3, SCNVector3)]()
-            for i in stride(from: -gridSize, through: gridSize, by: 1) {
-                let o = Float(i) * step
-                lines.append((SCNVector3(0,-extent,o), SCNVector3(0,extent,o)))   // vertical
-                lines.append((SCNVector3(0,o,-extent), SCNVector3(0,o,extent)))   // depth
+            var pts=[(SCNVector3,SCNVector3)]()
+            for i in stride(from: -N, through: N, by: 1) {
+                let o=Float(i)*step
+                pts.append((SCNVector3(0,-ext,o),SCNVector3(0,ext,o)))
+                pts.append((SCNVector3(0,o,-ext),SCNVector3(0,o,ext)))
             }
-            let plane = makePlane(name: "grid_yz", lines: lines, axisColors: nil)
-            target.rootNode.addChildNode(plane)
+            target.rootNode.addChildNode(lines3D(pts,name:"grid_yz"))
         }
     }
 
         public func rebuildGrid() {
-        scene.rootNode.childNodes
-            .filter{["grid","grid_xz","grid_xy","grid_yz","grid_floor"].contains($0.name ?? "")}
-            .forEach{$0.removeFromParentNode()}
+        let names: Set<String> = ["grid","grid_xz","grid_xy","grid_yz"]
+        scene.rootNode.childNodes.filter{names.contains($0.name ?? "")}.forEach{$0.removeFromParentNode()}
         if showGrid { addGridFloor(to: scene) }
     }
-    
-    // MARK: — Scene Tabs
-    public func addSceneTab() {
-        let name = "Scene \(sceneTabs_data.count + 1)"
-        tabStates.append(TabState())
-        sceneTabs_data.append(name)
-        sceneTabsCFD.append(false)
-        activeTabIndex = tabStates.count - 1
-    }
 
-    public func removeSceneTab(at index: Int) {
-        guard tabStates.count > 1, index < tabStates.count else { return }
-        tabStates.remove(at: index)
-        if index < sceneTabs_data.count { sceneTabs_data.remove(at: index) }
-        if index < sceneTabsCFD.count { sceneTabsCFD.remove(at: index) }
-        activeTabIndex = max(0, min(activeTabIndex, tabStates.count - 1))
-    }
-    
-    // switchTab(index) — select a tab by index  
-    public func switchTab(_ index: Int) {
-        guard index < tabStates.count else { return }
-        activeTabIndex = index
-    }
-
-    // MARK: — 3D Asset Import
-    public func importAssetNode(_ node: SCNNode) {
-        scene.rootNode.addChildNode(node)
-        log("Imported asset: \(node.name ?? "model")")
-    }
-
-        public func toggleGridPlane(_ plane: String) {
+    public func toggleGridPlane(_ plane: String) {
         switch plane {
         case "xz": showGridXZ.toggle()
         case "xy": showGridXY.toggle()
