@@ -1,9 +1,10 @@
-
 import SwiftUI
 
 public struct MoleculeTabView: View {
     @EnvironmentObject var labVM: ArcLabViewModel
     @EnvironmentObject var themeVM: ArcThemeViewModel
+    @State private var showExportPicker = false
+    @State private var exportURL: URL?
 
     public var body: some View {
         ScrollView {
@@ -12,11 +13,16 @@ public struct MoleculeTabView: View {
                 // Active elements list
                 SectionCard(title: "Active Elements", icon: "atom") {
                     if labVM.selectedElements.isEmpty {
-                        Text("No elements selected.\nDrag from the periodic table or tap below.")
-                            .font(.caption)
-                            .foregroundColor(.white.opacity(0.4))
-                            .multilineTextAlignment(.center)
-                            .padding()
+                        VStack(spacing: 8) {
+                            Image(systemName: "atom")
+                                .font(.system(size: 28))
+                                .foregroundColor(themeVM.accent.opacity(0.3))
+                            Text("Open the Periodic Table to add elements")
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundColor(.white.opacity(0.35))
+                                .multilineTextAlignment(.center)
+                        }
+                        .frame(maxWidth: .infinity).padding(.vertical, 12)
                     } else {
                         ForEach(labVM.selectedElements) { el in
                             elementRow(el)
@@ -24,50 +30,47 @@ public struct MoleculeTabView: View {
                     }
                 }
 
-                // Quick actions
+                // Quick actions — 4 buttons in a scrollable row, no overflow
                 SectionCard(title: "Actions", icon: "sparkles") {
-                    HStack(spacing: 8) {
-                        ActionButton(
-                            title: "Periodic\nTable",
-                            icon: "tablecells",
-                            color: themeVM.accent
-                        ) {
-                            withAnimation(.spring()) {
-                                labVM.isPeriodicTableVisible.toggle()
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 10) {
+                            ActionButton(
+                                title: "Periodic\nTable",
+                                icon: "tablecells",
+                                color: themeVM.accent
+                            ) {
+                                withAnimation(.spring()) {
+                                    labVM.isPeriodicTableVisible.toggle()
+                                }
+                            }
+
+                            ActionButton(
+                                title: "Mol\nCanvas",
+                                icon: "scribble",
+                                color: .purple
+                            ) {
+                                withAnimation(.spring()) {
+                                    labVM.isMolCanvasVisible.toggle()
+                                }
+                            }
+
+                            ActionButton(
+                                title: "Export\nGLB/USDZ",
+                                icon: "square.and.arrow.up",
+                                color: .green
+                            ) {
+                                showExportPicker = true
+                            }
+
+                            ActionButton(
+                                title: "Clear\nAll",
+                                icon: "trash",
+                                color: .red.opacity(0.8)
+                            ) {
+                                labVM.clearElements()
                             }
                         }
-
-                        ActionButton(
-                            title: "Mol\nCanvas",
-                            icon: "scribble",
-                            color: .purple
-                        ) {
-                            withAnimation(.spring()) {
-                                labVM.isMolCanvasVisible.toggle()
-                            }
-                        }
-
-                        ActionButton(
-                            title: "Clear\nAll",
-                            icon: "trash",
-                            color: .red.opacity(0.8)
-                        ) {
-                            labVM.clearElements()
-                        }
-
-                        ActionButton(
-                            title: "Export\nGLB",
-                            icon: "square.and.arrow.up",
-                            color: .green
-                        ) {
-                            if let url = labVM.exportGLB() {
-                                let av = UIActivityViewController(
-                                    activityItems: [url], applicationActivities: nil)
-                                UIApplication.shared.windows.first?
-                                    .rootViewController?
-                                    .present(av, animated: true)
-                            }
-                        }
+                        .padding(.horizontal, 2)
                     }
                 }
 
@@ -78,6 +81,32 @@ public struct MoleculeTabView: View {
             }
             .padding(12)
         }
+        // Export format picker
+        .confirmationDialog("Export Format", isPresented: $showExportPicker, titleVisibility: .visible) {
+            Button("Export as GLB (3D interchange)") {
+                if let url = labVM.exportGLB() { share(url: url) }
+            }
+            Button("Export as USDZ (Apple AR)") {
+                if let url = labVM.exportUSDZ() { share(url: url) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Choose the 3D export format")
+        }
+    }
+
+    private func share(url: URL) {
+        let av = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+        // Present from the key window's root VC
+        guard let scene = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .first(where: { $0.activationState == .foregroundActive }),
+              let rootVC = scene.windows.first(where: { $0.isKeyWindow })?.rootViewController else { return }
+        // On iPad, anchor the popover
+        av.popoverPresentationController?.sourceView = rootVC.view
+        av.popoverPresentationController?.sourceRect = CGRect(
+            x: rootVC.view.bounds.midX, y: rootVC.view.bounds.maxY - 100, width: 1, height: 1)
+        rootVC.present(av, animated: true)
     }
 
     private func elementRow(_ el: ArcElement) -> some View {
@@ -103,25 +132,16 @@ public struct MoleculeTabView: View {
 
             Spacer()
 
-            // Probe button
-            Button {
-                labVM.openProbe(for: el)
-            } label: {
+            Button { labVM.openProbe(for: el) } label: {
                 Image(systemName: "chart.bar.xaxis")
-                    .font(.caption)
-                    .foregroundColor(themeVM.accent)
+                    .font(.caption).foregroundColor(themeVM.accent)
             }
-
-            // Remove button
-            Button {
-                labVM.removeElement(el)
-            } label: {
+            Button { labVM.removeElement(el) } label: {
                 Image(systemName: "minus.circle.fill")
                     .foregroundColor(.red.opacity(0.7))
             }
         }
-        .padding(.vertical, 4)
-        .padding(.horizontal, 8)
+        .padding(.vertical, 4).padding(.horizontal, 8)
         .background(Color(el.category.color).opacity(0.06))
         .clipShape(RoundedRectangle(cornerRadius: 6))
     }
@@ -136,36 +156,27 @@ struct AlloyBuilderView: View {
         VStack(spacing: 8) {
             if labVM.alloyComponents.isEmpty {
                 Text("Add elements to build an alloy")
-                    .font(.caption2)
-                    .foregroundColor(.white.opacity(0.3))
-                    .padding(.vertical, 8)
+                    .font(.caption2).foregroundColor(.white.opacity(0.3)).padding(.vertical, 8)
             } else {
                 ForEach(labVM.alloyComponents) { comp in
                     HStack {
                         Text(comp.element.elementSymbol)
                             .font(.system(size: 11, weight: .bold, design: .monospaced))
-                            .foregroundColor(Color(comp.element.category.color))
-                            .frame(width: 28)
+                            .foregroundColor(Color(comp.element.category.color)).frame(width: 28)
                         Text("\(String(format: "%.1f", comp.percentage))%")
                             .font(.system(size: 10, design: .monospaced))
                             .foregroundColor(.white.opacity(0.7))
                         ProgressView(value: comp.percentage / 100)
                             .tint(Color(comp.element.category.color))
                         Text("#\(comp.castingOrder)")
-                            .font(.caption2)
-                            .foregroundColor(.white.opacity(0.3))
+                            .font(.caption2).foregroundColor(.white.opacity(0.3))
                     }
                 }
             }
-
-            // Add selected elements as alloy
             if !labVM.selectedElements.isEmpty {
-                Button {
-                    addSelectedAsAlloy()
-                } label: {
+                Button { addSelectedAsAlloy() } label: {
                     Label("Build Alloy from Selection", systemImage: "plus.circle")
-                        .font(.caption)
-                        .foregroundColor(themeVM.accent)
+                        .font(.caption).foregroundColor(themeVM.accent)
                 }
             }
         }
