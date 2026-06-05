@@ -294,30 +294,9 @@ struct NodeEditorView: View {
                 // Nodes — all inside one transform group so .position()
                 // coordinates stay consistent with canvas pan/zoom
                 ZStack {
-                    ForEach(nodes.sorted { a, b in
-                        if a.id == zTop { return false }
-                        if b.id == zTop { return true }
-                        return false
-                    }) { node in
-                        EditorNodeView(
-                            node: binding(for: node.id),
-                            canvasScale: canvasScale,
-                            isSelected: selectedForGroup.contains(node.id),
-                            accent: themeVM.accent,
-                            onTap: { zTop = node.id },
-                            onPortTap: { port in
-                                if let from = pendingFrom {
-                                    if from != node.id {
-                                        connections.append(NodeConnection(
-                                            fromNodeId: from, fromPort: port,
-                                            toNodeId: node.id, toPort: port,
-                                            isDelta: false))
-                                    }
-                                    pendingFrom = nil
-                                } else { pendingFrom = node.id }
-                            }
-                        )
-                        .zIndex(node.id == zTop ? 100 : 0)
+                    ForEach(sortedNodes) { node in
+                        nodeView(node)
+                            .zIndex(node.id == zTop ? 100 : 0)
                     }
                 }
                 .offset(canvasOffset)
@@ -346,6 +325,38 @@ struct NodeEditorView: View {
                     }
             )
         }
+    }
+
+    // Pre-computed sort so the compiler doesn't choke on inline closure
+    private var sortedNodes: [EditorNode] {
+        nodes.sorted { a, b in
+            if a.id == zTop { return false }
+            if b.id == zTop { return true }
+            return false
+        }
+    }
+
+    // Extracted node builder to reduce type-checker burden
+    @ViewBuilder
+    private func nodeView(_ node: EditorNode) -> some View {
+        EditorNodeView(
+            node: binding(for: node.id),
+            canvasScale: canvasScale,
+            isSelected: selectedForGroup.contains(node.id),
+            accent: themeVM.accent,
+            onTap: { zTop = node.id },
+            onPortTap: { port in
+                if let from = pendingFrom {
+                    if from != node.id {
+                        connections.append(NodeConnection(
+                            fromNodeId: from, fromPort: port,
+                            toNodeId: node.id, toPort: port,
+                            isDelta: false))
+                    }
+                    pendingFrom = nil
+                } else { pendingFrom = node.id }
+            }
+        )
     }
 
     // MARK: — Footer
