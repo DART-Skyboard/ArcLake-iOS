@@ -24,7 +24,6 @@ public struct ArcSceneView: UIViewRepresentable {
         v.rendersContinuously  = true
         v.preferredFramesPerSecond = 60
         // Enable Metal for better particle rendering
-        v.techniqueName = nil
         v.scene = labVM.scene
 
         let cam = SCNCamera()
@@ -48,7 +47,7 @@ public struct ArcSceneView: UIViewRepresentable {
         c.scnView   = v
         c.camNode   = camNode
         c.lastScene = labVM.scene
-        c.reset()
+        c.resetView()
 
         // Gestures
         let orbit = UIPanGestureRecognizer(target:c, action:#selector(Coordinator.orbit(_:)))
