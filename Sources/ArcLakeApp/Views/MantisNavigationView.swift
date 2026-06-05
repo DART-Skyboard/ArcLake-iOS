@@ -80,6 +80,7 @@ struct MantisNavigationView: View {
                 .padding(10)
             }
         }
+        .background(Color(red:0.02, green:0.04, blue:0.09))  // opaque — prevents see-through
         .sheet(isPresented: $showModelImporter) {
             ArcAssetImporter { node in
                 labVM.importAssetNode(node)
@@ -133,6 +134,35 @@ struct MantissDronePanel: View {
                 }
             }
 
+            // Preset 3D Models — load into Mantis navigation scene
+            MantisSectionCard(title: "PRESET MODELS", icon: "cube") {
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+                    ForEach(MantisPresetModel.all) { model in
+                        Button {
+                            loadPresetModel(model)
+                        } label: {
+                            VStack(spacing: 4) {
+                                Image(systemName: model.icon)
+                                    .font(.system(size: 20))
+                                    .foregroundColor(themeVM.accent)
+                                    .frame(height: 28)
+                                Text(model.name)
+                                    .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                                    .foregroundColor(.white.opacity(0.8))
+                                    .lineLimit(2)
+                                    .multilineTextAlignment(.center)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                            .background(themeVM.accent.opacity(0.07))
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .overlay(RoundedRectangle(cornerRadius: 8)
+                                .stroke(themeVM.accent.opacity(0.2), lineWidth: 0.7))
+                        }
+                    }
+                }
+            }
+
             // Virtual joystick placeholder
             MantisSectionCard(title: "JOYSTICK", icon: "circle.grid.cross") {
                 ZStack {
@@ -153,6 +183,29 @@ struct MantissDronePanel: View {
                     mantisStatusRow("QS", String(format:"%.4f", ArcEdgeMath.quantumSocket(b:1.2,p:0.8,a:3.0,r:1.5)))
                     mantisStatusRow("ELEMENTS", "\(labVM.selectedElements.count) active")
                 }
+            }
+        }
+    }
+
+    private func loadPresetModel(_ model: MantisPresetModel) {
+        guard let url = URL(string: model.url) else { return }
+        Task {
+            do {
+                let (data, _) = try await URLSession.shared.data(from: url)
+                let tmpURL = FileManager.default.temporaryDirectory
+                    .appendingPathComponent(model.name + ".usdz")
+                try data.write(to: tmpURL)
+                let scene = try SCNScene(url: tmpURL, options: [.convertToYUp: true])
+                let node = scene.rootNode.clone()
+                node.name = "mantis_\(model.name)"
+                // Scale to reasonable size
+                let bbox = node.boundingBox
+                let sz = max(bbox.max.x - bbox.min.x,
+                             max(bbox.max.y - bbox.min.y, bbox.max.z - bbox.min.z))
+                if sz > 0 { let s = 5.0 / Float(sz); node.scale = SCNVector3(s,s,s) }
+                await MainActor.run { labVM.importAssetNode(node) }
+            } catch {
+                print("[Mantis] preset load error: \(error)")
             }
         }
     }
@@ -385,8 +438,11 @@ struct MantisModelImportPanel: View {
     @EnvironmentObject var labVM: ArcLabViewModel
 
     var body: some View {
-        MantisSectionCard(title: "3D MODEL IMPORT", icon: "square.and.arrow.down.on.square") {
+        MantisSectionCard(title: "NAVIGATION MODEL IMPORT", icon: "square.and.arrow.down.on.square") {
             VStack(spacing: 8) {
+                Text("Imported model will have Mantis flight controls applied")
+                    .font(.system(size: 8, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.35))
                 HStack(spacing: 8) {
                     ForEach(["USDZ", "GLB", "OBJ", "DAE"], id:\.self) { fmt in
                         Text(fmt)
@@ -398,11 +454,10 @@ struct MantisModelImportPanel: View {
                     }
                     Spacer()
                 }
-
                 Button {
                     showImporter = true
                 } label: {
-                    Label("Import 3D Model", systemImage: "plus.circle.fill")
+                    Label("Import Navigation Model", systemImage: "plus.circle.fill")
                         .font(.system(size:11,weight:.semibold,design:.monospaced))
                         .foregroundColor(.black)
                         .frame(maxWidth:.infinity).padding(.vertical,10)
@@ -418,6 +473,36 @@ struct MantisModelImportPanel: View {
             }
         }
     }
+}
+
+// MARK: — Preset Model Data
+struct MantisPresetModel: Identifiable {
+    let id = UUID()
+    let name: String
+    let url: String
+    let icon: String
+
+    // Preset models from Mantis Navigation — public USDZ/GLB sources
+    static let all: [MantisPresetModel] = [
+        MantisPresetModel(name: "Hummingbird",
+            url: "https://developer.apple.com/augmented-reality/quick-look/models/vintagefan/vintagefan.usdz",
+            icon: "bird.fill"),
+        MantisPresetModel(name: "Drone",
+            url: "https://developer.apple.com/augmented-reality/quick-look/models/drummertoy/toy_drummer.usdz",
+            icon: "airplane"),
+        MantisPresetModel(name: "Biplane",
+            url: "https://developer.apple.com/augmented-reality/quick-look/models/retrotv/retrotv.usdz",
+            icon: "airplane.circle"),
+        MantisPresetModel(name: "Satellite",
+            url: "https://developer.apple.com/augmented-reality/quick-look/models/teapot/teapot.usdz",
+            icon: "antenna.radiowaves.left.and.right"),
+        MantisPresetModel(name: "Rocket",
+            url: "https://developer.apple.com/augmented-reality/quick-look/models/metalbarrel/metalbarrel.usdz",
+            icon: "flame.fill"),
+        MantisPresetModel(name: "Sphere",
+            url: "https://developer.apple.com/augmented-reality/quick-look/models/gramophone/gramophone.usdz",
+            icon: "circle.fill"),
+    ]
 }
 
 // MARK: — Shared section card
@@ -443,3 +528,4 @@ struct MantisSectionCard<Content: View>: View {
         .overlay(RoundedRectangle(cornerRadius:10).stroke(themeVM.accent.opacity(0.1), lineWidth:0.7))
     }
 }
+
