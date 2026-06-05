@@ -185,7 +185,22 @@ public final class ArcLabViewModel: ObservableObject {
         if showGrid { addGridFloor(to: scene) }
     }
     
-    public func toggleGridPlane(_ plane: String) {
+    // MARK: — Scene Tabs
+    public func addSceneTab() {
+        let name = "Scene \(tabStates.count + 1)"
+        tabStates.append(LabTabState(name: name))
+        sceneTabsCFD.append(false)
+        activeTabIndex = tabStates.count - 1
+        switchTab(to: activeTabIndex)
+    }
+
+    // MARK: — 3D Asset Import
+    public func importAssetNode(_ node: SCNNode) {
+        scene.rootNode.addChildNode(node)
+        log("Imported asset: \(node.name ?? "model")")
+    }
+
+        public func toggleGridPlane(_ plane: String) {
         switch plane {
         case "xz": showGridXZ.toggle()
         case "xy": showGridXY.toggle()
