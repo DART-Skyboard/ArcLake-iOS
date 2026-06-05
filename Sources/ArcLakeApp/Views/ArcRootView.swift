@@ -648,7 +648,7 @@ struct ArcProfileSheet: View {
                 .padding(.horizontal, 20).padding(.bottom, 40)
             }
         }
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.fraction(0.62), .large])
         .sheet(isPresented: $showSupport) {
             ArcSupportSheet(accentColor: themeVM.accent, appName: "ArcLake")
         }
