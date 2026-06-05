@@ -196,72 +196,66 @@ struct DARTTopBar: View {
 
             Spacer()
 
-            // Right controls
-            HStack(spacing: 4) {
-                // Grid master toggle — glows when any grid on
-                DARTIconButton(icon: "number",
-                    active: labVM.showGrid && (labVM.showGridXZ || labVM.showGridXY || labVM.showGridYZ)) {
-                    labVM.showGrid.toggle(); labVM.rebuildGrid()
-                }
-                // XZ floor plane toggle
-                if labVM.showGrid {
+            // Right controls — scrollable so all buttons always accessible
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 4) {
+                    // Grid master toggle
+                    DARTIconButton(icon: "number",
+                        active: labVM.showGrid && (labVM.showGridXZ || labVM.showGridXY || labVM.showGridYZ)) {
+                        labVM.showGrid.toggle(); labVM.rebuildGrid()
+                    }
+                    // Per-plane grid toggles — always visible (not conditional)
                     DARTIconButton(icon: "square.split.bottomrightquarter",
                                    active: labVM.showGridXZ) {
                         labVM.toggleGridPlane("xz")
                     }
-                    // XY wall toggle
                     DARTIconButton(icon: "square.split.2x2",
                                    active: labVM.showGridXY) {
                         labVM.toggleGridPlane("xy")
                     }
-                    // YZ wall toggle
                     DARTIconButton(icon: "square.split.1x2",
                                    active: labVM.showGridYZ) {
                         labVM.toggleGridPlane("yz")
                     }
-                }
-                DARTIconButton(icon: "tablecells",
-                               active: labVM.isPeriodicTableVisible) {
-                    withAnimation(.spring()) { labVM.isPeriodicTableVisible.toggle() }
-                }
-                // Node editor
-                DARTIconButton(icon: "network",
-                               active: labVM.isNodeEditorVisible) {
-                    withAnimation(.spring()) { labVM.isNodeEditorVisible.toggle() }
-                }
-                // Theme
-                DARTIconButton(icon: "paintpalette", active: themeVM.current != .stealth) {
-                    withAnimation(.easeInOut(duration: 0.25)) { themeVM.cycle() }
-                }
-                // Import 3D asset (GLB/USDZ/OBJ)
-                DARTIconButton(icon: "square.and.arrow.down", active: false) {
-                    showImporter = true
-                }
-                // AR mode
-                DARTIconButton(icon: "arkit", active: showAR) {
-                    showAR.toggle()
-                }
-                // Feedback
-                DARTIconButton(icon: "bubble.left.and.bubble.right", active: false) {
-                    showFeedback = true
-                }
-
-                // Avatar
-                Button { showProfile = true } label: {
-                    ZStack {
-                        Circle()
-                            .fill(themeVM.accent.opacity(0.12))
-                            .frame(width: 30, height: 30)
-                        Circle()
-                            .stroke(themeVM.accent.opacity(0.3), lineWidth: 0.8)
-                            .frame(width: 30, height: 30)
-                        Text(authVM.username.prefix(1).uppercased())
-                            .font(.system(size: 12, weight: .bold, design: .monospaced))
-                            .foregroundColor(themeVM.accent)
+                    DARTIconButton(icon: "tablecells",
+                                   active: labVM.isPeriodicTableVisible) {
+                        withAnimation(.spring()) { labVM.isPeriodicTableVisible.toggle() }
+                    }
+                    DARTIconButton(icon: "network",
+                                   active: labVM.isNodeEditorVisible) {
+                        withAnimation(.spring()) { labVM.isNodeEditorVisible.toggle() }
+                    }
+                    DARTIconButton(icon: "paintpalette", active: themeVM.current != .stealth) {
+                        withAnimation(.easeInOut(duration: 0.25)) { themeVM.cycle() }
+                    }
+                    DARTIconButton(icon: "square.and.arrow.down", active: false) {
+                        showImporter = true
+                    }
+                    DARTIconButton(icon: "arkit", active: showAR) {
+                        showAR.toggle()
+                    }
+                    DARTIconButton(icon: "bubble.left.and.bubble.right", active: false) {
+                        showFeedback = true
+                    }
+                    // Avatar
+                    Button { showProfile = true } label: {
+                        ZStack {
+                            Circle()
+                                .fill(themeVM.accent.opacity(0.12))
+                                .frame(width: 30, height: 30)
+                            Circle()
+                                .stroke(themeVM.accent.opacity(0.3), lineWidth: 0.8)
+                                .frame(width: 30, height: 30)
+                            Text(authVM.username.prefix(1).uppercased())
+                                .font(.system(size: 12, weight: .bold, design: .monospaced))
+                                .foregroundColor(themeVM.accent)
+                        }
                     }
                 }
+                .padding(.trailing, 12)
             }
-            .padding(.trailing, 12)
+            // Fixed width so it doesn't push wordmark off-screen
+            .frame(maxWidth: UIScreen.main.bounds.width * 0.62)
         }
         .frame(height: 48)
         .background(
@@ -594,7 +588,13 @@ struct ArcProfileSheet: View {
                 Text("DART · Autumn-Ash Vault")
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundColor(.white.opacity(0.35)).padding(.top, 3)
-                Spacer().frame(height: 24)
+
+                // ── Music controls ──────────────────────────────
+                ArcMusicControls()
+                    .padding(.top, 14)
+                    .padding(.horizontal, 20)
+
+                Spacer().frame(height: 12)
                 VStack(spacing: 0) {
                     arcRow("Apple ID", authVM.appleUserId.isEmpty ? "—" : "Connected ✓",
                            authVM.appleUserId.isEmpty ? .white.opacity(0.3) : .green) { showApplePicker = true }
@@ -668,6 +668,107 @@ struct ArcProfileSheet: View {
                     Image(systemName: "chevron.right").font(.system(size: 9)).foregroundColor(.white.opacity(0.2))
                 }
             }.padding(.horizontal, 16).padding(.vertical, 12)
+        }
+    }
+}
+
+
+// MARK: — ArcMusicControls
+// Inline music player: prev | play/pause | stop | next | load library
+struct ArcMusicControls: View {
+    @StateObject private var audio = ArcAudioPlayerViewModel.shared
+    @EnvironmentObject var themeVM: ArcThemeViewModel
+    @State private var showFilePicker = false
+
+    var body: some View {
+        VStack(spacing: 8) {
+            // Track name
+            Text(audio.currentTitle)
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundColor(themeVM.accent.opacity(0.8))
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .center)
+
+            HStack(spacing: 14) {
+                // Previous
+                musicBtn("backward.end.fill") { audio.prevTrack() }
+                // Skip back  (added per markup)
+                musicBtn("backward.frame.fill") { audio.prevTrack() }
+                // Play / Pause
+                musicBtn(audio.isPlaying ? "pause.fill" : "play.fill", accent: true) {
+                    audio.playPause()
+                }
+                // Stop
+                musicBtn("stop.fill") { audio.stop() }
+                // Next
+                musicBtn("forward.end.fill") { audio.nextTrack() }
+                // Load music library
+                Button {
+                    showFilePicker = true
+                } label: {
+                    Image(systemName: "music.note.list")
+                        .font(.system(size: 14))
+                        .foregroundColor(themeVM.accent.opacity(0.7))
+                        .frame(width: 32, height: 32)
+                        .background(themeVM.accent.opacity(0.08))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .center)
+
+            // Library list (if more than one track)
+            if audio.library.count > 1 {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(Array(audio.library.enumerated()), id: \.offset) { idx, track in
+                            Button {
+                                audio.currentIndex = idx
+                                audio.stop()
+                                audio.playPause()
+                            } label: {
+                                Text(track.title)
+                                    .font(.system(size: 8, design: .monospaced))
+                                    .lineLimit(1)
+                                    .padding(.horizontal, 7).padding(.vertical, 3)
+                                    .foregroundColor(idx == audio.currentIndex ? .black : themeVM.accent.opacity(0.7))
+                                    .background(idx == audio.currentIndex ? themeVM.accent : themeVM.accent.opacity(0.1))
+                                    .clipShape(Capsule())
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 2)
+                }
+            }
+        }
+        .padding(10)
+        .background(Color.white.opacity(0.04))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10)
+            .stroke(themeVM.accent.opacity(0.12), lineWidth: 0.7))
+        .fileImporter(
+            isPresented: $showFilePicker,
+            allowedContentTypes: [.mp3, .wav, UTType(filenameExtension: "m4a") ?? .audio],
+            allowsMultipleSelection: true
+        ) { result in
+            switch result {
+            case .success(let urls):
+                let secured = urls.filter { $0.startAccessingSecurityScopedResource() }
+                audio.addTracks(from: secured)
+            case .failure(let e):
+                print("[ArcAudio] file picker error: \(e)")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func musicBtn(_ icon: String, accent: Bool = false, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: accent ? 16 : 13))
+                .foregroundColor(accent ? .black : themeVM.accent.opacity(0.75))
+                .frame(width: 32, height: 32)
+                .background(accent ? themeVM.accent : themeVM.accent.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
         }
     }
 }
