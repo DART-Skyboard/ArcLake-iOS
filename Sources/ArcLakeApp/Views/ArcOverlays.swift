@@ -77,6 +77,18 @@ struct ArcOverlays: View {
                 .transition(.opacity.combined(with: .scale(scale: 0.95)))
                 .onAppear { recordOpen("probe") }
             }
+
+            if labVM.isMantisNavVisible {
+                DragShell(geoSize: geoSize, width: geoSize.width - 20,
+                          height: min(geoSize.height * 0.78, 640)) {
+                    MantisNavigationView()
+                }
+                .id("mantis-\(openKey("mantis"))")
+                .zIndex(Double(zOrder["mantis"] ?? 0))
+                .onTapGesture { bringToFront("mantis") }
+                .transition(.opacity.combined(with: .scale(scale: 0.97)))
+                .onAppear { recordOpen("mantis") }
+            }
         }
     }
 }
@@ -117,3 +129,4 @@ struct DragShell<Content: View>: View {
             )
     }
 }
+
