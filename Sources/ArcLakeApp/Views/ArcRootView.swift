@@ -1,5 +1,6 @@
 import SwiftUI
 import SceneKit
+import UniformTypeIdentifiers
 
 // MARK: — DART Root View
 // Premium redesign of Arc Lake DART
@@ -747,7 +748,12 @@ struct ArcMusicControls: View {
             .stroke(themeVM.accent.opacity(0.12), lineWidth: 0.7))
         .fileImporter(
             isPresented: $showFilePicker,
-            allowedContentTypes: [.mp3, .wav, UTType(filenameExtension: "m4a") ?? .audio],
+            allowedContentTypes: [
+                UTType(filenameExtension: "mp3") ?? .audio,
+                UTType(filenameExtension: "wav") ?? .audio,
+                UTType(filenameExtension: "m4a") ?? .audio,
+                UTType(filenameExtension: "aac") ?? .audio,
+            ],
             allowsMultipleSelection: true
         ) { result in
             switch result {
