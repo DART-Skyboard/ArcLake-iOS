@@ -84,16 +84,24 @@ public struct ArcSceneView: UIViewRepresentable {
 
     public func updateUIView(_ v: SCNView, context: Context) {
         let c = context.coordinator
+        guard let cam = c.camNode else { return }
+
         if v.scene !== labVM.scene {
-            c.camNode?.removeFromParentNode()
+            // Always detach from old scene before adding to new one
+            cam.removeFromParentNode()
             v.scene = labVM.scene
-            if let cam = c.camNode {
-                labVM.scene.rootNode.addChildNode(cam)
-                v.pointOfView = cam
-            }
+            labVM.scene.rootNode.addChildNode(cam)
+            v.pointOfView = cam
             c.lastScene = labVM.scene
         }
-        if let cam = c.camNode, v.pointOfView !== cam { v.pointOfView = cam }
+
+        // Re-set pointOfView every update — cheap and prevents frozen camera
+        // after auth changes re-create the SwiftUI view hierarchy
+        if v.pointOfView !== cam {
+            cam.removeFromParentNode()
+            labVM.scene.rootNode.addChildNode(cam)
+            v.pointOfView = cam
+        }
     }
 
     public func makeCoordinator() -> Coordinator { Coordinator(labVM: labVM) }
@@ -347,3 +355,4 @@ import UniformTypeIdentifiers
 extension SIMD4 where Scalar == Float {
     var xyz: SIMD3<Float> { SIMD3(x,y,z) }
 }
+
