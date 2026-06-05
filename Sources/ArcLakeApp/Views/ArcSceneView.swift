@@ -3,13 +3,17 @@ import SceneKit
 import ARKit
 import RealityKit
 
-// MARK: — ArcSceneView v5
-// SceneKit 3D viewport with:
-//   • Free-fly camera (1-finger orbit, 2-finger truck, pinch dolly)
-//   • Metal-backed point shader for glow rendering
-//   • AR mode via RealityKit ARView
-//   • GLB/USDZ import
-//   • 3D grid centered at origin
+// MARK: — ArcSceneView v6
+// Camera controls matching Nomad Sculpt / professional 3D viewport standard:
+//
+//   1-finger drag       → ORBIT   (tumble camera around pivot)
+//   2-finger drag       → PAN     (truck/pedestal — physically move camera+pivot)
+//   Pinch               → DOLLY   (camera moves closer/farther, FOV locked at 60°)
+//   2-finger rotate     → ROLL    (twist camera around look axis — barrel roll)
+//   Double-tap          → RESET   (return to default view, animated)
+//   Single tap on atom  → FOCUS   (fly pivot to atom, open probe panel)
+//
+// FOV is locked at 60° — never changes. Only camera position moves.
 
 public struct ArcSceneView: UIViewRepresentable {
     @EnvironmentObject var labVM: ArcLabViewModel
@@ -23,19 +27,17 @@ public struct ArcSceneView: UIViewRepresentable {
         v.antialiasingMode = .multisampling4X
         v.rendersContinuously  = true
         v.preferredFramesPerSecond = 60
-        // Enable Metal for better particle rendering
         v.scene = labVM.scene
 
+        // Camera with bloom for particle glow
         let cam = SCNCamera()
-        cam.fieldOfView = 60
-        cam.zFar   = 500_000
-        cam.zNear  = 0.001
-        // Bloom for glow effect on particles
-        cam.bloomIntensity   = 0.85
-        cam.bloomThreshold   = 0.7
-        cam.bloomBlurRadius  = 6.0
-        // Motion blur for animation
-        cam.motionBlurIntensity = 0.25
+        cam.fieldOfView      = 60          // LOCKED — dolly moves camera not lens
+        cam.zFar             = 500_000
+        cam.zNear            = 0.001
+        cam.bloomIntensity   = 0.8
+        cam.bloomThreshold   = 0.65
+        cam.bloomBlurRadius  = 5.0
+        cam.motionBlurIntensity = 0.2
 
         let camNode = SCNNode()
         camNode.camera = cam
@@ -47,25 +49,39 @@ public struct ArcSceneView: UIViewRepresentable {
         c.scnView   = v
         c.camNode   = camNode
         c.lastScene = labVM.scene
-        c.resetView()
+        c.resetView()                       // set initial position
 
-        // Gestures
-        let orbit = UIPanGestureRecognizer(target:c, action:#selector(Coordinator.orbit(_:)))
-        orbit.minimumNumberOfTouches = 1; orbit.maximumNumberOfTouches = 1
+        // ── Gestures ─────────────────────────────────────────────
+        // 1-finger orbit
+        let orbit = UIPanGestureRecognizer(target:c, action:#selector(Coordinator.handleOrbit(_:)))
+        orbit.minimumNumberOfTouches = 1
+        orbit.maximumNumberOfTouches = 1
 
-        let truck = UIPanGestureRecognizer(target:c, action:#selector(Coordinator.truck(_:)))
-        truck.minimumNumberOfTouches = 2; truck.maximumNumberOfTouches = 2
+        // 2-finger pan (truck/pedestal)
+        let pan = UIPanGestureRecognizer(target:c, action:#selector(Coordinator.handlePan(_:)))
+        pan.minimumNumberOfTouches = 2
+        pan.maximumNumberOfTouches = 2
 
-        let dolly = UIPinchGestureRecognizer(target:c, action:#selector(Coordinator.dolly(_:)))
-        let dbl   = UITapGestureRecognizer(target:c, action:#selector(Coordinator.resetView))
+        // Pinch dolly
+        let pinch = UIPinchGestureRecognizer(target:c, action:#selector(Coordinator.handleDolly(_:)))
+
+        // 2-finger rotate (roll — Nomad Sculpt twist)
+        let rotate = UIRotationGestureRecognizer(target:c, action:#selector(Coordinator.handleRoll(_:)))
+
+        // Double-tap reset
+        let dbl = UITapGestureRecognizer(target:c, action:#selector(Coordinator.resetView))
         dbl.numberOfTapsRequired = 2
-        let tap   = UITapGestureRecognizer(target:c, action:#selector(Coordinator.tap(_:)))
+
+        // Single-tap probe
+        let tap = UITapGestureRecognizer(target:c, action:#selector(Coordinator.handleTap(_:)))
         tap.numberOfTapsRequired = 1
         tap.require(toFail: dbl)
 
-        for g: UIGestureRecognizer in [orbit, truck, dolly, dbl, tap] {
-            g.delegate = c; v.addGestureRecognizer(g)
+        for g: UIGestureRecognizer in [orbit, pan, pinch, rotate, dbl, tap] {
+            g.delegate = c
+            v.addGestureRecognizer(g)
         }
+
         v.addInteraction(UIDropInteraction(delegate: c))
         return v
     }
@@ -95,102 +111,165 @@ public struct ArcSceneView: UIViewRepresentable {
         var camNode: SCNNode?
         var lastScene: SCNScene?
 
-        private var theta:  Float = 0.4
-        private var phi:    Float = 0.6
-        private var radius: Float = 20.0
-        private var target  = SIMD3<Float>.zero
+        // Spherical coordinates of camera relative to pivot
+        private var theta:  Float = 0.4       // azimuth
+        private var phi:    Float = 0.6       // polar angle from Y-up
+        private var radius: Float = 20.0      // distance (dolly changes this)
+        private var roll:   Float = 0.0       // camera roll (twist gesture)
+        private var pivot   = SIMD3<Float>.zero
 
-        private var θ0: Float=0; private var φ0:  Float=0
-        private var r0: Float=0; private var tgt0 = SIMD3<Float>.zero
+        // Gesture start snapshots
+        private var θ0: Float = 0;  private var φ0: Float = 0
+        private var r0: Float = 0;  private var roll0: Float = 0
+        private var pivot0 = SIMD3<Float>.zero
 
         init(labVM: ArcLabViewModel) { self.labVM = labVM }
 
-        @objc func orbit(_ g: UIPanGestureRecognizer) {
+        // ── 1-finger: ORBIT ──────────────────────────────────────
+        // Tumbles camera around pivot — standard 3D viewport feel
+        @objc func handleOrbit(_ g: UIPanGestureRecognizer) {
             guard let v = scnView else { return }
-            switch g.state {
-            case .began: θ0=theta; φ0=phi
-            case .changed:
-                let d=g.translation(in:v)
-                theta=θ0 - Float(d.x)*0.007
-                phi=max(0.05,min(.pi-0.05, φ0-Float(d.y)*0.007))
+            if g.state == .began { θ0 = theta; φ0 = phi }
+            if g.state == .changed {
+                let d = g.translation(in: v)
+                // Sensitivity tuned to Nomad Sculpt feel
+                theta = θ0 - Float(d.x) * 0.006
+                phi   = max(0.02, min(.pi - 0.02, φ0 - Float(d.y) * 0.006))
                 commit()
-            default: break
             }
         }
 
-        @objc func truck(_ g: UIPanGestureRecognizer) {
+        // ── 2-finger: PAN (truck/pedestal) ───────────────────────
+        // Physically moves camera + pivot through world space.
+        // Speed proportional to distance so close/far feel consistent.
+        @objc func handlePan(_ g: UIPanGestureRecognizer) {
             guard let v = scnView else { return }
-            switch g.state {
-            case .began: tgt0=target
-            case .changed:
-                let d=g.translation(in:v); let s=radius*0.0016
-                let right=SIMD3<Float>(cos(theta),0,-sin(theta))
-                target=tgt0 - right*Float(d.x)*s + SIMD3<Float>(0,1,0)*Float(d.y)*s
+            if g.state == .began { pivot0 = pivot }
+            if g.state == .changed {
+                let d = g.translation(in: v)
+                let speed = radius * 0.0014
+
+                // Camera's local right and up vectors at current orientation
+                let right = SIMD3<Float>( cos(theta),  0, -sin(theta))
+                let fwd   = SIMD3<Float>(-sin(theta) * sin(phi),
+                                          cos(phi),
+                                          -cos(theta) * sin(phi))
+                let up    = cross(fwd, right)  // true camera-up
+
+                pivot = pivot0
+                    - right * Float(d.x) * speed
+                    + up    * Float(d.y) * speed
                 commit()
-            default: break
             }
         }
 
-        @objc func dolly(_ g: UIPinchGestureRecognizer) {
-            switch g.state {
-            case .began: r0=radius
-            case .changed: radius=max(0.3,min(1000, r0/Float(g.scale))); commit()
-            default: break
+        // ── Pinch: DOLLY ─────────────────────────────────────────
+        // Camera physically moves along look axis. FOV stays at 60°.
+        // Pinch OUT (scale > 1) = zoom in = closer
+        // Pinch IN  (scale < 1) = zoom out = farther
+        @objc func handleDolly(_ g: UIPinchGestureRecognizer) {
+            if g.state == .began { r0 = radius }
+            if g.state == .changed {
+                radius = max(0.3, min(1_000, r0 / Float(g.scale)))
+                commit()
             }
         }
 
+        // ── 2-finger rotate: ROLL ────────────────────────────────
+        // Twists camera around its look axis (barrel roll).
+        // Matches Nomad Sculpt's 2-finger twist gesture.
+        @objc func handleRoll(_ g: UIRotationGestureRecognizer) {
+            if g.state == .began { roll0 = roll }
+            if g.state == .changed {
+                roll = roll0 - Float(g.rotation)
+                commit()
+            }
+        }
+
+        // ── Double-tap: RESET ────────────────────────────────────
         @objc func resetView() {
-            theta=0.4; phi=0.6; radius=20.0; target = .zero
-            SCNTransaction.begin(); SCNTransaction.animationDuration=0.4
-            commit(); SCNTransaction.commit()
+            theta = 0.4;  phi = 0.6;  radius = 20.0
+            roll = 0.0;   pivot = .zero
+            SCNTransaction.begin()
+            SCNTransaction.animationDuration = 0.45
+            SCNTransaction.animationTimingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            commit()
+            SCNTransaction.commit()
         }
 
-        @objc func tap(_ g: UITapGestureRecognizer) {
+        // ── Single-tap: FOCUS on atom ────────────────────────────
+        @objc func handleTap(_ g: UITapGestureRecognizer) {
             guard let v = scnView else { return }
-            let hits = v.hitTest(g.location(in:v),
+            let hits = v.hitTest(g.location(in: v),
                 options:[.searchMode: SCNHitTestSearchMode.closest.rawValue])
             guard let hit = hits.first else { return }
             var n: SCNNode? = hit.node
             while let cur = n {
-                if let name=cur.name, name.hasPrefix("atomZ:"),
-                   let z=Int(name.dropFirst(6)),
-                   let el=ElementStore.shared.elements.first(where:{$0.id==z}) {
-                    target=SIMD3<Float>(cur.worldPosition.x,cur.worldPosition.y,cur.worldPosition.z)
-                    SCNTransaction.begin(); SCNTransaction.animationDuration=0.35
-                    commit(); SCNTransaction.commit()
+                if let name = cur.name, name.hasPrefix("atomZ:"),
+                   let z  = Int(name.dropFirst(6)),
+                   let el = ElementStore.shared.elements.first(where:{ $0.id == z }) {
+                    // Fly pivot to atom
+                    let wp = cur.worldPosition
+                    pivot = SIMD3<Float>(wp.x, wp.y, wp.z)
+                    // Also pull camera closer so atom fills view nicely
+                    radius = min(radius, 8.0)
+                    SCNTransaction.begin()
+                    SCNTransaction.animationDuration = 0.35
+                    SCNTransaction.animationTimingFunction = CAMediaTimingFunction(name: .easeOut)
+                    commit()
+                    SCNTransaction.commit()
                     Task { @MainActor in self.labVM.openProbe(for: el) }
                     return
                 }
-                n=cur.parent
+                n = cur.parent
             }
         }
 
+        // ── Place camera on sphere around pivot ───────────────────
+        // Converts spherical (theta, phi, radius) + roll into a camera transform.
+        // FOV stays at 60° always.
         func commit() {
-            guard let cam=camNode else { return }
-            let sp=sin(phi); let cp=cos(phi)
-            let st=sin(theta); let ct=cos(theta)
-            cam.position=SCNVector3(
-                target.x+radius*sp*st,
-                target.y+radius*cp,
-                target.z+radius*sp*ct)
-            cam.look(at:SCNVector3(target.x,target.y,target.z))
+            guard let cam = camNode else { return }
+            let sp = sin(phi),  cp = cos(phi)
+            let st = sin(theta), ct = cos(theta)
+
+            // Camera position on sphere
+            cam.position = SCNVector3(
+                pivot.x + radius * sp * st,
+                pivot.y + radius * cp,
+                pivot.z + radius * sp * ct)
+
+            // Look at pivot, then apply roll rotation
+            cam.look(at: SCNVector3(pivot.x, pivot.y, pivot.z))
+
+            // Apply roll around look axis
+            if roll != 0 {
+                let lookAxis = simd_normalize(SIMD3<Float>(
+                    pivot.x - cam.position.x,
+                    pivot.y - cam.position.y,
+                    pivot.z - cam.position.z))
+                let rollQ = simd_quatf(angle: roll, axis: lookAxis)
+                cam.simdOrientation = rollQ * cam.simdOrientation
+            }
         }
 
-        public func gestureRecognizer(_:UIGestureRecognizer,
-            shouldRecognizeSimultaneouslyWith _:UIGestureRecognizer)->Bool{true}
+        // All gestures can fire simultaneously
+        public func gestureRecognizer(
+            _ g: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith o: UIGestureRecognizer) -> Bool { true }
 
-        public func dropInteraction(_:UIDropInteraction,canHandle s:UIDropSession)->Bool{
-            s.canLoadObjects(ofClass:URL.self) || s.canLoadObjects(ofClass:NSString.self)
-        }
-        public func dropInteraction(_:UIDropInteraction,
-            sessionDidUpdate _:UIDropSession)->UIDropProposal{UIDropProposal(operation:.copy)}
-        public func dropInteraction(_:UIDropInteraction,performDrop s:UIDropSession){
-            s.loadObjects(ofClass:NSString.self){items in
-                guard let sym=items.first as? String else{return}
-                Task{@MainActor in
-                    if let el=ElementStore.shared.elements.first(where:{$0.elementSymbol==sym}){
-                        self.labVM.addElement(el)
-                    }
+        // Drop support
+        public func dropInteraction(_ i: UIDropInteraction,
+            canHandle s: UIDropSession) -> Bool { s.canLoadObjects(ofClass:NSString.self) }
+        public func dropInteraction(_ i: UIDropInteraction,
+            sessionDidUpdate _: UIDropSession) -> UIDropProposal {
+            UIDropProposal(operation:.copy) }
+        public func dropInteraction(_ i: UIDropInteraction, performDrop s: UIDropSession) {
+            s.loadObjects(ofClass:NSString.self) { items in
+                guard let sym = items.first as? String else { return }
+                Task { @MainActor in
+                    if let el = ElementStore.shared.elements.first(
+                        where:{$0.elementSymbol==sym}) { self.labVM.addElement(el) }
                 }
             }
         }
@@ -198,33 +277,24 @@ public struct ArcSceneView: UIViewRepresentable {
 }
 
 // MARK: — AR Scene View (RealityKit)
-// Presents the active scene in AR using RealityKit ARView.
-// Atoms are spawned as RealityKit ModelEntity point clouds anchored to a surface.
 struct ArcARView: UIViewRepresentable {
     @EnvironmentObject var labVM: ArcLabViewModel
 
     func makeUIView(context: Context) -> ARView {
-        let arView = ARView(frame: .zero, cameraMode: .ar, automaticallyConfigureSession: true)
+        let arView = ARView(frame:.zero, cameraMode:.ar, automaticallyConfigureSession:true)
         arView.environment.background = .cameraFeed()
-
-        // Configure AR session
         let config = ARWorldTrackingConfiguration()
-        config.planeDetection   = [.horizontal, .vertical]
+        config.planeDetection = [.horizontal, .vertical]
         config.environmentTexturing = .automatic
         if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) {
             config.sceneReconstruction = .mesh
         }
-        arView.session.run(config, options: [.resetTracking, .removeExistingAnchors])
-
-        // Render existing atoms as RealityKit entities
+        arView.session.run(config, options:[.resetTracking,.removeExistingAnchors])
         spawnAtomEntities(in: arView)
-
-        // Tap to place anchor
-        let tap = UITapGestureRecognizer(target: context.coordinator,
-            action: #selector(Coordinator.handleTap(_:)))
+        let tap = UITapGestureRecognizer(target:context.coordinator,
+            action:#selector(Coordinator.handleTap(_:)))
         arView.addGestureRecognizer(tap)
         context.coordinator.arView = arView
-        context.coordinator.labVM = labVM
         return arView
     }
 
@@ -232,20 +302,11 @@ struct ArcARView: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     private func spawnAtomEntities(in arView: ARView) {
-        // Spawn a compact atom sphere per element, laid out horizontally
         for (idx, el) in labVM.selectedElements.enumerated() {
             let mesh   = MeshResource.generateSphere(radius: 0.04)
             let mat    = SimpleMaterial(color: el.category.color.withAlphaComponent(0.85),
                                         isMetallic: true)
             let entity = ModelEntity(mesh: mesh, materials: [mat])
-            entity.name = "ar_atom_\(el.id)"
-
-            // Add point light for glow
-            let light = PointLight()
-            var comp = PointLightComponent(color: el.category.color,
-                intensity: 800, attenuationRadius: 0.8)
-            entity.components.set(comp)
-
             let anchor = AnchorEntity(world: SIMD3<Float>(
                 Float(idx) * 0.12 - Float(labVM.selectedElements.count) * 0.06,
                 0, -0.5))
@@ -256,20 +317,17 @@ struct ArcARView: UIViewRepresentable {
 
     final class Coordinator: NSObject {
         var arView: ARView?
-        var labVM: ArcLabViewModel?
-
         @objc func handleTap(_ g: UITapGestureRecognizer) {
             guard let av = arView else { return }
-            let loc = g.location(in: av)
-            let results = av.raycast(from: loc, allowing: .estimatedPlane, alignment: .any)
-            guard let first = results.first else { return }
-            // Place a small anchor sphere at tap location
-            let mesh = MeshResource.generateSphere(radius: 0.02)
-            let mat  = SimpleMaterial(color: .cyan, isMetallic: false)
-            let entity = ModelEntity(mesh: mesh, materials: [mat])
-            let anchor = AnchorEntity(world: first.worldTransform.columns.3.xyz)
-            anchor.addChild(entity)
-            av.scene.addAnchor(anchor)
+            let results = av.raycast(from: g.location(in: av),
+                allowing:.estimatedPlane, alignment:.any)
+            if let hit = results.first {
+                let mesh = MeshResource.generateSphere(radius: 0.018)
+                let mat  = SimpleMaterial(color: .cyan, isMetallic: false)
+                let e    = ModelEntity(mesh: mesh, materials: [mat])
+                let anchor = AnchorEntity(world: hit.worldTransform.columns.3.xyz)
+                anchor.addChild(e); av.scene.addAnchor(anchor)
+            }
         }
     }
 }
@@ -277,57 +335,39 @@ struct ArcARView: UIViewRepresentable {
 // MARK: — 3D Asset Import
 struct ArcAssetImporter: UIViewControllerRepresentable {
     let onLoad: (SCNNode) -> Void
-
-    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+    func makeUIViewController(context:Context)->UIDocumentPickerViewController {
         let types: [UTType] = [
-            UTType("com.pixar.universal-scene-description-mobile") ?? .data,
-            UTType("com.pixar.universal-scene-description") ?? .data,
-            UTType("model/gltf-binary") ?? .data,
-            UTType(filenameExtension:"glb") ?? .data,
             UTType(filenameExtension:"usdz") ?? .data,
-            UTType(filenameExtension:"obj") ?? .data,
-            UTType(filenameExtension:"dae") ?? .data,
-        ].compactMap { $0 }
+            UTType(filenameExtension:"glb")  ?? .data,
+            UTType(filenameExtension:"obj")  ?? .data,
+            UTType(filenameExtension:"dae")  ?? .data,
+        ].compactMap{$0}
         let vc = UIDocumentPickerViewController(forOpeningContentTypes:types, asCopy:true)
-        vc.allowsMultipleSelection = false
         vc.delegate = context.coordinator
         return vc
     }
-
-    func updateUIViewController(_: UIDocumentPickerViewController, context: Context) {}
-    func makeCoordinator() -> Coordinator { Coordinator(onLoad: onLoad) }
-
+    func updateUIViewController(_:UIDocumentPickerViewController, context:Context) {}
+    func makeCoordinator() -> Coordinator { Coordinator(onLoad:onLoad) }
     final class Coordinator: NSObject, UIDocumentPickerDelegate {
         let onLoad: (SCNNode) -> Void
-        init(onLoad: @escaping (SCNNode) -> Void) { self.onLoad = onLoad }
-
-        func documentPicker(_: UIDocumentPickerViewController,
-                            didPickDocumentsAt urls: [URL]) {
+        init(onLoad:@escaping(SCNNode)->Void){self.onLoad=onLoad}
+        func documentPicker(_:UIDocumentPickerViewController, didPickDocumentsAt urls:[URL]) {
             guard let url = urls.first else { return }
             do {
-                let scene = try SCNScene(url: url, options: [
-                    .checkConsistency: true,
-                    .convertToYUp: true,
-                    .convertUnitsToMeters: 1.0
-                ])
-                let root = scene.rootNode.clone()
-                root.name = "imported_\(url.lastPathComponent)"
-                // Auto-scale: fit inside 10-unit bounding box
+                let scene = try SCNScene(url:url, options:[
+                    .convertToYUp:true, .convertUnitsToMeters:1.0])
+                let root = scene.rootNode.clone(); root.name="imported_\(url.lastPathComponent)"
                 let bbox = root.boundingBox
-                let size = max(bbox.max.x-bbox.min.x,
-                               max(bbox.max.y-bbox.min.y, bbox.max.z-bbox.min.z))
-                if size > 0 { let s = 6.0/Float(size); root.scale=SCNVector3(s,s,s) }
+                let sz = max(bbox.max.x-bbox.min.x,
+                             max(bbox.max.y-bbox.min.y, bbox.max.z-bbox.min.z))
+                if sz > 0 { let s=6.0/Float(sz); root.scale=SCNVector3(s,s,s) }
                 DispatchQueue.main.async { self.onLoad(root) }
-            } catch {
-                print("ArcAssetImporter: failed to load \(url.lastPathComponent): \(error)")
-            }
+            } catch { print("Import failed: \(error)") }
         }
     }
 }
 
 import UniformTypeIdentifiers
-
-// MARK: — SIMD helper
 extension SIMD4 where Scalar == Float {
-    var xyz: SIMD3<Float> { SIMD3(x, y, z) }
+    var xyz: SIMD3<Float> { SIMD3(x,y,z) }
 }
