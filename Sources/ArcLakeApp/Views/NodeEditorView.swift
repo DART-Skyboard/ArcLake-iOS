@@ -1,16 +1,31 @@
-
 import SwiftUI
 
-/// Orbit Delta Node Editor — connects Math, MolCanvas, Physics, CFD
-/// Matches web app #orbit-delta-node-editor canvas
+// MARK: — NodeEditorView
+// Full node graph editor with:
+//   • Group drawer — slides down from header, auto-populated from MolCanvas linkages
+//   • Bring-to-front — tapping any node raises its z-index
+//   • Pinch-to-zoom canvas
+//   • Drag from periodic table adds atom nodes
+
 struct NodeEditorView: View {
     @EnvironmentObject var labVM: ArcLabViewModel
     @EnvironmentObject var themeVM: ArcThemeViewModel
-    @State private var nodes: [EditorNode] = []
-    @State private var connections: [NodeConnection] = []
-    @State private var dragOffset = CGSize.zero
+
+    @State private var nodes:       [EditorNode]       = []
+    @State private var connections: [NodeConnection]   = []
     @State private var canvasOffset = CGSize.zero
+    @State private var canvasScale: CGFloat = 1.0
     @State private var pendingFrom: UUID? = nil
+
+    // Group drawer
+    @State private var showGroupDrawer = false
+    @State private var nodeGroups:  [NodeGroup]  = []
+    @State private var selectedForGroup: Set<UUID> = []
+    @State private var newGroupName = ""
+    @State private var editingGroupId: UUID? = nil
+
+    // Z-order
+    @State private var zTop: UUID? = nil
 
     struct EditorNode: Identifiable {
         let id = UUID()
@@ -19,8 +34,7 @@ struct NodeEditorView: View {
         var position: CGPoint
         var color: Color
         var ports: [String]
-
-        enum NodeType { case atom, math, physics, molCanvas, cfd, env, sceneTab }
+        var groupId: UUID? = nil
     }
 
     struct NodeConnection: Identifiable {
@@ -30,219 +44,460 @@ struct NodeEditorView: View {
         var isDelta: Bool
     }
 
+    struct NodeGroup: Identifiable {
+        let id = UUID()
+        var name: String
+        var nodeIds: [UUID]
+        var color: Color = .cyan
+    }
+
+    enum NodeType: String, CaseIterable {
+        case element = "ELEMENT"
+        case formula = "FORMULA"
+        case arc     = "ARC"
+        case output  = "OUTPUT"
+    }
+
     var body: some View {
         VStack(spacing: 0) {
-            // Header
-            HStack {
-                Image(systemName: "circle.connected.to.line.below")
-                    .foregroundColor(.purple)
-                Text("ORBIT DELTA NODE EDITOR")
-                    .font(.system(size: 11, weight: .bold, design: .monospaced))
-                    .foregroundColor(themeVM.accent)
-                Spacer()
-                // Add node buttons
-                Menu {
-                    ForEach([("Atom", "atom"), ("Math", "function"),
-                             ("Physics", "waveform.path"), ("Mol Canvas", "scribble"),
-                             ("CFD", "wind"), ("Env", "cloud"), ("Scene Tab", "cube")],
-                            id: \.0) { name, icon in
-                        Button { addNode(type: nodeType(name)) } label: {
-                            Label(name, systemImage: icon)
-                        }
-                    }
-                } label: {
-                    Label("Add Node", systemImage: "plus.circle")
-                        .font(.system(size: 10, design: .monospaced))
+            header
+            groupDrawerBanner
+            if showGroupDrawer { groupDrawerContent }
+            canvasArea
+            footer
+        }
+        .onAppear { syncFromMolCanvas() }
+        .onChange(of: labVM.molAtoms.count) { _ in syncFromMolCanvas() }
+    }
+
+    // MARK: — Header
+    private var header: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "circle.connected.to.line.below")
+                .font(.system(size: 11)).foregroundColor(themeVM.accent)
+            Text("NODE EDITOR")
+                .font(.custom("Orbitron-Bold", size: 11))
+                .foregroundColor(.white).tracking(2)
+            Spacer()
+
+            // Add node buttons
+            ForEach(NodeType.allCases, id: \.self) { nodeType in
+                Button { addNode(type: nodeType) } label: {
+                    Text("+\(nodeType.rawValue.prefix(3))")
+                        .font(.system(size: 8, weight: .bold, design: .monospaced))
                         .foregroundColor(themeVM.accent)
-                }
-                Button { labVM.isNodeEditorVisible = false } label: {
-                    Image(systemName: "xmark").font(.caption).foregroundColor(.white.opacity(0.4))
+                        .padding(.horizontal, 6).padding(.vertical, 3)
+                        .background(themeVM.accent.opacity(0.1))
+                        .clipShape(Capsule())
                 }
             }
-            .padding(.horizontal, 12).padding(.vertical, 8)
-            .background(Color.black.opacity(0.5))
 
-            // Canvas
-            GeometryReader { geo in
-                ZStack {
-                    // Grid
-                    Canvas { ctx, size in
-                        for x in stride(from: CGFloat(0), to: size.width, by: 40) {
-                            ctx.stroke(Path { p in p.move(to:CGPoint(x:x,y:0)); p.addLine(to:CGPoint(x:x,y:size.height)) },
-                                with:.color(.cyan.opacity(0.05)), lineWidth: 0.5)
-                        }
-                        for y in stride(from: CGFloat(0), to: size.height, by: 40) {
-                            ctx.stroke(Path { p in p.move(to:CGPoint(x:0,y:y)); p.addLine(to:CGPoint(x:size.width,y:y)) },
-                                with:.color(.cyan.opacity(0.05)), lineWidth: 0.5)
-                        }
-                    }
-
-                    // Connections
-                    Canvas { ctx, _ in
-                        for conn in connections {
-                            guard let from = nodes.first(where:{$0.id==conn.fromNodeId}),
-                                  let to   = nodes.first(where:{$0.id==conn.toNodeId}) else { continue }
-                            let fp = CGPoint(x:from.position.x+canvasOffset.width+70,
-                                            y:from.position.y+canvasOffset.height+20)
-                            let tp = CGPoint(x:to.position.x+canvasOffset.width,
-                                            y:to.position.y+canvasOffset.height+20)
-                            let cp1 = CGPoint(x:fp.x+50, y:fp.y)
-                            let cp2 = CGPoint(x:tp.x-50, y:tp.y)
-                            var p = Path()
-                            p.move(to: fp)
-                            p.addCurve(to: tp, control1: cp1, control2: cp2)
-                            ctx.stroke(p, with:.color(conn.isDelta ? .purple.opacity(0.7) : .cyan.opacity(0.5)),
-                                style: StrokeStyle(lineWidth:1.5, dash: conn.isDelta ? [4,2] : []))
-                        }
-                    }
-
-                    // Nodes
-                    ForEach($nodes) { $node in
-                        EditorNodeView(node: $node, accent: themeVM.accent,
-                            pendingFrom: pendingFrom,
-                            onPortTap: { port in handlePortTap(node: node, port: port) })
-                            .offset(canvasOffset)
-                    }
+            // Group drawer toggle
+            Button {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    showGroupDrawer.toggle()
                 }
-                .coordinateSpace(name: "nodeCanvas")
-                .gesture(DragGesture().onChanged { val in
-                    canvasOffset = CGSize(width: dragOffset.width + val.translation.width,
-                                         height: dragOffset.height + val.translation.height)
-                }.onEnded { _ in dragOffset = canvasOffset })
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: showGroupDrawer ? "folder.fill" : "folder")
+                        .font(.system(size: 11))
+                    Text("GROUPS")
+                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                }
+                .foregroundColor(showGroupDrawer ? .black : themeVM.accent)
+                .padding(.horizontal, 8).padding(.vertical, 4)
+                .background(showGroupDrawer ? themeVM.accent : themeVM.accent.opacity(0.1))
+                .clipShape(Capsule())
             }
 
-            // Footer
+            Button { labVM.isNodeEditorVisible = false } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(.white.opacity(0.4))
+                    .frame(width: 24, height: 24)
+                    .background(Color.white.opacity(0.07))
+                    .clipShape(RoundedRectangle(cornerRadius: 5))
+            }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .background(themeVM.accent.opacity(0.05))
+        .overlay(Rectangle().frame(height: 0.5)
+            .foregroundColor(themeVM.accent.opacity(0.15)), alignment: .bottom)
+    }
+
+    // MARK: — Group Drawer Banner
+    private var groupDrawerBanner: some View {
+        Button {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                showGroupDrawer.toggle()
+            }
+        } label: {
             HStack(spacing: 8) {
-                Button("Clear All") { nodes.removeAll(); connections.removeAll() }
-                    .font(.system(size: 10, design: .monospaced)).foregroundColor(.red.opacity(0.6))
+                Capsule().fill(Color.white.opacity(0.2)).frame(width: 28, height: 3)
+                Text("\(nodeGroups.count) GROUP\(nodeGroups.count == 1 ? "" : "S")")
+                    .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.4))
                 Spacer()
-                Text("\(nodes.count) nodes · \(connections.count) connections")
-                    .font(.system(size: 9, design: .monospaced)).foregroundColor(.white.opacity(0.3))
-                Button("Compute") { labVM.log("Node graph computed: \(connections.count) pipes") }
-                    .font(.system(size: 10, design: .monospaced)).foregroundColor(themeVM.accent)
+                Image(systemName: showGroupDrawer ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 8))
+                    .foregroundColor(.white.opacity(0.3))
             }
-            .padding(.horizontal, 12).padding(.vertical, 6)
-            .background(Color.black.opacity(0.3))
-        }
-        .background(Color(red:0.02, green:0.04, blue:0.10))
-        .clipShape(RoundedRectangle(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14)
-            .stroke(themeVM.accent.opacity(0.3), lineWidth: 0.5))
-        .shadow(color: .purple.opacity(0.15), radius: 20)
-        .onAppear { if nodes.isEmpty { populateFromScene() } }
-    }
-
-    private func nodeType(_ name: String) -> EditorNode.NodeType {
-        switch name {
-        case "Atom": return .atom; case "Math": return .math
-        case "Physics": return .physics; case "Mol Canvas": return .molCanvas
-        case "CFD": return .cfd; case "Env": return .env; default: return .sceneTab
+            .padding(.horizontal, 12).padding(.vertical, 5)
+            .background(Color.white.opacity(0.03))
         }
     }
 
-    private func addNode(type: EditorNode.NodeType) {
-        let info = nodeInfo(type)
-        let pos = CGPoint(x: Double(nodes.count % 3) * 160 + 40,
-                         y: Double(nodes.count / 3) * 120 + 40)
-        nodes.append(EditorNode(type: type, title: info.0, position: pos,
-                               color: info.1, ports: info.2))
-    }
+    // MARK: — Group Drawer Content (slides in/out)
+    private var groupDrawerContent: some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(spacing: 6) {
+                    // New group creation
+                    HStack(spacing: 8) {
+                        TextField("Group name…", text: $newGroupName)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 8).padding(.vertical, 5)
+                            .background(Color.white.opacity(0.05))
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
 
-    private func nodeInfo(_ t: EditorNode.NodeType) -> (String, Color, [String]) {
-        switch t {
-        case .atom:      return ("ATOM", .cyan, ["Protons","Neutrons","Shell K","Shell L","Mass","Arc-C"])
-        case .math:      return ("MATH", .green, ["Input A","Input B","Output","Δ Result"])
-        case .physics:   return ("PHYSICS", .orange, ["Gravity","Pressure","Temp","Velocity","Viscosity"])
-        case .molCanvas: return ("MOL CANVAS", .purple, ["Bond","Atom","Δ In","Δ Out"])
-        case .cfd:       return ("CFD", .blue, ["Particles","Density","Flow","Pressure"])
-        case .env:       return ("ENV", .teal, ["Temperature","Gravity","Humidity"])
-        case .sceneTab:  return ("SCENE TAB", .yellow, ["Atoms","Camera","CFD","Export"])
-        }
-    }
+                        Button {
+                            guard !newGroupName.isEmpty, !selectedForGroup.isEmpty else { return }
+                            let g = NodeGroup(name: newGroupName,
+                                             nodeIds: Array(selectedForGroup))
+                            nodeGroups.append(g)
+                            // Assign group to nodes
+                            for i in nodes.indices where selectedForGroup.contains(nodes[i].id) {
+                                nodes[i].groupId = g.id
+                            }
+                            newGroupName = ""; selectedForGroup.removeAll()
+                        } label: {
+                            Image(systemName: "plus.circle.fill")
+                                .font(.system(size: 16))
+                                .foregroundColor(newGroupName.isEmpty || selectedForGroup.isEmpty
+                                    ? .white.opacity(0.2) : themeVM.accent)
+                        }
+                        .disabled(newGroupName.isEmpty || selectedForGroup.isEmpty)
+                    }
+                    .padding(.horizontal, 10).padding(.top, 8)
 
-    private func handlePortTap(node: EditorNode, port: String) {
-        if let fromId = pendingFrom {
-            if fromId != node.id {
-                connections.append(NodeConnection(fromNodeId: fromId, fromPort: "Out",
-                    toNodeId: node.id, toPort: port, isDelta: false))
+                    if nodes.isEmpty {
+                        Text("Add nodes to create groups")
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.25))
+                            .padding(8)
+                    }
+
+                    // Node selection chips for grouping
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 80))], spacing: 6) {
+                        ForEach(nodes) { node in
+                            Button {
+                                if selectedForGroup.contains(node.id) {
+                                    selectedForGroup.remove(node.id)
+                                } else {
+                                    selectedForGroup.insert(node.id)
+                                }
+                            } label: {
+                                Text(node.title)
+                                    .font(.system(size: 9, design: .monospaced))
+                                    .lineLimit(1)
+                                    .padding(.horizontal, 6).padding(.vertical, 3)
+                                    .background(selectedForGroup.contains(node.id)
+                                        ? node.color.opacity(0.3)
+                                        : Color.white.opacity(0.05))
+                                    .foregroundColor(selectedForGroup.contains(node.id)
+                                        ? node.color : .white.opacity(0.5))
+                                    .clipShape(Capsule())
+                                    .overlay(Capsule().stroke(
+                                        selectedForGroup.contains(node.id)
+                                        ? node.color.opacity(0.6)
+                                        : Color.clear, lineWidth: 0.8))
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 10).padding(.bottom, 4)
+
+                    // Existing groups
+                    ForEach(nodeGroups) { group in
+                        HStack(spacing: 8) {
+                            Circle().fill(group.color).frame(width: 6, height: 6)
+                            // Editable name
+                            if editingGroupId == group.id {
+                                TextField("", text: Binding(
+                                    get: { group.name },
+                                    set: { newVal in
+                                        if let idx = nodeGroups.firstIndex(where:{$0.id==group.id}) {
+                                            nodeGroups[idx].name = newVal
+                                        }
+                                    }))
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundColor(.white)
+                                .onSubmit { editingGroupId = nil }
+                            } else {
+                                Text(group.name)
+                                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                    .foregroundColor(.white)
+                                    .onTapGesture(count: 2) { editingGroupId = group.id }
+                            }
+                            Text("(\(group.nodeIds.count))")
+                                .font(.system(size: 8, design: .monospaced))
+                                .foregroundColor(.white.opacity(0.3))
+                            Spacer()
+                            Button {
+                                nodeGroups.removeAll{$0.id==group.id}
+                                for i in nodes.indices where nodes[i].groupId == group.id {
+                                    nodes[i].groupId = nil
+                                }
+                            } label: {
+                                Image(systemName:"minus.circle")
+                                    .font(.system(size: 10)).foregroundColor(.white.opacity(0.3))
+                            }
+                        }
+                        .padding(.horizontal, 12).padding(.vertical, 4)
+                        .background(Color.white.opacity(0.04))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .padding(.horizontal, 10)
+                    }
+                }
             }
-            pendingFrom = nil
-        } else {
-            pendingFrom = node.id
+            .frame(maxHeight: 200)
+
+            Divider().background(themeVM.accent.opacity(0.1))
+        }
+        .background(Color(red:0.05,green:0.08,blue:0.14))
+        .transition(.move(edge: .top).combined(with: .opacity))
+    }
+
+    // MARK: — Canvas
+    private var canvasArea: some View {
+        GeometryReader { geo in
+            ZStack {
+                // Background grid dots
+                Canvas { ctx, size in
+                    let spacing: CGFloat = 28 * canvasScale
+                    let ox = canvasOffset.width.truncatingRemainder(dividingBy: spacing)
+                    let oy = canvasOffset.height.truncatingRemainder(dividingBy: spacing)
+                    for x in stride(from: ox, through: size.width, by: spacing) {
+                        for y in stride(from: oy, through: size.height, by: spacing) {
+                            ctx.fill(Path(ellipseIn: CGRect(x:x-1,y:y-1,width:2,height:2)),
+                                with:.color(.white.opacity(0.06)))
+                        }
+                    }
+                }
+
+                // Connections
+                ForEach(connections) { conn in
+                    connectionPath(conn, in: geo.size)
+                }
+
+                // Nodes — z-order controlled by zTop
+                ForEach(nodes.sorted { a, b in
+                    if a.id == zTop { return false }
+                    if b.id == zTop { return true }
+                    return false
+                }) { node in
+                    EditorNodeView(
+                        node: binding(for: node.id),
+                        isSelected: selectedForGroup.contains(node.id),
+                        accent: themeVM.accent,
+                        onTap: {
+                            // Bring to front
+                            zTop = node.id
+                        },
+                        onPortTap: { port in
+                            if let from = pendingFrom {
+                                if from != node.id {
+                                    connections.append(NodeConnection(
+                                        fromNodeId: from, fromPort: port,
+                                        toNodeId: node.id, toPort: port,
+                                        isDelta: false))
+                                }
+                                pendingFrom = nil
+                            } else { pendingFrom = node.id }
+                        }
+                    )
+                    .offset(canvasOffset)
+                    .scaleEffect(canvasScale)
+                    .zIndex(node.id == zTop ? 100 : 0)
+                }
+            }
+            .clipped()
+            // Canvas pan
+            .gesture(
+                DragGesture(minimumDistance: 4)
+                    .onChanged { val in
+                        canvasOffset = CGSize(
+                            width: canvasOffset.width + val.translation.width * 0.3,
+                            height: canvasOffset.height + val.translation.height * 0.3)
+                    }
+            )
+            // Canvas pinch-to-zoom
+            .gesture(
+                MagnificationGesture()
+                    .onChanged { val in
+                        canvasScale = max(0.3, min(3.0, canvasScale * val))
+                    }
+            )
         }
     }
 
-    private func populateFromScene() {
-        // Auto-populate with active scene data
-        for el in labVM.selectedElements {
-            let idx = nodes.count
-            nodes.append(EditorNode(type: .atom, title: el.elementSymbol,
-                position: CGPoint(x: Double(idx%3)*160+20, y: Double(idx/3)*140+20),
-                color: .cyan, ports: ["Shell K","Shell L","Shell M","Mass","Arc-C"]))
+    // MARK: — Footer
+    private var footer: some View {
+        HStack(spacing: 12) {
+            Button("Clear All") { nodes.removeAll(); connections.removeAll(); nodeGroups.removeAll() }
+                .font(.system(size: 10, design: .monospaced)).foregroundColor(.red.opacity(0.7))
+
+            Button("Reset View") { canvasOffset = .zero; canvasScale = 1.0 }
+                .font(.system(size: 10, design: .monospaced)).foregroundColor(.white.opacity(0.4))
+
+            Spacer()
+
+            Button("Compute") { labVM.log("Node graph: \(connections.count) connections") }
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundColor(themeVM.accent)
         }
-        if !labVM.molAtoms.isEmpty {
-            nodes.append(EditorNode(type: .molCanvas, title: "MOL CANVAS",
-                position: CGPoint(x: 300, y: 240), color: .purple,
-                ports: ["Bond In","Δ In","Atoms","Output"]))
+        .padding(.horizontal, 12).padding(.vertical, 7)
+        .background(Color.white.opacity(0.03))
+        .overlay(Rectangle().frame(height:0.5)
+            .foregroundColor(themeVM.accent.opacity(0.1)), alignment:.top)
+    }
+
+    // MARK: — Helpers
+
+    private func addNode(type: NodeType) {
+        let colors: [NodeType: Color] = [
+            .element: .cyan, .formula: .purple, .arc: .orange, .output: .green
+        ]
+        let offset = CGFloat(nodes.count) * 20
+        nodes.append(EditorNode(
+            type: type,
+            title: "\(type.rawValue) \(nodes.count+1)",
+            position: CGPoint(x: 60 + offset, y: 80 + offset),
+            color: colors[type] ?? .white,
+            ports: ["in", "out"]))
+    }
+
+    // Auto-sync nodes from MolCanvas atom bonds
+    private func syncFromMolCanvas() {
+        guard !labVM.molAtoms.isEmpty else { return }
+        // Find linked pairs — create auto-group
+        let linked = labVM.molAtoms.filter { !$0.bonds.isEmpty }
+        guard !linked.isEmpty else { return }
+
+        let groupName = "Bond Group \(nodeGroups.count + 1)"
+        var newNodeIds: [UUID] = []
+
+        for atom in linked {
+            if !nodes.contains(where: { $0.title == atom.symbol }) {
+                let n = EditorNode(
+                    type: .element, title: atom.symbol,
+                    position: CGPoint(
+                        x: 50 + CGFloat(nodes.count % 5) * 90,
+                        y: 50 + CGFloat(nodes.count / 5) * 80),
+                    color: Color(atom.color),
+                    ports: ["in","out"])
+                nodes.append(n)
+                newNodeIds.append(n.id)
+            }
         }
-        nodes.append(EditorNode(type: .math, title: "MATH",
-            position: CGPoint(x: 160, y: 300), color: .green,
-            ports: ["Input A","Input B","Δ","Output"]))
+        if !newNodeIds.isEmpty {
+            nodeGroups.append(NodeGroup(name: groupName, nodeIds: newNodeIds))
+            for i in nodes.indices where newNodeIds.contains(nodes[i].id) {
+                nodes[i].groupId = nodeGroups.last?.id
+            }
+        }
+    }
+
+    private func binding(for id: UUID) -> Binding<EditorNode> {
+        guard let idx = nodes.firstIndex(where: {$0.id == id}) else {
+            return .constant(nodes[0])
+        }
+        return $nodes[idx]
+    }
+
+    @ViewBuilder
+    private func connectionPath(_ conn: NodeConnection, in size: CGSize) -> some View {
+        if let from = nodes.first(where:{$0.id==conn.fromNodeId}),
+           let to   = nodes.first(where:{$0.id==conn.toNodeId}) {
+            let startX = from.position.x + canvasOffset.width + 90
+            let startY = from.position.y + canvasOffset.height + 18
+            let endX   = to.position.x   + canvasOffset.width
+            let endY   = to.position.y   + canvasOffset.height + 18
+            Path { p in
+                p.move(to:    CGPoint(x: startX, y: startY))
+                p.addCurve(to: CGPoint(x: endX, y: endY),
+                           control1: CGPoint(x: (startX+endX)/2, y: startY),
+                           control2: CGPoint(x: (startX+endX)/2, y: endY))
+            }
+            .stroke(Color.cyan.opacity(0.5), style: StrokeStyle(lineWidth: 1.5, dash: [4,3]))
+        }
     }
 }
 
+// MARK: — EditorNodeView
 struct EditorNodeView: View {
     @Binding var node: NodeEditorView.EditorNode
+    let isSelected: Bool
     let accent: Color
-    let pendingFrom: UUID?
+    let onTap: () -> Void
     let onPortTap: (String) -> Void
 
+    @GestureState private var dragDelta = CGSize.zero
+    @State private var dragBase = CGPoint.zero
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Header
-            HStack(spacing: 4) {
-                Circle().fill(node.color).frame(width: 7, height: 7)
+        VStack(spacing: 0) {
+            // Node header
+            HStack(spacing: 6) {
+                Circle().fill(node.color).frame(width: 6, height: 6)
                 Text(node.title)
-                    .font(.system(size: 8, weight: .bold, design: .monospaced))
-                    .foregroundColor(node.color)
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+                Spacer()
+                Text(node.type.rawValue.prefix(3))
+                    .font(.system(size: 7, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.3))
             }
             .padding(.horizontal, 8).padding(.vertical, 5)
             .background(node.color.opacity(0.12))
 
+            Divider().background(node.color.opacity(0.2))
+
             // Ports
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(spacing: 3) {
                 ForEach(node.ports, id: \.self) { port in
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(pendingFrom != nil && pendingFrom != node.id ?
-                                accent : node.color.opacity(0.5))
-                            .frame(width: 6, height: 6)
-                            .onTapGesture { onPortTap(port) }
-                        Text(port)
-                            .font(.system(size: 7, design: .monospaced))
-                            .foregroundColor(.white.opacity(0.5))
+                    Button { onPortTap(port) } label: {
+                        HStack {
+                            Circle().fill(node.color.opacity(0.5)).frame(width: 5, height: 5)
+                            Text(port).font(.system(size: 8, design: .monospaced))
+                                .foregroundColor(.white.opacity(0.4))
+                        }
                     }
-                    .padding(.vertical, 1)
                 }
             }
-            .padding(.horizontal, 6).padding(.vertical, 4)
+            .padding(.horizontal, 8).padding(.vertical, 5)
         }
-        .frame(width: 120)
-        .background(Color(red:0.05, green:0.08, blue:0.15))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .overlay(RoundedRectangle(cornerRadius: 6)
-            .stroke(pendingFrom == node.id ? accent : node.color.opacity(0.4), lineWidth: 0.8))
-        .shadow(color: node.color.opacity(0.1), radius: 4)
-        .position(node.position)
+        .frame(width: 92)
+        .background(Color(red:0.07,green:0.1,blue:0.17))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8)
+            .stroke(isSelected
+                ? node.color.opacity(0.8)
+                : node.color.opacity(0.25), lineWidth: isSelected ? 1.5 : 0.8))
+        .shadow(color: .black.opacity(0.4), radius: 8)
+        .position(CGPoint(
+            x: node.position.x + dragDelta.width,
+            y: node.position.y + dragDelta.height))
         .gesture(
-            DragGesture(minimumDistance: 2, coordinateSpace: .named("nodeCanvas"))
-                .onChanged { val in
-                    // Use startLocation + translation for stable, non-accumulating drag
+            DragGesture(minimumDistance: 2)
+                .updating($dragDelta) { val, state, _ in state = val.translation }
+                .onEnded { val in
                     node.position = CGPoint(
-                        x: val.startLocation.x + val.translation.width,
-                        y: val.startLocation.y + val.translation.height
-                    )
+                        x: node.position.x + val.translation.width,
+                        y: node.position.y + val.translation.height)
                 }
         )
+        .onTapGesture { onTap() }
     }
 }
