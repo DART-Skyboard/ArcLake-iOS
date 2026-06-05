@@ -22,7 +22,7 @@ public struct DARTRootView: View {
 
                 VStack(spacing: 0) {
                     // ── Top chrome ─────────────────────────────────
-                    DARTTopBar(showProfile: $showProfile)
+                    DARTTopBar(showProfile: $showProfile, showAR: $showAR, showImporter: $showImporter)
 
                     // ── Scene tab bar ───────────────────────────────
                     DARTSceneTabBar()
@@ -120,6 +120,8 @@ struct DARTBackground: View {
 // MARK: — Top Bar
 struct DARTTopBar: View {
     @Binding var showProfile: Bool
+    @Binding var showAR: Bool
+    @Binding var showImporter: Bool
     @EnvironmentObject var themeVM: ArcThemeViewModel
     @EnvironmentObject var labVM: ArcLabViewModel
     @EnvironmentObject var authVM: ArcAuthViewModel
