@@ -187,9 +187,9 @@ public final class ArcLabViewModel: ObservableObject {
     
     // MARK: — Scene Tabs
     public func addSceneTab() {
-        let name = "Scene \(tabStates.count + 1)"
+        let name = "Scene \(sceneTabs_data.count + 1)"
         tabStates.append(TabState())
-        tabStates[tabStates.count-1].name = name
+        sceneTabs_data.append(name)
         sceneTabsCFD.append(false)
         activeTabIndex = tabStates.count - 1
     }
@@ -197,8 +197,15 @@ public final class ArcLabViewModel: ObservableObject {
     public func removeSceneTab(at index: Int) {
         guard tabStates.count > 1, index < tabStates.count else { return }
         tabStates.remove(at: index)
+        if index < sceneTabs_data.count { sceneTabs_data.remove(at: index) }
         if index < sceneTabsCFD.count { sceneTabsCFD.remove(at: index) }
         activeTabIndex = max(0, min(activeTabIndex, tabStates.count - 1))
+    }
+    
+    // switchTab(index) — select a tab by index  
+    public func switchTab(_ index: Int) {
+        guard index < tabStates.count else { return }
+        activeTabIndex = index
     }
 
     // MARK: — 3D Asset Import
