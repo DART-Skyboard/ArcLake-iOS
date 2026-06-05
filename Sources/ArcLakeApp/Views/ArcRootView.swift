@@ -40,8 +40,11 @@ public struct DARTRootView: View {
                                 HStack {
                                     Spacer()
                                     DARTCFDBadge()
-                                        .padding(.trailing, 12)
-                                        .padding(.bottom, 8)
+                                        .padding(.trailing, 16)
+                                        .padding(.bottom, 12)
+                                        // Keep badge fully on screen regardless of device
+                                        .frame(maxWidth: .infinity, alignment: .trailing)
+                                        .padding(.leading, 80) // prevent from being too wide
                                 }
                             }
                         }
@@ -195,9 +198,27 @@ struct DARTTopBar: View {
 
             // Right controls
             HStack(spacing: 4) {
-                // Grid toggle
-                DARTIconButton(icon: "number", active: labVM.showGrid) {
+                // Grid master toggle — glows when any grid on
+                DARTIconButton(icon: "number",
+                    active: labVM.showGrid && (labVM.showGridXZ || labVM.showGridXY || labVM.showGridYZ)) {
                     labVM.showGrid.toggle(); labVM.rebuildGrid()
+                }
+                // XZ floor plane toggle
+                if labVM.showGrid {
+                    DARTIconButton(icon: "square.split.bottomrightquarter",
+                                   active: labVM.showGridXZ) {
+                        labVM.toggleGridPlane("xz")
+                    }
+                    // XY wall toggle
+                    DARTIconButton(icon: "square.split.2x2",
+                                   active: labVM.showGridXY) {
+                        labVM.toggleGridPlane("xy")
+                    }
+                    // YZ wall toggle
+                    DARTIconButton(icon: "square.split.1x2",
+                                   active: labVM.showGridYZ) {
+                        labVM.toggleGridPlane("yz")
+                    }
                 }
                 DARTIconButton(icon: "tablecells",
                                active: labVM.isPeriodicTableVisible) {
