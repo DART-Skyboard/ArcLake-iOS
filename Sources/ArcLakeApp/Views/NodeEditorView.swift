@@ -13,7 +13,8 @@ struct NodeEditorView: View {
 
     @State private var nodes:       [EditorNode]       = []
     @State private var connections: [NodeConnection]   = []
-    @State private var canvasOffset = CGSize.zero
+    @State private var canvasOffset  = CGSize.zero
+    @State private var canvasPanBase = CGSize.zero   // tracks pan start so no drift
     @State private var canvasScale: CGFloat = 1.0
     @State private var pendingFrom: UUID? = nil
 
@@ -290,45 +291,51 @@ struct NodeEditorView: View {
                     connectionPath(conn, in: geo.size)
                 }
 
-                // Nodes — z-order controlled by zTop
-                ForEach(nodes.sorted { a, b in
-                    if a.id == zTop { return false }
-                    if b.id == zTop { return true }
-                    return false
-                }) { node in
-                    EditorNodeView(
-                        node: binding(for: node.id),
-                        isSelected: selectedForGroup.contains(node.id),
-                        accent: themeVM.accent,
-                        onTap: {
-                            // Bring to front
-                            zTop = node.id
-                        },
-                        onPortTap: { port in
-                            if let from = pendingFrom {
-                                if from != node.id {
-                                    connections.append(NodeConnection(
-                                        fromNodeId: from, fromPort: port,
-                                        toNodeId: node.id, toPort: port,
-                                        isDelta: false))
-                                }
-                                pendingFrom = nil
-                            } else { pendingFrom = node.id }
-                        }
-                    )
-                    .offset(canvasOffset)
-                    .scaleEffect(canvasScale)
-                    .zIndex(node.id == zTop ? 100 : 0)
+                // Nodes — all inside one transform group so .position()
+                // coordinates stay consistent with canvas pan/zoom
+                ZStack {
+                    ForEach(nodes.sorted { a, b in
+                        if a.id == zTop { return false }
+                        if b.id == zTop { return true }
+                        return false
+                    }) { node in
+                        EditorNodeView(
+                            node: binding(for: node.id),
+                            canvasScale: canvasScale,
+                            isSelected: selectedForGroup.contains(node.id),
+                            accent: themeVM.accent,
+                            onTap: { zTop = node.id },
+                            onPortTap: { port in
+                                if let from = pendingFrom {
+                                    if from != node.id {
+                                        connections.append(NodeConnection(
+                                            fromNodeId: from, fromPort: port,
+                                            toNodeId: node.id, toPort: port,
+                                            isDelta: false))
+                                    }
+                                    pendingFrom = nil
+                                } else { pendingFrom = node.id }
+                            }
+                        )
+                        .zIndex(node.id == zTop ? 100 : 0)
+                    }
                 }
+                .offset(canvasOffset)
+                .scaleEffect(canvasScale)
             }
             .clipped()
             // Canvas pan
             .gesture(
                 DragGesture(minimumDistance: 4)
                     .onChanged { val in
+                        // Use startLocation to compute delta from start each frame
+                        // so cumulative drift doesn't accelerate movement
                         canvasOffset = CGSize(
-                            width: canvasOffset.width + val.translation.width * 0.3,
-                            height: canvasOffset.height + val.translation.height * 0.3)
+                            width:  canvasPanBase.width  + val.translation.width,
+                            height: canvasPanBase.height + val.translation.height)
+                    }
+                    .onEnded { val in
+                        canvasPanBase = canvasOffset
                     }
             )
             // Canvas pinch-to-zoom
@@ -347,7 +354,7 @@ struct NodeEditorView: View {
             Button("Clear All") { nodes.removeAll(); connections.removeAll(); nodeGroups.removeAll() }
                 .font(.system(size: 10, design: .monospaced)).foregroundColor(.red.opacity(0.7))
 
-            Button("Reset View") { canvasOffset = .zero; canvasScale = 1.0 }
+            Button("Reset View") { canvasOffset = .zero; canvasPanBase = .zero; canvasScale = 1.0 }
                 .font(.system(size: 10, design: .monospaced)).foregroundColor(.white.opacity(0.4))
 
             Spacer()
@@ -442,8 +449,9 @@ struct EditorNodeView: View {
     let onTap: () -> Void
     let onPortTap: (String) -> Void
 
+    let canvasScale: CGFloat           // passed in so drag compensates for zoom
     @GestureState private var dragDelta = CGSize.zero
-    @State private var dragBase = CGPoint.zero
+    @State private var dragDeltaBase = CGPoint.zero
 
     var body: some View {
         VStack(spacing: 0) {
@@ -490,14 +498,21 @@ struct EditorNodeView: View {
             x: node.position.x + dragDelta.width,
             y: node.position.y + dragDelta.height))
         .gesture(
-            DragGesture(minimumDistance: 2)
-                .updating($dragDelta) { val, state, _ in state = val.translation }
+            DragGesture(minimumDistance: 4)
+                .updating($dragDelta) { val, state, _ in
+                    // Compensate translation for canvas scale so node tracks finger 1:1
+                    state = CGSize(
+                        width:  val.translation.width  / canvasScale,
+                        height: val.translation.height / canvasScale)
+                }
                 .onEnded { val in
                     node.position = CGPoint(
-                        x: node.position.x + val.translation.width,
-                        y: node.position.y + val.translation.height)
+                        x: node.position.x + val.translation.width  / canvasScale,
+                        y: node.position.y + val.translation.height / canvasScale)
+                    dragDeltaBase = node.position
                 }
         )
         .onTapGesture { onTap() }
     }
 }
+
