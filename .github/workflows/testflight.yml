@@ -118,7 +118,8 @@ jobs:
   build-dart:
     uses: DART-Skyboard/DART-iOS/.github/workflows/testflight.yml@main
     secrets:
-      CERTIFICATE_BASE64:   ${{ secrets.CERTIFICATE_BASE64 }}
-      CERTIFICATE_PASSWORD: ${{ secrets.CERTIFICATE_PASSWORD }}
-      ASC_KEY_CONTENT:      ${{ secrets.ASC_KEY_CONTENT }}
-      DART_PROFILE_BASE64:  ${{ secrets.DART_PROFILE_BASE64 }}
+      CERTIFICATE_BASE64:             ${{ secrets.CERTIFICATE_BASE64 }}
+      CERTIFICATE_PASSWORD:           ${{ secrets.CERTIFICATE_PASSWORD }}
+      APP_STORE_CONNECT_API_KEY_CONTENT: ${{ secrets.APP_STORE_CONNECT_API_KEY_CONTENT }}
+      DART_PROFILE_BASE64:            ${{ secrets.DART_PROFILE_BASE64 }}
+      KEYCHAIN_PASSWORD:              ${{ secrets.KEYCHAIN_PASSWORD }}
