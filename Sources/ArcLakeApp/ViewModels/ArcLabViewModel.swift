@@ -114,7 +114,7 @@ public final class ArcLabViewModel: ObservableObject {
             xLine.firstMaterial?.writesToDepthBuffer = false
             let xNode = SCNNode(geometry: xLine)
             xNode.position = SCNVector3(0, 0, offset)
-            xNode.eulerAngles = SCNVector3(0, 0, .pi/2)
+            xNode.eulerAngles = SCNVector3(0, 0, Float.pi/2)
             g.addChildNode(xNode)
 
             // Z-axis lines (run along Z)
@@ -132,7 +132,7 @@ public final class ArcLabViewModel: ObservableObject {
         let xAxis = SCNCylinder(radius: 0.018, height: CGFloat(extent * 2))
         xAxis.firstMaterial?.emission.contents = UIColor(red:1,green:0.2,blue:0.2,alpha:0.55)
         xAxis.firstMaterial?.lightingModel = .constant
-        let xAxisNode = SCNNode(geometry: xAxis); xAxisNode.eulerAngles.z = .pi/2
+        let xAxisNode = SCNNode(geometry: xAxis); xAxisNode.eulerAngles.z = Float.pi/2
         g.addChildNode(xAxisNode)
 
         // Z axis — blue
@@ -141,7 +141,7 @@ public final class ArcLabViewModel: ObservableObject {
         zAxis.firstMaterial?.lightingModel = .constant
         g.addChildNode(SCNNode(geometry: zAxis))  // already along Y, rotate not needed... 
         // Actually Z axis needs rotation
-        let zAxisNode = SCNNode(geometry: zAxis); zAxisNode.eulerAngles.x = .pi/2
+        let zAxisNode = SCNNode(geometry: zAxis); zAxisNode.eulerAngles.x = Float.pi/2
         g.addChildNode(zAxisNode)
 
         // Y axis — green
@@ -337,7 +337,7 @@ public final class ArcLabViewModel: ObservableObject {
     private func spiralPosition(index: Int, spacing: Float) -> SIMD3<Float> {
         if index == 0 { return SIMD3<Float>(0, 0, 0) }
         let turns: Float = 0.618  // golden ratio turns
-        let angle = Float(index) * turns * 2 * .pi
+        let angle = Float(index) * turns * 2 * Float.pi
         let radius = sqrt(Float(index)) * spacing * 0.7
         return SIMD3<Float>(cos(angle) * radius, 0, sin(angle) * radius)
     }
