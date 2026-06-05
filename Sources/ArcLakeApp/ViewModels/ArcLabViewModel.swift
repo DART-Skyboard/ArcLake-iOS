@@ -182,7 +182,7 @@ public final class ArcLabViewModel: ObservableObject {
             radius * sin(angle)
         )
         atomPositions[element.id + instanceIdx * 1000] = pos
-        buildPointCloudAtomAt(element, at: pos, uid: element.id + instanceIdx * 1000)
+        buildPointCloudAtom(element, at: pos)
         log("Added instance of \(element.elementName) (\(instanceIdx + 1) in scene)")
     }
 
