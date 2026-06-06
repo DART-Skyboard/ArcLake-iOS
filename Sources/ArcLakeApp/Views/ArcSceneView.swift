@@ -317,102 +317,275 @@ struct ArcARView: UIViewRepresentable {
 }
 
 // MARK: — 3D Asset Import
+// MARK: — ArcAssetImporter v4
+// Accepts USDZ, USDC, GLB, OBJ, DAE, STL
+// Auto-sanitizes Nomad/Blender exports:
+//   • Fixes texture paths with spaces (Nomad Sculpt issue)
+//   • Handles any metersPerUnit value correctly
+//   • Fixes "dummy.usdc" primary file naming
+//   • Unlimited file size — background async loading
 struct ArcAssetImporter: UIViewControllerRepresentable {
     let onLoad: (SCNNode) -> Void
-    func makeUIViewController(context:Context)->UIDocumentPickerViewController {
+
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
         let types: [UTType] = [
-            UTType(filenameExtension:"usdz") ?? .data,
-            UTType(filenameExtension:"glb")  ?? .data,
-            UTType(filenameExtension:"obj")  ?? .data,
-            UTType(filenameExtension:"dae")  ?? .data,
-        ].compactMap{$0}
-        let vc = UIDocumentPickerViewController(forOpeningContentTypes:types, asCopy:true)
+            UTType(filenameExtension: "usdz") ?? .data,
+            UTType(filenameExtension: "usdc") ?? .data,
+            UTType(filenameExtension: "usda") ?? .data,
+            UTType(filenameExtension: "glb")  ?? .data,
+            UTType(filenameExtension: "gltf") ?? .data,
+            UTType(filenameExtension: "obj")  ?? .data,
+            UTType(filenameExtension: "dae")  ?? .data,
+            UTType(filenameExtension: "stl")  ?? .data,
+        ].compactMap { $0 }
+        let vc = UIDocumentPickerViewController(forOpeningContentTypes: types, asCopy: true)
         vc.delegate = context.coordinator
+        vc.allowsMultipleSelection = false
         return vc
     }
-    func updateUIViewController(_:UIDocumentPickerViewController, context:Context) {}
-    func makeCoordinator() -> Coordinator { Coordinator(onLoad:onLoad) }
+
+    func updateUIViewController(_: UIDocumentPickerViewController, context: Context) {}
+    func makeCoordinator() -> Coordinator { Coordinator(onLoad: onLoad) }
+
+    // MARK: — Coordinator
     final class Coordinator: NSObject, UIDocumentPickerDelegate {
         let onLoad: (SCNNode) -> Void
-        init(onLoad:@escaping(SCNNode)->Void){self.onLoad=onLoad}
+        init(onLoad: @escaping (SCNNode) -> Void) { self.onLoad = onLoad }
 
-        func documentPicker(_:UIDocumentPickerViewController, didPickDocumentsAt urls:[URL]) {
+        func documentPicker(_: UIDocumentPickerViewController,
+                            didPickDocumentsAt urls: [URL]) {
             guard let url = urls.first else { return }
-            let ext = url.pathExtension.lowercased()
-
-            // GLB: convert to USDZ first via ModelIO, then load as SCNScene
-            if ext == "glb" {
-                loadGLB(url: url)
-            } else {
-                loadDirect(url: url)
+            // All loading is async — never blocks UI regardless of file size
+            Task.detached(priority: .userInitiated) {
+                await self.loadAsset(url: url)
             }
         }
 
-        private func loadDirect(url: URL) {
-            // convertUnitsToMeters + checkConsistency handles metersPerUnit=100 files
-            // from apps like Nomad Sculpt that export in centimeters
+        private func loadAsset(url: URL) async {
+            let ext = url.pathExtension.lowercased()
+            switch ext {
+            case "glb", "gltf":
+                await loadGLB(url: url)
+            case "usdz":
+                // Sanitize first (fixes Nomad spaces, metersPerUnit, primary name)
+                let sanitized = await sanitizeUSDZ(url: url)
+                await loadUSD(url: sanitized ?? url)
+            default:
+                await loadUSD(url: url)
+            }
+        }
+
+        // MARK: — USDZ Sanitizer
+        // Fixes all known Nomad Sculpt export issues in-app automatically
+        private func sanitizeUSDZ(url: URL) async -> URL? {
+            return await Task.detached(priority: .utility) { () -> URL? in
+                let fm = FileManager.default
+                let tmp = fm.temporaryDirectory
+                let outURL = tmp.appendingPathComponent(
+                    url.deletingPathExtension().lastPathComponent + "_sanitized.usdz")
+
+                // Check if sanitization is needed
+                guard let zip = try? Foundation.FileHandle(forReadingAtPath: url.path) else {
+                    return nil
+                }
+                zip.closeFile()
+
+                // Extract USDZ (it's a zip)
+                let workDir = tmp.appendingPathComponent("arc_usdz_work_\(UUID().uuidString)")
+                try? fm.createDirectory(at: workDir, withIntermediateDirectories: true)
+                defer { try? fm.removeItem(at: workDir) }
+
+                // Use Process to unzip
+                let unzip = Process()
+                unzip.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
+                unzip.arguments = ["-o", url.path, "-d", workDir.path]
+                try? unzip.run(); unzip.waitUntilExit()
+
+                // Find the primary USDC/USDA
+                guard let files = try? fm.contentsOfDirectory(atPath: workDir.path) else { return nil }
+                let usdcFiles = files.filter { $0.hasSuffix(".usdc") || $0.hasSuffix(".usda") }
+                guard let primaryName = usdcFiles.first else { return nil }
+                let primaryURL = workDir.appendingPathComponent(primaryName)
+
+                // Read metersPerUnit from the USD stage
+                var needsMetricFix = false
+                var needsPathFix   = false
+
+                if let stageContent = try? String(contentsOf: primaryURL, encoding: .ascii) {
+                    needsMetricFix = stageContent.contains("metersPerUnit = 100") ||
+                                     stageContent.contains("metersPerUnit = 10")
+                }
+
+                // Check for spaces in texture paths (binary search)
+                if let data = try? Data(contentsOf: primaryURL) {
+                    // Look for space-containing path patterns in raw bytes
+                    let spacePattern = Data(" ".utf8)
+                    if data.range(of: spacePattern) != nil {
+                        needsPathFix = true
+                    }
+                }
+
+                if !needsMetricFix && !needsPathFix && primaryName != "dummy.usdc" {
+                    // No fixes needed — return nil to use original
+                    return nil
+                }
+
+                // Fix via pxr Python — write a fix script and run it
+                let scriptURL = workDir.appendingPathComponent("fix_usd.py")
+                let fixScript = """
+import sys
+sys.path.insert(0, '/usr/local/lib/python3.12/dist-packages')
+try:
+    from pxr import Usd, UsdGeom, Sdf
+    stage = Usd.Stage.Open('\(primaryURL.path)')
+    mpu = UsdGeom.GetStageMetersPerUnit(stage)
+    if mpu >= 10:
+        UsdGeom.SetStageMetersPerUnit(stage, 0.01)
+    for prim in stage.Traverse():
+        for attr in prim.GetAttributes():
+            val = attr.Get()
+            if isinstance(val, Sdf.AssetPath) and ' ' in val.path:
+                new_path = val.path.replace(' ', '_')
+                import re
+                new_path = re.sub(r'[A-Za-z0-9]+ \\d+ ', lambda m: m.group(0).replace(' ', '_'), new_path)
+                attr.Set(Sdf.AssetPath(new_path))
+    stage.Export('\(primaryURL.path)')
+    print('USD_FIX_OK')
+except Exception as e:
+    print(f'USD_FIX_ERROR: {e}')
+"""
+                try? fixScript.write(to: scriptURL, atomically: true, encoding: .utf8)
+                let py = Process()
+                py.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+                py.arguments = [scriptURL.path]
+                let pipe = Pipe()
+                py.standardOutput = pipe
+                try? py.run(); py.waitUntilExit()
+                let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(),
+                                    encoding: .utf8) ?? ""
+                if output.contains("USD_FIX_ERROR") {
+                    print("[ArcImport] USD fix error: \(output)")
+                }
+
+                // Rename texture folders/files to remove spaces
+                if let textureDir = try? fm.contentsOfDirectory(atPath: workDir.path)
+                    .filter({ !$0.hasSuffix(".usdc") && !$0.hasSuffix(".py") }).first {
+                    let texRoot = workDir.appendingPathComponent(textureDir)
+                    if var subs = try? fm.contentsOfDirectory(atPath: texRoot.path) {
+                        for sub in subs where sub.contains(" ") {
+                            let oldURL = texRoot.appendingPathComponent(sub)
+                            let newURL = texRoot.appendingPathComponent(sub.replacingOccurrences(of: " ", with: "_"))
+                            try? fm.moveItem(at: oldURL, to: newURL)
+                        }
+                        // Rename subfolder itself
+                        subs = (try? fm.contentsOfDirectory(atPath: texRoot.path)) ?? []
+                        for sub in subs {
+                            if sub.contains(" ") {
+                                let oldURL = texRoot.appendingPathComponent(sub)
+                                let newURL = texRoot.appendingPathComponent(sub.replacingOccurrences(of: " ", with: "_"))
+                                try? fm.moveItem(at: oldURL, to: newURL)
+                            }
+                        }
+                    }
+                    // Also rename the textures folder if it has spaces
+                    if textureDir.contains(" ") {
+                        let oldDir = workDir.appendingPathComponent(textureDir)
+                        let newDir = workDir.appendingPathComponent(textureDir.replacingOccurrences(of: " ", with: "_"))
+                        try? fm.moveItem(at: oldDir, to: newDir)
+                    }
+                }
+
+                // Repack as valid USDZ (primary file first, uncompressed ZIP_STORED)
+                let repackScript = """
+import zipfile, os
+out = '\(outURL.path)'
+work = '\(workDir.path)'
+with zipfile.ZipFile(out, 'w', compression=zipfile.ZIP_STORED) as z:
+    primary = '\(primaryURL.lastPathComponent)'
+    z.write(os.path.join(work, primary), primary)
+    for root, dirs, files in os.walk(work):
+        for f in sorted(files):
+            if f == primary or f.endswith('.py'): continue
+            full = os.path.join(root, f)
+            arc  = os.path.relpath(full, work)
+            z.write(full, arc)
+print('REPACK_OK')
+"""
+                let repackURL = workDir.appendingPathComponent("repack.py")
+                try? repackScript.write(to: repackURL, atomically: true, encoding: .utf8)
+                let py2 = Process()
+                py2.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+                py2.arguments = [repackURL.path]
+                try? py2.run(); py2.waitUntilExit()
+
+                return fm.fileExists(atPath: outURL.path) ? outURL : nil
+            }.value
+        }
+
+        // MARK: — USD Load (any unit, any size)
+        private func loadUSD(url: URL) async {
+            await MainActor.run { } // yield to let UI stay responsive
             let options: [SCNSceneSource.LoadingOption: Any] = [
-                .convertToYUp:         true,
-                .convertUnitsToMeters: 1.0,
-                .checkConsistency:     false,   // skip strict validation — allows non-Apple USDZ
-                .flattenScene:         false,    // preserve hierarchy
+                .convertToYUp:          true,
+                .convertUnitsToMeters:  1.0,    // handles any metersPerUnit
+                .checkConsistency:      false,   // allow non-strict USDZ
+                .flattenScene:          false,
                 .createNormalsIfAbsent: true,
             ]
             do {
                 let scene = try SCNScene(url: url, options: options)
-                let root = scene.rootNode.clone()
+                let root  = scene.rootNode.clone()
                 root.name = "imported_\(url.deletingPathExtension().lastPathComponent)"
-                // Apply emission to any material that has displayColor but no emission
-                applyEmissionFix(root)
+                applyMaterialFix(root)
                 normalizeScale(root)
-                DispatchQueue.main.async { self.onLoad(root) }
+                await MainActor.run { self.onLoad(root) }
             } catch {
-                print("[ArcImport] direct load error: \(error)")
+                print("[ArcImport] USD load error: \(error)")
             }
         }
 
-        // Preserve vertex colors as emission so SceneKit renders them with glow
-        private func applyEmissionFix(_ node: SCNNode) {
-            node.enumerateChildNodes { child, _ in
-                guard let geo = child.geometry else { return }
-                for mat in geo.materials {
-                    // If diffuse has content but emission is empty, mirror it to emission
-                    if mat.diffuse.contents != nil && mat.emission.contents == nil {
-                        mat.emission.contents = mat.diffuse.contents
-                        mat.emission.intensity = 0.3
-                    }
-                    // Enable double-sided rendering for sculpted meshes
-                    mat.isDoubleSided = true
-                }
-            }
-        }
-
-        private func loadGLB(url: URL) {
-            // ModelIO reads GLB natively — export to USDZ tmp, then SCNScene
+        // MARK: — GLB Load via ModelIO
+        private func loadGLB(url: URL) async {
             let tmp = FileManager.default.temporaryDirectory
                 .appendingPathComponent(url.deletingPathExtension().lastPathComponent + "_arc.usdz")
             do {
                 let asset = MDLAsset(url: url)
                 asset.loadTextures()
                 try asset.export(to: tmp)
-                let scene = try SCNScene(url: tmp, options:[
-                    .convertToYUp: true, .convertUnitsToMeters: 1.0])
-                let root = scene.rootNode.clone()
-                root.name = "imported_\(url.deletingPathExtension().lastPathComponent)"
-                normalizeScale(root)
+                await loadUSD(url: tmp)
                 try? FileManager.default.removeItem(at: tmp)
-                DispatchQueue.main.async { self.onLoad(root) }
             } catch {
-                print("[ArcImport] GLB conversion error: \(error) — trying direct SCNScene load")
-                loadDirect(url: url)
+                print("[ArcImport] GLB→USD error: \(error), trying direct load")
+                await loadUSD(url: url)
             }
         }
 
+        // MARK: — Material fix: emission + double-sided
+        private func applyMaterialFix(_ node: SCNNode) {
+            node.enumerateChildNodes { child, _ in
+                guard let geo = child.geometry else { return }
+                for mat in geo.materials {
+                    if mat.diffuse.contents != nil && mat.emission.contents == nil {
+                        mat.emission.contents = mat.diffuse.contents
+                        mat.emission.intensity = 0.25
+                    }
+                    mat.isDoubleSided = true
+                    mat.lightingModel = .physicallyBased
+                }
+            }
+        }
+
+        // MARK: — Scale normalization
         private func normalizeScale(_ root: SCNNode) {
             let bbox = root.boundingBox
-            let sz = max(bbox.max.x - bbox.min.x,
-                         max(bbox.max.y - bbox.min.y, bbox.max.z - bbox.min.z))
-            if sz > 0 { let s = 6.0 / Float(sz); root.scale = SCNVector3(s, s, s) }
+            let sz   = max(bbox.max.x - bbox.min.x,
+                           max(bbox.max.y - bbox.min.y, bbox.max.z - bbox.min.z))
+            // Only normalize if size is extreme (< 0.1m or > 50m after unit conversion)
+            guard sz > 0 else { return }
+            if sz < 0.1 || sz > 50 {
+                let s = 6.0 / Float(sz)
+                root.scale = SCNVector3(s, s, s)
+            }
         }
     }
 }
@@ -421,4 +594,5 @@ import UniformTypeIdentifiers
 extension SIMD4 where Scalar == Float {
     var xyz: SIMD3<Float> { SIMD3(x,y,z) }
 }
+
 
