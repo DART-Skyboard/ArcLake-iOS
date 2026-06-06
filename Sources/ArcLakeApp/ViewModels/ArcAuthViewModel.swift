@@ -9,6 +9,9 @@ import AuthenticationServices
 
 @MainActor
 public final class ArcAuthViewModel: NSObject, ObservableObject {
+    // Retain the controller so it's not deallocated before the delegate fires
+    private var appleAuthController: ASAuthorizationController?
+    private var googleSignInCompletion: ((Bool) -> Void)?
 
     // MARK: — State
     @Published public var isSignedIn      = false
@@ -102,6 +105,7 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
         let controller = ASAuthorizationController(authorizationRequests: requests)
         controller.delegate                    = self
         controller.presentationContextProvider = self
+        appleAuthController = controller   // retain — prevents dealloc before delegate
         controller.performRequests()
     }
 
@@ -138,7 +142,81 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
         let controller = ASAuthorizationController(authorizationRequests: [request])
         controller.delegate                    = self
         controller.presentationContextProvider = self
+        // Retain controller — local vars get deallocated before delegate fires
+        appleAuthController = controller
         controller.performRequests()
+    }
+
+    // MARK: — Google Sign-In
+    // Uses Google Sign-In SDK (GoogleSignIn-iOS). If SDK not yet added to project,
+    // this compiles as a no-op stub. Add via SPM: https://github.com/google/GoogleSignIn-iOS
+    @Published public var googleConnected = false
+    @Published public var googleEmail = ""
+    @Published public var savedGoogleAccounts: [ArcSavedAccount] = []
+
+    public func signInWithGoogle() {
+        #if canImport(GoogleSignIn)
+        guard let scene = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .first(where: { $0.activationState == .foregroundActive }),
+              let rootVC = scene.windows.first(where: { $0.isKeyWindow })?.rootViewController
+        else { self.error = "Google Sign-In: no root view controller"; return }
+
+        GIDSignIn.sharedInstance.signIn(withPresenting: rootVC) { [weak self] result, err in
+            guard let self else { return }
+            if let err {
+                DispatchQueue.main.async { self.error = err.localizedDescription }
+                return
+            }
+            guard let user = result?.user,
+                  let profile = user.profile else { return }
+            let email = profile.email
+            let name  = profile.name
+            DispatchQueue.main.async {
+                self.googleConnected = true
+                self.googleEmail = email
+                if !self.savedGoogleAccounts.contains(where: { $0.id == email }) {
+                    self.savedGoogleAccounts.append(ArcSavedAccount(id: email, displayName: name))
+                }
+                KeychainHelper.save(key: "arc_google_email", value: email)
+                KeychainHelper.save(key: "arc_google_name",  value: name)
+                if !self.isSignedIn { self.isSignedIn = true; self.username = name }
+            }
+        }
+        #else
+        self.error = "Google Sign-In SDK not yet installed. Add via SPM: github.com/google/GoogleSignIn-iOS"
+        #endif
+    }
+
+    public func signOutGoogle() {
+        #if canImport(GoogleSignIn)
+        GIDSignIn.sharedInstance.signOut()
+        #endif
+        googleConnected = false
+        googleEmail = ""
+        KeychainHelper.delete(key: "arc_google_email")
+        KeychainHelper.delete(key: "arc_google_name")
+    }
+
+    public func restoreGoogleSession() {
+        #if canImport(GoogleSignIn)
+        GIDSignIn.sharedInstance.restorePreviousSignIn { [weak self] user, err in
+            guard let self, let user, err == nil,
+                  let profile = user.profile else { return }
+            DispatchQueue.main.async {
+                self.googleConnected = true
+                self.googleEmail = profile.email
+                if !self.isSignedIn { self.isSignedIn = true; self.username = profile.name }
+            }
+        }
+        #else
+        if let email = KeychainHelper.load(key: "arc_google_email"),
+           let name  = KeychainHelper.load(key: "arc_google_name") {
+            googleConnected = true; googleEmail = email
+            savedGoogleAccounts = [ArcSavedAccount(id: email, displayName: name)]
+            if !isSignedIn { isSignedIn = true; username = name }
+        }
+        #endif
     }
 
     // MARK: — Switch Apple account
@@ -335,10 +413,18 @@ extension ArcAuthViewModel:
     ASAuthorizationControllerPresentationContextProviding {
 
     public func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
-        UIApplication.shared.connectedScenes
+        // Find the key window from the active foreground scene (iOS 15+ compatible)
+        let scenes = UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
-            .first(where: { $0.activationState == .foregroundActive })?
-            .windows.first(where: { $0.isKeyWindow }) ?? UIWindow()
+        // Prefer foreground active, fall back to any connected scene
+        let scene = scenes.first(where: { $0.activationState == .foregroundActive })
+                 ?? scenes.first
+        if let window = scene?.windows.first(where: { $0.isKeyWindow }) { return window }
+        if let window = scene?.windows.first { return window }
+        // Last resort: create a visible window on the current scene
+        let w = UIWindow(frame: UIScreen.main.bounds)
+        w.makeKeyAndVisible()
+        return w
     }
 
     public func authorizationController(
@@ -446,6 +532,7 @@ struct KeychainHelper {
         SecItemDelete(q as CFDictionary)
     }
 }
+
 
 
 
