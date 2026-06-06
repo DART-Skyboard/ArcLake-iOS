@@ -119,7 +119,8 @@ public final class ArcLabViewModel: ObservableObject {
         // Solid positive half-axis
         func posAxis(_ color: UIColor, length: Float, rx: Float, rz: Float,
                      offset: SCNVector3) -> SCNNode {
-            let c = SCNCylinder(radius: 0.018, height: CGFloat(length))
+            let c = SCNCylinder(radius: 0.022, height: CGFloat(length))
+            c.firstMaterial?.diffuse.contents  = color
             c.firstMaterial?.emission.contents = color
             c.firstMaterial?.lightingModel = .constant
             let n = SCNNode(geometry: c)
@@ -137,7 +138,8 @@ public final class ArcLabViewModel: ObservableObject {
             while t < length {
                 let dLen = min(dashLen, length - t)
                 let c = SCNCylinder(radius: 0.01, height: CGFloat(dLen))
-                c.firstMaterial?.emission.contents = color.withAlphaComponent(0.45)
+                c.firstMaterial?.diffuse.contents  = color.withAlphaComponent(0.6)
+                c.firstMaterial?.emission.contents = color.withAlphaComponent(0.6)
                 c.firstMaterial?.lightingModel = .constant
                 let dn = SCNNode(geometry: c)
                 dn.eulerAngles = SCNVector3(rx, 0, rz)
@@ -151,6 +153,7 @@ public final class ArcLabViewModel: ObservableObject {
 
         func arrowHead(color: UIColor, pos: SCNVector3, rx: Float, rz: Float) -> SCNNode {
             let cone = SCNCone(topRadius: 0, bottomRadius: 0.09, height: 0.32)
+            cone.firstMaterial?.diffuse.contents  = color
             cone.firstMaterial?.emission.contents = color
             cone.firstMaterial?.lightingModel = .constant
             let n = SCNNode(geometry: cone)
@@ -661,7 +664,8 @@ public final class ArcLabViewModel: ObservableObject {
         // Remove all grid AND axis nodes before re-adding
         let gnames: Set<String> = ["grid","grid_xz","grid_xy","grid_yz","axis_origin"]
         scene.rootNode.childNodes.filter{gnames.contains($0.name ?? "")}.forEach{$0.removeFromParentNode()}
-        if showGrid { addGridFloor(to: scene) }
+        // Always call addGridFloor — it internally checks showGrid / showAxisIndicators
+        addGridFloor(to: scene)
     }
 
     public func exportGLB() -> URL? { SCNExportHelper().exportScene(scene, name:"ArcLake_Export", format: .glb) }
@@ -700,6 +704,7 @@ private extension Array {
         indices.contains(index) ? self[index] : nil
     }
 }
+
 
 
 
