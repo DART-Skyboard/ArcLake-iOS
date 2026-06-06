@@ -253,9 +253,23 @@ struct DARTTopBar: View {
                             Circle()
                                 .stroke(themeVM.accent.opacity(0.3), lineWidth: 0.8)
                                 .frame(width: 30, height: 30)
-                            Text(authVM.username.prefix(1).uppercased())
-                                .font(.system(size: 12, weight: .bold, design: .monospaced))
-                                .foregroundColor(themeVM.accent)
+                            if let avatarURL = authVM.githubAvatarURL {
+                                AsyncImage(url: avatarURL) { phase in
+                                    if case .success(let img) = phase {
+                                        img.resizable().scaledToFill()
+                                            .frame(width: 28, height: 28)
+                                            .clipShape(Circle())
+                                    } else {
+                                        Text(authVM.username.prefix(1).uppercased())
+                                            .font(.system(size: 12, weight: .bold, design: .monospaced))
+                                            .foregroundColor(themeVM.accent)
+                                    }
+                                }
+                            } else {
+                                Text(authVM.username.prefix(1).uppercased())
+                                    .font(.system(size: 12, weight: .bold, design: .monospaced))
+                                    .foregroundColor(themeVM.accent)
+                            }
                         }
                     }
                 }
@@ -586,8 +600,27 @@ struct ArcProfileSheet: View {
                 ZStack {
                     Circle().fill(themeVM.accent.opacity(0.12)).frame(width: 72, height: 72)
                     Circle().stroke(themeVM.accent.opacity(0.4), lineWidth: 1.5).frame(width: 72, height: 72)
-                    Text(authVM.username.prefix(1).uppercased())
-                        .font(.custom("Orbitron-Bold", size: 28)).foregroundColor(themeVM.accent)
+                    if let avatarURL = authVM.githubAvatarURL {
+                        AsyncImage(url: avatarURL) { phase in
+                            switch phase {
+                            case .success(let img):
+                                img.resizable().scaledToFill()
+                                    .frame(width: 68, height: 68)
+                                    .clipShape(Circle())
+                            case .failure, .empty:
+                                Text(authVM.username.prefix(1).uppercased())
+                                    .font(.custom("Orbitron-Bold", size: 28))
+                                    .foregroundColor(themeVM.accent)
+                            @unknown default:
+                                Text(authVM.username.prefix(1).uppercased())
+                                    .font(.custom("Orbitron-Bold", size: 28))
+                                    .foregroundColor(themeVM.accent)
+                            }
+                        }
+                    } else {
+                        Text(authVM.username.prefix(1).uppercased())
+                            .font(.custom("Orbitron-Bold", size: 28)).foregroundColor(themeVM.accent)
+                    }
                 }
                 Spacer().frame(height: 12)
                 Text(authVM.username)
@@ -648,7 +681,7 @@ struct ArcProfileSheet: View {
                 .padding(.horizontal, 20).padding(.bottom, 40)
             }
         }
-        .presentationDetents([.fraction(0.62), .large])
+        .presentationDetents([.fraction(0.58), .large])
         .sheet(isPresented: $showSupport) {
             ArcSupportSheet(accentColor: themeVM.accent, appName: "ArcLake")
         }
@@ -784,3 +817,4 @@ struct ArcMusicControls: View {
         }
     }
 }
+
