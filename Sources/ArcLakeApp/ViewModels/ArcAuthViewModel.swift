@@ -16,6 +16,7 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
     @Published public var githubConnected = false
     @Published public var username        = ""
     @Published public var githubUsername  = ""
+    @Published public var githubAvatarURL: URL? = nil
     @Published public var appleUserId     = ""
     @Published public var error: String?  = nil
     @Published public var deviceFlowCode: ArcDeviceFlowDisplay? = nil
@@ -183,6 +184,8 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
             if !isSignedIn { isSignedIn = true; username = ghUser }
             saveGitHubAccount(id: ghUser, displayName: ghUser)
             Task { await ArcVaultService.shared.setup(githubUsername: ghUser) }
+            // Fetch GitHub avatar
+            Task { await self.fetchGitHubAvatar(for: ghUser) }
             return
         }
         deviceFlowCode = nil
@@ -239,6 +242,27 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
                     self.error = "GitHub session expired — please reconnect."
                 }
             }
+        }
+    }
+
+    // MARK: — GitHub Avatar
+    public func fetchGitHubAvatar(for username: String) async {
+        // GitHub API: GET /users/{username} → avatar_url
+        guard let url = URL(string: "https://api.github.com/users/\(username)") else { return }
+        var req = URLRequest(url: url)
+        req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        if let token = KeychainHelper.load(key: "arc_github_pat") {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        req.timeoutInterval = 8
+        guard let (data, _) = try? await URLSession.shared.data(for: req),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let avatarStr = json["avatar_url"] as? String,
+              let avatarURL = URL(string: avatarStr) else { return }
+        await MainActor.run {
+            self.githubAvatarURL = avatarURL
+            // Cache the URL string
+            KeychainHelper.save(key: "arc_github_avatar_url", value: avatarStr)
         }
     }
 
@@ -404,4 +428,5 @@ struct KeychainHelper {
         SecItemDelete(q as CFDictionary)
     }
 }
+
 
