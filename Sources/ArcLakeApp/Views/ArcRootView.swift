@@ -75,20 +75,7 @@ public struct DARTRootView: View {
                     .animation(.spring(response: 0.3, dampingFraction: 0.8),
                                value: labVM.isMantisNavVisible)
 
-                // ── Atom info card — free-floating DragShell, not clipped ──
-                if let el = labVM.tappedElement {
-                    DragShell(geoSize: geo.size,
-                              width: min(geo.size.width - 20, 360),
-                              height: 300) {
-                        ScrollView {
-                            AtomInfoCard(element: el)
-                        }
-                    }
-                    .transition(.opacity.combined(with: .scale(scale: 0.95)))
-                    .animation(.spring(response: 0.35, dampingFraction: 0.82),
-                               value: labVM.tappedElement?.id)
-                    .zIndex(999)
-                }
+                // AtomInfoCard is now in ArcOverlays — same layer as all panels
             }
         }
         .preferredColorScheme(.dark)
@@ -857,5 +844,6 @@ struct ArcMusicControls: View {
         }
     }
 }
+
 
 
