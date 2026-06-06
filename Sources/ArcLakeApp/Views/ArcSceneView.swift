@@ -213,30 +213,34 @@ public struct ArcSceneView: UIViewRepresentable {
         // ── Single-tap: FOCUS on atom ────────────────────────────
         @objc func handleTap(_ g: UITapGestureRecognizer) {
             guard let v = scnView else { return }
-            let hits = v.hitTest(g.location(in: v),
-                options:[.searchMode: SCNHitTestSearchMode.closest.rawValue])
-            guard let hit = hits.first else { return }
-            var n: SCNNode? = hit.node
-            while let cur = n {
-                if let name = cur.name, name.hasPrefix("atomZ:"),
-                   let z  = Int(name.dropFirst(6)),
-                   let el = ElementStore.shared.elements.first(where:{ $0.id == z }) {
-                    // Fly pivot to atom
-                    let wp = cur.worldPosition
-                    pivot = SIMD3<Float>(wp.x, wp.y, wp.z)
-                    radius = min(radius, 8.0)
-                    // Show info card overlay
-                    // Show info card — user taps Probe button inside card if they want probe
-                    Task { @MainActor in self.labVM.tappedElement = el }
-                    // Fly pivot to atom smoothly
-                    SCNTransaction.begin()
-                    SCNTransaction.animationDuration = 0.35
-                    SCNTransaction.animationTimingFunction = CAMediaTimingFunction(name: .easeOut)
-                    commit()
-                    SCNTransaction.commit()
-                    return
+            // Search all hits (not just closest) so particle cloud children register
+            // Use SCNHitTestOptionSearchMode: .all to catch small geometry
+            let opts: [SCNHitTestOption: Any] = [
+                .searchMode:          SCNHitTestSearchMode.all.rawValue,
+                .ignoreHiddenNodes:   false,
+                .boundingBoxOnly:     false,
+            ]
+            let hits = v.hitTest(g.location(in: v), options: opts)
+            // Walk up from each hit to find the atomZ: root
+            for hit in hits {
+                var n: SCNNode? = hit.node
+                while let cur = n {
+                    if let name = cur.name, name.hasPrefix("atomZ:"),
+                       let z  = Int(name.dropFirst(6)),
+                       let el = ElementStore.shared.elements.first(where:{ $0.id == z }) {
+                        let wp = cur.worldPosition
+                        pivot = SIMD3<Float>(wp.x, wp.y, wp.z)
+                        radius = min(radius, 8.0)
+                        Task { @MainActor in self.labVM.tappedElement = el }
+                        SCNTransaction.begin()
+                        SCNTransaction.animationDuration = 0.35
+                        SCNTransaction.animationTimingFunction = CAMediaTimingFunction(name: .easeOut)
+                        commit()
+                        SCNTransaction.commit()
+                        return
+                    }
+                    n = cur.parent
                 }
-                n = cur.parent
             }
         }
 
@@ -778,3 +782,4 @@ struct AtomInfoCard: View {
         .frame(maxWidth: .infinity)
     }
 }
+
