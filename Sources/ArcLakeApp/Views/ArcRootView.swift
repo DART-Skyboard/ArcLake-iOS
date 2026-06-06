@@ -11,6 +11,8 @@ public struct DARTRootView: View {
     @EnvironmentObject var themeVM: ArcThemeViewModel
     @EnvironmentObject var authVM: ArcAuthViewModel
     @State private var showProfile  = false
+    @State private var showAppleAccountSheet = false
+    @State private var showSupportSheet = false
     @State private var showAR       = false
     @State private var showImporter = false
     @State private var showFeedback = false
@@ -89,6 +91,7 @@ public struct DARTRootView: View {
         }
         .preferredColorScheme(.dark)
         .sheet(isPresented: $showProfile) { ArcProfileSheet() }
+
         .overlay(alignment: .bottomTrailing) {
             AutumnOverlay()
         }
@@ -658,8 +661,12 @@ struct ArcProfileSheet: View {
 
                 Spacer().frame(height: 12)
                 VStack(spacing: 0) {
-                    arcRow("Apple ID", authVM.appleUserId.isEmpty ? "—" : "Connected ✓",
-                           authVM.appleUserId.isEmpty ? .white.opacity(0.3) : .green) { showApplePicker = true }
+                    arcRow("Apple ID",
+                           authVM.savedAppleAccounts.isEmpty ? "—"
+                               : authVM.savedAppleAccounts.map{$0.displayName}.joined(separator:", "),
+                           authVM.savedAppleAccounts.isEmpty ? .white.opacity(0.3) : .green) {
+                        showApplePicker = true
+                    }
                     Divider().background(Color.white.opacity(0.08))
                     arcRow("GitHub", authVM.githubConnected ? authVM.githubUsername : "Not connected",
                            authVM.githubConnected ? themeVM.accent : .white.opacity(0.3)) { showGitHubPicker = true }
@@ -841,4 +848,5 @@ struct ArcMusicControls: View {
         }
     }
 }
+
 
