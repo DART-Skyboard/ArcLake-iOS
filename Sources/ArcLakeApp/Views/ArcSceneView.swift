@@ -143,12 +143,10 @@ public struct ArcSceneView: UIViewRepresentable {
                 let dy = Float(cur.y - lastOrbitTranslation.y)
                 lastOrbitTranslation = cur
 
-                // Standard trackball: finger direction = camera orbit direction
-                // Drag right → camera moves right (scene rotates left) = theta increases
-                // Drag down  → camera moves down  (scene rotates up)   = phi increases
-                // No inversion, no damping — 1:1 with finger
-                theta += dx * 0.006
-                phi    = max(0.02, min(.pi - 0.02, phi + dy * 0.006))
+                // Build 171 orbit — matches user preference
+                // theta subtracts dx, phi subtracts dy
+                theta -= dx * 0.006
+                phi    = max(0.02, min(.pi - 0.02, phi - dy * 0.006))
                 commit()
             }
         }
