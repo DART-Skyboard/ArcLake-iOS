@@ -213,40 +213,39 @@ public struct ArcSceneView: UIViewRepresentable {
         // ── Single-tap: FOCUS on atom ────────────────────────────
         @objc func handleTap(_ g: UITapGestureRecognizer) {
             guard let v = scnView else { return }
-            // Search all hits (not just closest) so particle cloud children register
-            // Use SCNHitTestOptionSearchMode: .all to catch small geometry
-            // Primary: hit test with bounding box only for speed + reliability
             let loc = g.location(in: v)
-            let hitsAll = v.hitTest(loc, options: [
-                SCNHitTestOption.searchMode: SCNHitTestSearchMode.all.rawValue as NSNumber,
+
+            // Method 1: standard hit test (catches nucleus glow sphere + orbital rings)
+            let hits = v.hitTest(loc, options: [
+                SCNHitTestOption.searchMode:        SCNHitTestSearchMode.all.rawValue as NSNumber,
                 SCNHitTestOption.ignoreHiddenNodes: false as NSNumber,
             ])
-
-            // Walk every hit upward looking for atomZ: ancestor
-            for hit in hitsAll {
+            for hit in hits {
                 if let el = atomAncestor(of: hit.node) {
-                    fireAtomTap(el, pivot: hit.node.worldPosition)
-                    return
+                    fireAtomTap(el, pivot: hit.node.worldPosition); return
                 }
             }
 
-            // Fallback: proximity search — find closest atom root within ~3 screen pts of tap
-            // This catches taps that land between sparse particles
-            let tapPt = v.unprojectPoint(SCNVector3(Float(loc.x), Float(loc.y), 0.9))
-            var closest: (ArcElement, SCNNode, Float)? = nil
+            // Method 2: project each atom center to screen space,
+            // find the one closest in 2D to the tap point (within 80pt).
+            // This works even when sparse particle clouds miss hit testing.
+            var best: (ArcElement, SCNNode, CGFloat)? = nil
             v.scene?.rootNode.enumerateChildNodes { node, _ in
                 guard let name = node.name, name.hasPrefix("atomZ:"),
-                      let z = Int(name.dropFirst(6)),
+                      let z  = Int(name.dropFirst(6)),
                       let el = ElementStore.shared.elements.first(where: { $0.id == z })
                 else { return }
-                let wp = node.worldPosition
-                let dx = wp.x - tapPt.x; let dy = wp.y - tapPt.y; let dz = wp.z - tapPt.z
-                let dist = sqrt(dx*dx + dy*dy + dz*dz)
-                if dist < 8.0 {
-                    if closest == nil || dist < closest!.2 { closest = (el, node, dist) }
+                // Project world position → screen coordinates
+                let screenPt = v.projectPoint(node.worldPosition)
+                guard screenPt.z > 0 && screenPt.z < 1 else { return } // behind camera
+                let dx = CGFloat(screenPt.x) - loc.x
+                let dy = CGFloat(screenPt.y) - loc.y
+                let dist2D = sqrt(dx*dx + dy*dy)
+                if dist2D < 80 {  // within 80 points of tap
+                    if best == nil || dist2D < best!.2 { best = (el, node, dist2D) }
                 }
             }
-            if let (el, node, _) = closest {
+            if let (el, node, _) = best {
                 fireAtomTap(el, pivot: node.worldPosition)
             }
         }
