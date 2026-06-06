@@ -208,12 +208,17 @@ struct DARTTopBar: View {
             // Right controls — scrollable so all buttons always accessible
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 4) {
-                    // Grid master toggle — also toggles axis indicators
+                    // Grid master toggle — toggles ALL grid planes + axes on/off together
+                    // OFF: turns everything off regardless of individual states
+                    // ON:  turns everything back on regardless of individual states
                     DARTIconButton(icon: "number",
-                        active: labVM.showGrid && (labVM.showGridXZ || labVM.showGridXY || labVM.showGridYZ)) {
-                        labVM.showGrid.toggle()
-                        if !labVM.showGrid { labVM.showAxisIndicators = false }
-                        else               { labVM.showAxisIndicators = true  }
+                        active: labVM.showGrid) {
+                        let turningOff = labVM.showGrid
+                        labVM.showGrid           = !turningOff
+                        labVM.showGridXZ         = !turningOff
+                        labVM.showGridXY         = !turningOff
+                        labVM.showGridYZ         = !turningOff
+                        labVM.showAxisIndicators = !turningOff
                         labVM.rebuildGrid()
                     }
                     // Axis indicator toggle (X/Y/Z colored arrows)
