@@ -43,11 +43,22 @@ public struct DARTRootView: View {
                                     DARTCFDBadge()
                                         .padding(.trailing, 16)
                                         .padding(.bottom, 12)
-                                        // Keep badge fully on screen regardless of device
                                         .frame(maxWidth: .infinity, alignment: .trailing)
-                                        .padding(.leading, 80) // prevent from being too wide
+                                        .padding(.leading, 80)
                                 }
                             }
+                        }
+
+                        // Atom tap info card — slides up from bottom of viewport
+                        if let el = labVM.tappedElement {
+                            VStack {
+                                Spacer()
+                                AtomInfoCard(element: el)
+                                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                                    .padding(.bottom, 12)
+                            }
+                            .animation(.spring(response: 0.35, dampingFraction: 0.82),
+                                       value: labVM.tappedElement?.id)
                         }
                     }
                     .frame(height: geo.size.height * 0.44)
@@ -71,6 +82,8 @@ public struct DARTRootView: View {
                                value: labVM.isMolCanvasVisible)
                     .animation(.spring(response: 0.3, dampingFraction: 0.8),
                                value: labVM.isMantisNavVisible)
+                    .animation(.spring(response: 0.35, dampingFraction: 0.82),
+                               value: labVM.tappedElement?.id)
             }
         }
         .preferredColorScheme(.dark)
@@ -202,10 +215,18 @@ struct DARTTopBar: View {
             // Right controls — scrollable so all buttons always accessible
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 4) {
-                    // Grid master toggle
+                    // Grid master toggle — also toggles axis indicators
                     DARTIconButton(icon: "number",
                         active: labVM.showGrid && (labVM.showGridXZ || labVM.showGridXY || labVM.showGridYZ)) {
-                        labVM.showGrid.toggle(); labVM.rebuildGrid()
+                        labVM.showGrid.toggle()
+                        if !labVM.showGrid { labVM.showAxisIndicators = false }
+                        else               { labVM.showAxisIndicators = true  }
+                        labVM.rebuildGrid()
+                    }
+                    // Axis indicator toggle (X/Y/Z colored arrows)
+                    DARTIconButton(icon: "arrow.up.and.down.and.arrow.left.and.right",
+                        active: labVM.showAxisIndicators) {
+                        labVM.toggleAxisIndicators()
                     }
                     // Per-plane grid toggles — always visible (not conditional)
                     DARTIconButton(icon: "square.split.bottomrightquarter",
