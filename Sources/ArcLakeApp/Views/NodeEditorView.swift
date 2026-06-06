@@ -68,9 +68,10 @@ struct NodeEditorView: View {
             footer
         }
         .background(Color(red:0.03, green:0.06, blue:0.12))   // opaque — prevents see-through
-        .onAppear { syncFromMolCanvas(); syncFromSceneAtoms() }
-        .onChange(of: labVM.molAtoms.count)       { _ in syncFromMolCanvas() }
-        .onChange(of: labVM.selectedElements.count) { _ in syncFromSceneAtoms() }
+        .onAppear { syncFromMolCanvas() }
+        .onChange(of: labVM.molAtoms.count) { _ in syncFromMolCanvas() }
+        // Note: syncFromSceneAtoms removed — NodeEditor syncs from Mol Canvas only.
+        // The info card "Mol Canvas" button → addToMolCanvas → syncs here naturally.
     }
 
     // MARK: — Header
@@ -426,29 +427,7 @@ struct NodeEditorView: View {
         }
     }
 
-    // Sync nodes from 3D scene elements — runs when selectedElements changes
-    private func syncFromSceneAtoms() {
-        let colors: [String: Color] = [
-            "alkali metal": .orange, "alkaline earth metal": .yellow,
-            "transition metal": .cyan, "post-transition metal": .green,
-            "metalloid": .purple, "nonmetal": .mint, "halogen": .pink,
-            "noble gas": .indigo, "lanthanide": .red, "actinide": .brown,
-        ]
-        for el in labVM.selectedElements {
-            let title = "\(el.elementSymbol) (\(el.elementName))"
-            if !nodes.contains(where: { $0.title == title }) {
-                let col = colors[el.category.rawValue.lowercased()] ?? Color(el.category.color)
-                let n = EditorNode(
-                    type: .element, title: title,
-                    position: CGPoint(
-                        x: 60 + CGFloat(nodes.count % 5) * 95,
-                        y: 70 + CGFloat(nodes.count / 5) * 85),
-                    color: col,
-                    ports: ["in","out"])
-                nodes.append(n)
-            }
-        }
-    }
+    // syncFromSceneAtoms removed — use Mol Canvas button in AtomInfoCard instead
 
     private func binding(for id: UUID) -> Binding<EditorNode> {
         guard let idx = nodes.firstIndex(where: {$0.id == id}) else {
@@ -550,5 +529,6 @@ struct EditorNodeView: View {
         .onTapGesture { onTap() }
     }
 }
+
 
 
