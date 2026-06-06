@@ -215,33 +215,65 @@ public struct ArcSceneView: UIViewRepresentable {
             guard let v = scnView else { return }
             // Search all hits (not just closest) so particle cloud children register
             // Use SCNHitTestOptionSearchMode: .all to catch small geometry
-            let opts: [SCNHitTestOption: Any] = [
-                .searchMode:          SCNHitTestSearchMode.all.rawValue,
-                .ignoreHiddenNodes:   false,
-                .boundingBoxOnly:     false,
-            ]
-            let hits = v.hitTest(g.location(in: v), options: opts)
-            // Walk up from each hit to find the atomZ: root
-            for hit in hits {
-                var n: SCNNode? = hit.node
-                while let cur = n {
-                    if let name = cur.name, name.hasPrefix("atomZ:"),
-                       let z  = Int(name.dropFirst(6)),
-                       let el = ElementStore.shared.elements.first(where:{ $0.id == z }) {
-                        let wp = cur.worldPosition
-                        pivot = SIMD3<Float>(wp.x, wp.y, wp.z)
-                        radius = min(radius, 8.0)
-                        Task { @MainActor in self.labVM.tappedElement = el }
-                        SCNTransaction.begin()
-                        SCNTransaction.animationDuration = 0.35
-                        SCNTransaction.animationTimingFunction = CAMediaTimingFunction(name: .easeOut)
-                        commit()
-                        SCNTransaction.commit()
-                        return
-                    }
-                    n = cur.parent
+            // Primary: hit test with bounding box only for speed + reliability
+            let loc = g.location(in: v)
+            let hitsAll = v.hitTest(loc, options: [
+                SCNHitTestOption.searchMode: SCNHitTestSearchMode.all.rawValue as NSNumber,
+                SCNHitTestOption.ignoreHiddenNodes: false as NSNumber,
+            ])
+
+            // Walk every hit upward looking for atomZ: ancestor
+            for hit in hitsAll {
+                if let el = atomAncestor(of: hit.node) {
+                    fireAtomTap(el, pivot: hit.node.worldPosition)
+                    return
                 }
             }
+
+            // Fallback: proximity search — find closest atom root within ~3 screen pts of tap
+            // This catches taps that land between sparse particles
+            let tapPt = v.unprojectPoint(SCNVector3(Float(loc.x), Float(loc.y), 0.9))
+            var closest: (ArcElement, SCNNode, Float)? = nil
+            v.scene?.rootNode.enumerateChildNodes { node, _ in
+                guard let name = node.name, name.hasPrefix("atomZ:"),
+                      let z = Int(name.dropFirst(6)),
+                      let el = ElementStore.shared.elements.first(where: { $0.id == z })
+                else { return }
+                let wp = node.worldPosition
+                let dx = wp.x - tapPt.x; let dy = wp.y - tapPt.y; let dz = wp.z - tapPt.z
+                let dist = sqrt(dx*dx + dy*dy + dz*dz)
+                if dist < 8.0 {
+                    if closest == nil || dist < closest!.2 { closest = (el, node, dist) }
+                }
+            }
+            if let (el, node, _) = closest {
+                fireAtomTap(el, pivot: node.worldPosition)
+            }
+        }
+
+        // Atom tap helpers
+        private func atomAncestor(of node: SCNNode) -> ArcElement? {
+            var n: SCNNode? = node
+            while let cur = n {
+                if let name = cur.name, name.hasPrefix("atomZ:"),
+                   let z  = Int(name.dropFirst(6)),
+                   let el = ElementStore.shared.elements.first(where: { $0.id == z }) {
+                    return el
+                }
+                n = cur.parent
+            }
+            return nil
+        }
+
+        private func fireAtomTap(_ el: ArcElement, pivot wp: SCNVector3) {
+            pivot = SIMD3<Float>(wp.x, wp.y, wp.z)
+            radius = min(radius, 8.0)
+            Task { @MainActor in self.labVM.tappedElement = el }
+            SCNTransaction.begin()
+            SCNTransaction.animationDuration = 0.35
+            SCNTransaction.animationTimingFunction = CAMediaTimingFunction(name: .easeOut)
+            commit()
+            SCNTransaction.commit()
         }
 
         // ── Place camera on sphere around pivot ───────────────────
@@ -782,4 +814,5 @@ struct AtomInfoCard: View {
         .frame(maxWidth: .infinity)
     }
 }
+
 
