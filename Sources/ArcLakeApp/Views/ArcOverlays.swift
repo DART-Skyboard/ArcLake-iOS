@@ -127,9 +127,8 @@ struct DragShell<Content: View>: View {
     var body: some View {
         content()
             .frame(width: width, height: height)
-            // No clipShape — content can scroll/extend inside without being cut.
-            // Visual rounding via overlay border + shadow.
-            .background(Color(red:0.04, green:0.07, blue:0.13))
+            // No clipShape — content flows freely, each panel has its own background.
+            // Visual rounding only from cornerRadius on content itself + overlay border.
             .cornerRadius(14)
             .overlay(RoundedRectangle(cornerRadius: 14)
                 .stroke(Color.white.opacity(0.12), lineWidth: 0.7))
