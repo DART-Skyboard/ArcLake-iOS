@@ -226,13 +226,14 @@ public struct ArcSceneView: UIViewRepresentable {
                     pivot = SIMD3<Float>(wp.x, wp.y, wp.z)
                     radius = min(radius, 8.0)
                     // Show info card overlay
+                    // Show info card — user taps Probe button inside card if they want probe
                     Task { @MainActor in self.labVM.tappedElement = el }
+                    // Fly pivot to atom smoothly
                     SCNTransaction.begin()
                     SCNTransaction.animationDuration = 0.35
                     SCNTransaction.animationTimingFunction = CAMediaTimingFunction(name: .easeOut)
                     commit()
                     SCNTransaction.commit()
-                    Task { @MainActor in self.labVM.openProbe(for: el) }
                     return
                 }
                 n = cur.parent
