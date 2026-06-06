@@ -333,44 +333,77 @@ struct BRPNWorldSceneHeader: View {
     }
 }
 
-// MARK: — Ash Canvas Drawer
-// LEATR natural tools — mirrors the web app Ash Canvas
+// MARK: — Ash Canvas Drawer v2
+// Modes: SELECT (arrow), PLACE (tool active), LINK (connect nodes)
+// BRPN sockets on right: GEO / MAR / AERO
+// Links are selectable and deletable
 struct AshCanvasDrawer: View {
     let onSendToAutumn: (String) -> Void
     @EnvironmentObject var themeVM: ArcThemeViewModel
 
-    private let tools: [(String, String)] = [
-        ("M", "M MAZE"),
-        ("P", "P PUZZLE"),
-        ("E", "E ENVELOPE"),
-        ("H", "H HAMMER"),
-        ("S", "S STICK"),
-        ("K", "K KNIFE"),
-        ("R", "R SCISSORS"),
+    // Canvas interaction mode
+    enum CanvasMode { case select, place, link }
+
+    private let tools: [(String, String, Color)] = [
+        ("M", "M MAZE",     .cyan),
+        ("P", "P PUZZLE",   .purple),
+        ("E", "E ENVELOPE", .green),
+        ("H", "H HAMMER",   .orange),
+        ("S", "S STICK",    .white),
+        ("K", "K KNIFE",    .red),
+        ("R", "R SCISSORS", .pink),
     ]
-    @State private var activeTool: String? = nil
-    @State private var nodes: [AshNode] = []
-    @State private var links: [(UUID, UUID)] = []
-    @State private var pendingLink: UUID? = nil
+
+    // BRPN buoyancy sockets — right rail
+    private let sockets: [(String, Color, String)] = [
+        ("GEO",  Color(red:0.4,green:0.8,blue:0.3),  "geo"),
+        ("MAR",  Color(red:0.2,green:0.6,blue:1.0),  "mar"),
+        ("AERO", Color(red:0.8,green:0.3,blue:1.0),  "aero"),
+    ]
 
     struct AshNode: Identifiable {
         let id = UUID()
         var position: CGPoint
         var tool: String
         var color: Color
+        var isSocket: Bool = false
     }
+
+    struct AshLink: Identifiable {
+        let id = UUID()
+        var fromId: UUID
+        var toId: UUID
+        var selected: Bool = false
+    }
+
+    @State private var mode: CanvasMode = .select
+    @State private var activeTool: String? = nil
+    @State private var nodes: [AshNode] = []
+    @State private var links: [AshLink] = []
+    @State private var linkSource: UUID? = nil   // first node tapped in link mode
+    @State private var selectedNode: UUID? = nil  // for select mode
+    @State private var selectedLink: UUID? = nil  // selected link for deletion
+    @State private var dragOffset: CGSize = .zero
+    @State private var canvasSize: CGSize = .zero
+
+    // Socket positions — fixed right rail, computed from canvas height
+    private func socketY(_ idx: Int, in size: CGSize) -> CGFloat {
+        let padding: CGFloat = 20
+        let spacing = (size.height - padding * 2) / CGFloat(sockets.count - 1)
+        return padding + CGFloat(idx) * spacing
+    }
+    private func socketX(in size: CGSize) -> CGFloat { size.width - 22 }
 
     var body: some View {
         VStack(spacing: 0) {
-            // Tool header
+            // ── Header ──────────────────────────────────────────
             HStack(spacing: 0) {
                 Text("ASH CANVAS")
                     .font(.system(size: 8, weight: .semibold, design: .monospaced))
-                    .foregroundColor(themeVM.accent.opacity(0.7))
-                    .tracking(2)
+                    .foregroundColor(themeVM.accent.opacity(0.7)).tracking(2)
                     .padding(.leading, 12)
                 Spacer()
-                Text("NATURAL TOOLS — tap to place")
+                Text(modeLabel)
                     .font(.system(size: 7, design: .monospaced))
                     .foregroundColor(.white.opacity(0.3))
                     .padding(.trailing, 12)
@@ -378,23 +411,42 @@ struct AshCanvasDrawer: View {
             .padding(.vertical, 6)
             .background(themeVM.accent.opacity(0.05))
 
-            // Tool buttons
+            // ── Mode + tool bar ──────────────────────────────────
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
-                    ForEach(tools, id: \.0) { key, label in
+                    // SELECT mode button
+                    modeButton(icon: "arrow.up.left", label: "SELECT", isActive: mode == .select) {
+                        mode = .select; activeTool = nil; linkSource = nil
+                    }
+                    // LINK mode button
+                    modeButton(icon: "link", label: "LINK", isActive: mode == .link) {
+                        mode = (mode == .link) ? .select : .link
+                        activeTool = nil; linkSource = nil
+                    }
+
+                    Rectangle().fill(Color.white.opacity(0.1)).frame(width:0.5, height:18)
+
+                    // Tool buttons — only active in PLACE mode
+                    ForEach(tools, id: \.0) { key, label, color in
                         Button {
-                            activeTool = activeTool == key ? nil : key
+                            if activeTool == key {
+                                activeTool = nil; mode = .select
+                            } else {
+                                activeTool = key; mode = .place; linkSource = nil
+                            }
                         } label: {
                             Text(label)
                                 .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                                .foregroundColor(activeTool == key ? .black : themeVM.accent)
+                                .foregroundColor(activeTool == key ? .black : color.opacity(0.9))
                                 .padding(.horizontal, 8).padding(.vertical, 4)
-                                .background(activeTool == key ? themeVM.accent : themeVM.accent.opacity(0.1))
+                                .background(activeTool == key ? color : color.opacity(0.12))
                                 .clipShape(Capsule())
                         }
                     }
-                    Spacer()
-                    Button("→ SEND TO AUTUMN") {
+
+                    Rectangle().fill(Color.white.opacity(0.1)).frame(width:0.5, height:18)
+
+                    Button("→ AUTUMN") {
                         if let tool = activeTool { onSendToAutumn(tool) }
                     }
                     .font(.system(size: 8, weight: .semibold, design: .monospaced))
@@ -404,80 +456,112 @@ struct AshCanvasDrawer: View {
                     .clipShape(Capsule())
                     .disabled(activeTool == nil)
                 }
-                .padding(.horizontal, 12).padding(.vertical, 6)
+                .padding(.horizontal, 10).padding(.vertical, 6)
             }
 
-            // Canvas area
-            ZStack {
-                Color(red:0.03,green:0.06,blue:0.12)
+            // ── Canvas ───────────────────────────────────────────
+            GeometryReader { geo in
+                ZStack {
+                    Color(red:0.03,green:0.06,blue:0.12)
 
-                // Links
-                Canvas { ctx, _ in
-                    for (a, b) in links {
-                        if let n1 = nodes.first(where:{$0.id==a}),
-                           let n2 = nodes.first(where:{$0.id==b}) {
+                    // Links
+                    Canvas { ctx, size in
+                        for link in links {
+                            guard let n1 = nodes.first(where:{$0.id==link.fromId}),
+                                  let n2 = nodes.first(where:{$0.id==link.toId}) else { continue }
                             var p = Path()
                             p.move(to: n1.position)
                             p.addLine(to: n2.position)
-                            ctx.stroke(p, with: .color(Color.cyan.opacity(0.4)),
-                                       style: StrokeStyle(lineWidth: 1, dash: [3,2]))
+                            let isSelected = link.id == selectedLink
+                            ctx.stroke(p,
+                                with: .color(isSelected ? Color.yellow : Color.cyan.opacity(0.5)),
+                                style: StrokeStyle(lineWidth: isSelected ? 2 : 1, dash: [4,2]))
                         }
                     }
-                }
 
-                // Nodes
-                ForEach(nodes) { node in
-                    Text(node.tool)
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
-                        .foregroundColor(node.color)
-                        .frame(width: 28, height: 28)
-                        .background(node.color.opacity(0.15))
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                        .overlay(RoundedRectangle(cornerRadius: 6)
-                            .stroke(pendingLink == node.id ? node.color : node.color.opacity(0.4), lineWidth: 1))
-                        .position(node.position)
-                        .onTapGesture {
-                            if let from = pendingLink, from != node.id {
-                                links.append((from, node.id))
-                                pendingLink = nil
-                            } else {
-                                pendingLink = node.id
+                    // Link hit areas (invisible, wider than visual line for easier tap)
+                    ForEach(links) { link in
+                        if let n1 = nodes.first(where:{$0.id==link.fromId}),
+                           let n2 = nodes.first(where:{$0.id==link.toId}) {
+                            LinkHitArea(from: n1.position, to: n2.position)
+                                .onTapGesture {
+                                    if mode == .select || mode == .link {
+                                        selectedLink = (selectedLink == link.id) ? nil : link.id
+                                        selectedNode = nil
+                                    }
+                                }
+                        }
+                    }
+
+                    // BRPN socket nodes — fixed right rail
+                    ForEach(Array(sockets.enumerated()), id: \.offset) { idx, socket in
+                        let sx = socketX(in: geo.size)
+                        let sy = socketY(idx, in: geo.size)
+                        socketView(label: socket.0, color: socket.1, socketKey: socket.2,
+                                   pos: CGPoint(x: sx, y: sy), geo: geo)
+                    }
+
+                    // Tool nodes — draggable in select mode
+                    ForEach(nodes.filter { !$0.isSocket }) { node in
+                        nodeView(node: node)
+                    }
+
+                    // Background tap — place node or deselect
+                    Color.clear.contentShape(Rectangle())
+                        .onTapGesture { loc in
+                            switch mode {
+                            case .place:
+                                guard let tool = activeTool else { return }
+                                let col = tools.first(where:{$0.0==tool})?.2 ?? .white
+                                nodes.append(AshNode(position: loc, tool: tool, color: col))
+                            case .select:
+                                selectedNode = nil; selectedLink = nil
+                            case .link:
+                                break   // link mode only acts on node/socket taps
                             }
                         }
                 }
-
-                // Tap to place
-                Color.clear.contentShape(Rectangle())
-                    .onTapGesture { loc in
-                        guard let tool = activeTool else { return }
-                        let colors: [String: Color] = ["M":.cyan,"P":.purple,"E":.green,
-                                                        "H":.orange,"S":.white,"K":.red,"R":.pink]
-                        nodes.append(AshNode(position: loc, tool: tool,
-                                             color: colors[tool] ?? .white))
-                    }
+                .onAppear { canvasSize = geo.size }
+                .onChange(of: geo.size) { canvasSize = $0 }
             }
-            .frame(height: 110)
-            .clipShape(RoundedRectangle(cornerRadius: 0))
+            .frame(height: 145)
 
-            // Footer actions
-            HStack(spacing: 12) {
-                Button("LINK") { /* enable link mode — handled via pendingLink */ }
-                    .font(.system(size: 8, weight: .bold, design: .monospaced))
-                    .foregroundColor(pendingLink != nil ? .black : themeVM.accent)
-                    .padding(.horizontal, 8).padding(.vertical, 3)
-                    .background(pendingLink != nil ? themeVM.accent : themeVM.accent.opacity(0.1))
-                    .clipShape(Capsule())
-                Button("DEL") { if !nodes.isEmpty { nodes.removeLast() } }
-                    .font(.system(size: 8, weight: .bold, design: .monospaced))
-                    .foregroundColor(.red.opacity(0.7))
-                    .padding(.horizontal, 8).padding(.vertical, 3)
-                    .background(Color.red.opacity(0.1)).clipShape(Capsule())
-                Button("RESET") { nodes.removeAll(); links.removeAll(); pendingLink = nil }
-                    .font(.system(size: 8, weight: .bold, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.4))
-                    .padding(.horizontal, 8).padding(.vertical, 3)
-                    .background(Color.white.opacity(0.05)).clipShape(Capsule())
+            // ── Footer ───────────────────────────────────────────
+            HStack(spacing: 8) {
+                // DEL — removes selected node or selected link
+                Button("DEL") {
+                    if let lid = selectedLink {
+                        links.removeAll { $0.id == lid }
+                        selectedLink = nil
+                    } else if let nid = selectedNode {
+                        nodes.removeAll { $0.id == nid }
+                        links.removeAll { $0.fromId == nid || $0.toId == nid }
+                        selectedNode = nil
+                    }
+                }
+                .font(.system(size: 8, weight: .bold, design: .monospaced))
+                .foregroundColor((selectedLink != nil || selectedNode != nil) ? .white : .red.opacity(0.4))
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .background((selectedLink != nil || selectedNode != nil) ? Color.red.opacity(0.7) : Color.red.opacity(0.08))
+                .clipShape(Capsule())
+
+                Button("RESET") {
+                    nodes.removeAll(); links.removeAll()
+                    linkSource = nil; selectedNode = nil; selectedLink = nil
+                    mode = .select; activeTool = nil
+                }
+                .font(.system(size: 8, weight: .bold, design: .monospaced))
+                .foregroundColor(.white.opacity(0.4))
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .background(Color.white.opacity(0.05)).clipShape(Capsule())
+
                 Spacer()
+
+                // Status hint
+                Text(statusHint)
+                    .font(.system(size: 7, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.25))
+                    .padding(.trailing, 8)
             }
             .padding(.horizontal, 12).padding(.vertical, 5)
             .background(Color.white.opacity(0.03))
@@ -487,6 +571,139 @@ struct AshCanvasDrawer: View {
         .background(Color(red:0.03,green:0.06,blue:0.12))
         .overlay(Rectangle().frame(height:0.5)
             .foregroundColor(themeVM.accent.opacity(0.2)), alignment:.bottom)
+    }
+
+    // MARK: — Sub-views
+
+    @ViewBuilder
+    private func nodeView(node: AshNode) -> some View {
+        let isSelected = selectedNode == node.id
+        let isPendingLink = linkSource == node.id
+        Text(node.tool)
+            .font(.system(size: 10, weight: .bold, design: .monospaced))
+            .foregroundColor(node.color)
+            .frame(width: 30, height: 30)
+            .background(node.color.opacity(isSelected ? 0.35 : 0.15))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay(RoundedRectangle(cornerRadius: 6)
+                .stroke(isPendingLink ? Color.yellow
+                        : isSelected  ? node.color
+                        : node.color.opacity(0.4),
+                        lineWidth: (isPendingLink || isSelected) ? 2 : 1))
+            .shadow(color: isPendingLink ? .yellow.opacity(0.5) : .clear, radius: 6)
+            .position(node.position)
+            .gesture(
+                DragGesture(minimumDistance: 4)
+                    .onChanged { val in
+                        if mode == .select {
+                            if let idx = nodes.firstIndex(where:{$0.id==node.id}) {
+                                nodes[idx].position = val.location
+                            }
+                        }
+                    }
+            )
+            .onTapGesture {
+                handleNodeTap(node.id)
+            }
+    }
+
+    @ViewBuilder
+    private func socketView(label: String, color: Color, socketKey: String,
+                            pos: CGPoint, geo: GeometryProxy) -> some View {
+        let isSource = linkSource != nil && nodes.first(where:{$0.id==linkSource!})?.isSocket == false
+        let isPending = linkSource == nodes.first(where:{$0.isSocket && $0.tool==socketKey})?.id
+        VStack(spacing: 2) {
+            Circle()
+                .fill(color.opacity(isPending ? 0.9 : 0.2))
+                .frame(width: 12, height: 12)
+                .overlay(Circle().stroke(color, lineWidth: isPending ? 2 : 1))
+            Text(label)
+                .font(.system(size: 6, weight: .bold, design: .monospaced))
+                .foregroundColor(color.opacity(0.8))
+        }
+        .position(pos)
+        .onTapGesture {
+            // Find or create the socket node at this position
+            if let sockIdx = nodes.firstIndex(where:{$0.isSocket && $0.tool==socketKey}) {
+                handleNodeTap(nodes[sockIdx].id)
+            } else {
+                // Create socket node on first tap
+                let sockNode = AshNode(position: pos, tool: socketKey, color: color, isSocket: true)
+                nodes.append(sockNode)
+                handleNodeTap(sockNode.id)
+            }
+        }
+    }
+
+    private func handleNodeTap(_ nodeId: UUID) {
+        switch mode {
+        case .link:
+            if let src = linkSource {
+                if src != nodeId {
+                    // Complete the link
+                    links.append(AshLink(fromId: src, toId: nodeId))
+                    linkSource = nil
+                } else {
+                    linkSource = nil  // tap same node = cancel
+                }
+            } else {
+                linkSource = nodeId
+            }
+        case .select:
+            selectedNode = (selectedNode == nodeId) ? nil : nodeId
+            selectedLink = nil
+        case .place:
+            break  // in place mode, tapping nodes does nothing
+        }
+    }
+
+    @ViewBuilder
+    private func modeButton(icon: String, label: String, isActive: Bool,
+                            action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: icon).font(.system(size: 9))
+                Text(label).font(.system(size: 8, weight: .semibold, design: .monospaced))
+            }
+            .foregroundColor(isActive ? .black : .white.opacity(0.6))
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            .background(isActive ? Color.white.opacity(0.85) : Color.white.opacity(0.08))
+            .clipShape(Capsule())
+        }
+    }
+
+    private var modeLabel: String {
+        switch mode {
+        case .select: return "SELECT — tap node to select/drag"
+        case .link:   return "LINK — tap two nodes to connect"
+        case .place:  return "PLACE — tap canvas to add \(activeTool ?? "")"
+        }
+    }
+
+    private var statusHint: String {
+        if let lid = selectedLink { let _ = lid; return "LINK SELECTED — DEL to remove" }
+        if let nid = selectedNode { let _ = nid; return "NODE SELECTED — DEL or drag" }
+        if let src = linkSource    { let _ = src; return "TAP TARGET NODE TO LINK" }
+        return ""
+    }
+}
+
+// MARK: — LinkHitArea
+// Invisible wide hit target over a link line for selection
+struct LinkHitArea: View {
+    let from: CGPoint
+    let to: CGPoint
+    var body: some View {
+        Canvas { ctx, _ in
+            var p = Path()
+            p.move(to: from)
+            p.addLine(to: to)
+            ctx.stroke(p, with: .color(Color.clear),
+                       style: StrokeStyle(lineWidth: 14))
+        }
+        .contentShape(Path { p in
+            p.move(to: from); p.addLine(to: to)
+        }.strokedPath(.init(lineWidth: 14)))
     }
 }
 
@@ -528,3 +745,4 @@ struct AutumnTyping: View {
         .onReceive(timer) { _ in phase=(phase+1)%3 }
     }
 }
+
