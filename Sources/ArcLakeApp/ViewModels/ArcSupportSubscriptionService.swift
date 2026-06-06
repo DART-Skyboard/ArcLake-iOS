@@ -12,7 +12,7 @@ public final class ArcSupportSubscriptionService: ObservableObject {
     public static let shared = ArcSupportSubscriptionService()
 
     // Set this to the correct product ID for each app
-    public var productID: String = "DART-Meadow-LLC.Cotharticren.support.monthly"
+    public var productID: String = "ALM"  // Matches App Store Connect Product ID
 
     @Published public var product: Product?
     @Published public var isSubscribed = false
@@ -186,7 +186,7 @@ public struct ArcSupportSheet: View {
                                     .multilineTextAlignment(.center)
                             }
                         } else {
-                            Text("$4.99 / month")
+                            Text("$2.99 / month")
                                 .font(.system(size:36, weight:.bold, design:.monospaced))
                                 .foregroundColor(accentColor)
                         }
@@ -304,3 +304,4 @@ public struct ArcSupportSheet: View {
         }
     }
 }
+
