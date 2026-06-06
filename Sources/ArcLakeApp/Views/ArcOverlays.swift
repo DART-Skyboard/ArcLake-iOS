@@ -89,6 +89,25 @@ struct ArcOverlays: View {
                 .transition(.opacity.combined(with: .scale(scale: 0.97)))
                 .onAppear { recordOpen("mantis") }
             }
+
+            // AtomInfoCard — same layer as all panels, proper z-ordering, no clipping
+            if let el = labVM.tappedElement {
+                DragShell(geoSize: geoSize,
+                          width: min(geoSize.width - 20, 340),
+                          height: 310) {
+                    ScrollView(showsIndicators: false) {
+                        AtomInfoCard(element: el)
+                    }
+                }
+                .id("atomcard-\(el.id)-\(openKey("atomcard"))")
+                .zIndex(Double(zOrder["atomcard"] ?? 999))
+                .onTapGesture { bringToFront("atomcard") }
+                .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                .onAppear { recordOpen("atomcard") }
+                .onChange(of: labVM.tappedElement?.id) { _ in
+                    if labVM.tappedElement != nil { recordOpen("atomcard") }
+                }
+            }
         }
     }
 }
@@ -129,4 +148,5 @@ struct DragShell<Content: View>: View {
             )
     }
 }
+
 
