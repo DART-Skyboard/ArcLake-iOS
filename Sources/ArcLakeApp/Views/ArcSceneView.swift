@@ -139,13 +139,16 @@ public struct ArcSceneView: UIViewRepresentable {
             }
             if g.state == .changed {
                 let cur = g.translation(in: v)
-                // Per-frame delta — no accumulation lag, no damping
                 let dx = Float(cur.x - lastOrbitTranslation.x)
                 let dy = Float(cur.y - lastOrbitTranslation.y)
                 lastOrbitTranslation = cur
 
-                theta -= dx * 0.006
-                phi    = max(0.02, min(.pi - 0.02, phi - dy * 0.006))
+                // Standard trackball: finger direction = camera orbit direction
+                // Drag right → camera moves right (scene rotates left) = theta increases
+                // Drag down  → camera moves down  (scene rotates up)   = phi increases
+                // No inversion, no damping — 1:1 with finger
+                theta += dx * 0.006
+                phi    = max(0.02, min(.pi - 0.02, phi + dy * 0.006))
                 commit()
             }
         }
@@ -223,8 +226,9 @@ public struct ArcSceneView: UIViewRepresentable {
                     // Fly pivot to atom
                     let wp = cur.worldPosition
                     pivot = SIMD3<Float>(wp.x, wp.y, wp.z)
-                    // Also pull camera closer so atom fills view nicely
                     radius = min(radius, 8.0)
+                    // Show info card overlay
+                    Task { @MainActor in self.labVM.tappedElement = el }
                     SCNTransaction.begin()
                     SCNTransaction.animationDuration = 0.35
                     SCNTransaction.animationTimingFunction = CAMediaTimingFunction(name: .easeOut)
@@ -645,3 +649,133 @@ extension SIMD4 where Scalar == Float {
 }
 
 
+
+
+// MARK: — AtomInfoCard
+// Shown when user taps an atom in the 3D scene.
+// Displays element details + "Add to Mol Canvas" button.
+struct AtomInfoCard: View {
+    let element: ArcElement
+    @EnvironmentObject var labVM: ArcLabViewModel
+    @EnvironmentObject var themeVM: ArcThemeViewModel
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header strip
+            HStack(spacing: 10) {
+                // Element badge
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color(element.category.color).opacity(0.25))
+                        .frame(width: 52, height: 52)
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color(element.category.color), lineWidth: 1.2)
+                        .frame(width: 52, height: 52)
+                    VStack(spacing: 1) {
+                        Text(element.elementSymbol)
+                            .font(.system(size: 18, weight: .bold, design: .monospaced))
+                            .foregroundColor(.white)
+                        Text("\(element.protons)")
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.6))
+                    }
+                }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(element.elementName)
+                        .font(.custom("Orbitron-Bold", size: 13))
+                        .foregroundColor(.white)
+                    Text(element.category.rawValue)
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundColor(Color(element.category.color))
+                    Text("Z=\(element.protons)  n=\(element.neutrons)  mass=\(String(format:"%.3f", element.atomicMass)) u")
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.5))
+                }
+                Spacer()
+                Button { labVM.tappedElement = nil } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(.white.opacity(0.4))
+                        .frame(width: 24, height: 24)
+                        .background(Color.white.opacity(0.07))
+                        .clipShape(RoundedRectangle(cornerRadius: 5))
+                }
+            }
+            .padding(12)
+
+            Divider().background(themeVM.accent.opacity(0.15))
+
+            // Stats row
+            HStack(spacing: 0) {
+                infoCell("ARC EDGE", String(format: "%.3f pm", element.arcEdgeCircumference))
+                Divider().frame(height: 32).background(Color.white.opacity(0.1))
+                infoCell("NEUTRONS", "\(element.neutrons)")
+                Divider().frame(height: 32).background(Color.white.opacity(0.1))
+                infoCell("ELECTRONS", "\(element.protons)")
+            }
+            .padding(.vertical, 8)
+
+            Divider().background(themeVM.accent.opacity(0.15))
+
+            // Action buttons
+            HStack(spacing: 8) {
+                // Add to Mol Canvas
+                Button {
+                    labVM.addToMolCanvas(element)
+                    labVM.tappedElement = nil
+                } label: {
+                    Label("Mol Canvas", systemImage: "scribble")
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .foregroundColor(.black)
+                        .padding(.horizontal, 10).padding(.vertical, 7)
+                        .background(Color.purple)
+                        .clipShape(Capsule())
+                }
+
+                // Open probe chart
+                Button {
+                    labVM.openProbe(for: element)
+                    labVM.tappedElement = nil
+                } label: {
+                    Label("Probe", systemImage: "chart.bar.xaxis")
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .foregroundColor(themeVM.accent)
+                        .padding(.horizontal, 10).padding(.vertical, 7)
+                        .background(themeVM.accent.opacity(0.12))
+                        .clipShape(Capsule())
+                }
+
+                Spacer()
+
+                // Remove from scene
+                Button {
+                    labVM.removeElement(element)
+                    labVM.tappedElement = nil
+                } label: {
+                    Image(systemName: "minus.circle.fill")
+                        .font(.system(size: 18))
+                        .foregroundColor(.red.opacity(0.7))
+                }
+            }
+            .padding(.horizontal, 12).padding(.vertical, 8)
+        }
+        .background(Color(red:0.04, green:0.07, blue:0.14))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14)
+            .stroke(Color(element.category.color).opacity(0.4), lineWidth: 1))
+        .shadow(color: .black.opacity(0.5), radius: 20)
+        .padding(.horizontal, 16)
+    }
+
+    private func infoCell(_ label: String, _ value: String) -> some View {
+        VStack(spacing: 2) {
+            Text(label)
+                .font(.system(size: 7, design: .monospaced))
+                .foregroundColor(.white.opacity(0.35))
+            Text(value)
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .foregroundColor(themeVM.accent)
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
