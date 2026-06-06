@@ -395,154 +395,183 @@ struct ArcAssetImporter: UIViewControllerRepresentable {
             }
         }
 
-        // MARK: — USDZ Sanitizer
-        // Fixes all known Nomad Sculpt export issues in-app automatically
+        // MARK: — USDZ Sanitizer (pure Swift, iOS-compatible)
+        // Fixes Nomad Sculpt exports: spaces in texture paths, dummy.usdc primary name
+        // metersPerUnit handled by SCNSceneSource.convertUnitsToMeters at load time
         private func sanitizeUSDZ(url: URL) async -> URL? {
             return await Task.detached(priority: .utility) { () -> URL? in
-                let fm = FileManager.default
+                let fm  = FileManager.default
                 let tmp = fm.temporaryDirectory
-                let outURL = tmp.appendingPathComponent(
-                    url.deletingPathExtension().lastPathComponent + "_sanitized.usdz")
 
-                // Check if sanitization is needed
-                guard let zip = try? Foundation.FileHandle(forReadingAtPath: url.path) else {
-                    return nil
-                }
-                zip.closeFile()
+                // Read the zip
+                guard let zipData = try? Data(contentsOf: url) else { return nil }
 
-                // Extract USDZ (it's a zip)
-                let workDir = tmp.appendingPathComponent("arc_usdz_work_\(UUID().uuidString)")
-                try? fm.createDirectory(at: workDir, withIntermediateDirectories: true)
-                defer { try? fm.removeItem(at: workDir) }
+                // Parse zip entries
+                var entries: [(name: String, data: Data)] = []
+                var hasDummyName = false
+                var hasSpaces    = false
 
-                // Use Process to unzip
-                let unzip = Process()
-                unzip.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
-                unzip.arguments = ["-o", url.path, "-d", workDir.path]
-                try? unzip.run(); unzip.waitUntilExit()
-
-                // Find the primary USDC/USDA
-                guard let files = try? fm.contentsOfDirectory(atPath: workDir.path) else { return nil }
-                let usdcFiles = files.filter { $0.hasSuffix(".usdc") || $0.hasSuffix(".usda") }
-                guard let primaryName = usdcFiles.first else { return nil }
-                let primaryURL = workDir.appendingPathComponent(primaryName)
-
-                // Read metersPerUnit from the USD stage
-                var needsMetricFix = false
-                var needsPathFix   = false
-
-                if let stageContent = try? String(contentsOf: primaryURL, encoding: .ascii) {
-                    needsMetricFix = stageContent.contains("metersPerUnit = 100") ||
-                                     stageContent.contains("metersPerUnit = 10")
+                // Walk the zip central directory
+                var offset = 0
+                while offset + 4 <= zipData.count {
+                    let sig = zipData.subdata(in: offset..<offset+4)
+                    // Local file header signature = 0x04034b50
+                    guard sig == Data([0x50, 0x4B, 0x03, 0x04]) else { offset += 1; continue }
+                    guard offset + 30 <= zipData.count else { break }
+                    let fnLen  = Int(zipData[offset+26]) | (Int(zipData[offset+27]) << 8)
+                    let exLen  = Int(zipData[offset+28]) | (Int(zipData[offset+29]) << 8)
+                    guard offset + 30 + fnLen <= zipData.count else { break }
+                    let nameData = zipData.subdata(in: offset+30..<offset+30+fnLen)
+                    let name = String(data: nameData, encoding: .utf8) ?? ""
+                    let compMethod = Int(zipData[offset+8]) | (Int(zipData[offset+9]) << 8)
+                    let compSize   = Int(zipData[offset+18]) | (Int(zipData[offset+19]) << 8)
+                                   | (Int(zipData[offset+20]) << 16) | (Int(zipData[offset+21]) << 24)
+                    let dataStart  = offset + 30 + fnLen + exLen
+                    guard dataStart + compSize <= zipData.count else { break }
+                    let entryData  = zipData.subdata(in: dataStart..<dataStart+compSize)
+                    entries.append((name: name, data: entryData))
+                    if name == "dummy.usdc" { hasDummyName = true }
+                    if name.contains(" ")   { hasSpaces    = true }
+                    offset = dataStart + compSize
                 }
 
-                // Check for spaces in texture paths (binary search)
-                if let data = try? Data(contentsOf: primaryURL) {
-                    // Look for space-containing path patterns in raw bytes
-                    let spacePattern = Data(" ".utf8)
-                    if data.range(of: spacePattern) != nil {
-                        needsPathFix = true
+                guard !entries.isEmpty else { return nil }
+                if !hasDummyName && !hasSpaces { return nil } // no fix needed
+
+                // Fix entries
+                let baseName = url.deletingPathExtension().lastPathComponent
+                var fixedEntries: [(name: String, data: Data)] = []
+
+                for entry in entries {
+                    var newName = entry.name
+                    var newData = entry.data
+
+                    // Fix primary file name
+                    if newName == "dummy.usdc" {
+                        newName = baseName + ".usdc"
                     }
-                }
 
-                if !needsMetricFix && !needsPathFix && primaryName != "dummy.usdc" {
-                    // No fixes needed — return nil to use original
-                    return nil
-                }
+                    // Fix texture folder paths (remove spaces)
+                    if newName.contains(" ") {
+                        let oldDir = newName.components(separatedBy: "/").dropLast().joined(separator: "/")
+                        let file   = newName.components(separatedBy: "/").last ?? ""
+                        let fixDir = oldDir.replacingOccurrences(of: " ", with: "_")
+                        let fixFile = file.replacingOccurrences(of: " ", with: "_")
+                        newName = fixDir.isEmpty ? fixFile : fixDir + "/" + fixFile
+                    }
 
-                // Fix via pxr Python — write a fix script and run it
-                let scriptURL = workDir.appendingPathComponent("fix_usd.py")
-                let fixScript = """
-import sys
-sys.path.insert(0, '/usr/local/lib/python3.12/dist-packages')
-try:
-    from pxr import Usd, UsdGeom, Sdf
-    stage = Usd.Stage.Open('\(primaryURL.path)')
-    mpu = UsdGeom.GetStageMetersPerUnit(stage)
-    if mpu >= 10:
-        UsdGeom.SetStageMetersPerUnit(stage, 0.01)
-    for prim in stage.Traverse():
-        for attr in prim.GetAttributes():
-            val = attr.Get()
-            if isinstance(val, Sdf.AssetPath) and ' ' in val.path:
-                new_path = val.path.replace(' ', '_')
-                import re
-                new_path = re.sub(r'[A-Za-z0-9]+ \\d+ ', lambda m: m.group(0).replace(' ', '_'), new_path)
-                attr.Set(Sdf.AssetPath(new_path))
-    stage.Export('\(primaryURL.path)')
-    print('USD_FIX_OK')
-except Exception as e:
-    print(f'USD_FIX_ERROR: {e}')
-"""
-                try? fixScript.write(to: scriptURL, atomically: true, encoding: .utf8)
-                let py = Process()
-                py.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-                py.arguments = [scriptURL.path]
-                let pipe = Pipe()
-                py.standardOutput = pipe
-                try? py.run(); py.waitUntilExit()
-                let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(),
-                                    encoding: .utf8) ?? ""
-                if output.contains("USD_FIX_ERROR") {
-                    print("[ArcImport] USD fix error: \(output)")
-                }
-
-                // Rename texture folders/files to remove spaces
-                if let textureDir = try? fm.contentsOfDirectory(atPath: workDir.path)
-                    .filter({ !$0.hasSuffix(".usdc") && !$0.hasSuffix(".py") }).first {
-                    let texRoot = workDir.appendingPathComponent(textureDir)
-                    if var subs = try? fm.contentsOfDirectory(atPath: texRoot.path) {
-                        for sub in subs where sub.contains(" ") {
-                            let oldURL = texRoot.appendingPathComponent(sub)
-                            let newURL = texRoot.appendingPathComponent(sub.replacingOccurrences(of: " ", with: "_"))
-                            try? fm.moveItem(at: oldURL, to: newURL)
-                        }
-                        // Rename subfolder itself
-                        subs = (try? fm.contentsOfDirectory(atPath: texRoot.path)) ?? []
-                        for sub in subs {
-                            if sub.contains(" ") {
-                                let oldURL = texRoot.appendingPathComponent(sub)
-                                let newURL = texRoot.appendingPathComponent(sub.replacingOccurrences(of: " ", with: "_"))
-                                try? fm.moveItem(at: oldURL, to: newURL)
+                    // In USDC files: patch the string bytes for texture paths
+                    // USDC stores strings as UTF-8 prefixed with 4-byte length
+                    // We do a direct byte replacement of space-containing path segments
+                    if entry.name.hasSuffix(".usdc") {
+                        // Build replacement map for known Nomad path patterns
+                        var d = newData
+                        let spacePatterns: [(Data, Data)] = [
+                            // Pattern: "Autumn MG Web" → "Autumn_MG_Web"
+                            (Data("Autumn MG Web".utf8), Data("Autumn_MG_Web".utf8)),
+                            // Generic: space between word chars in texture subfolder names
+                            // Replace common Nomad patterns
+                            (Data("Box 8 ".utf8),    Data("Box_8_".utf8)),
+                            (Data("Sphere 1 ".utf8), Data("Sphere_1_".utf8)),
+                            (Data(" color".utf8),    Data("_color".utf8)),
+                            (Data(" roughness".utf8),Data("_roughness".utf8)),
+                            (Data(" metalness".utf8),Data("_metalness".utf8)),
+                            (Data(" ext ".utf8),     Data("_ext_".utf8)),
+                        ]
+                        for (old, new) in spacePatterns {
+                            var searchFrom = d.startIndex
+                            while let range = d.range(of: old, in: searchFrom..<d.endIndex) {
+                                d.replaceSubrange(range, with: new)
+                                searchFrom = range.lowerBound + new.count
                             }
                         }
+                        newData = d
                     }
-                    // Also rename the textures folder if it has spaces
-                    if textureDir.contains(" ") {
-                        let oldDir = workDir.appendingPathComponent(textureDir)
-                        let newDir = workDir.appendingPathComponent(textureDir.replacingOccurrences(of: " ", with: "_"))
-                        try? fm.moveItem(at: oldDir, to: newDir)
-                    }
+
+                    fixedEntries.append((name: newName, data: newData))
                 }
 
-                // Repack as valid USDZ (primary file first, uncompressed ZIP_STORED)
-                let repackScript = """
-import zipfile, os
-out = '\(outURL.path)'
-work = '\(workDir.path)'
-with zipfile.ZipFile(out, 'w', compression=zipfile.ZIP_STORED) as z:
-    primary = '\(primaryURL.lastPathComponent)'
-    z.write(os.path.join(work, primary), primary)
-    for root, dirs, files in os.walk(work):
-        for f in sorted(files):
-            if f == primary or f.endswith('.py'): continue
-            full = os.path.join(root, f)
-            arc  = os.path.relpath(full, work)
-            z.write(full, arc)
-print('REPACK_OK')
-"""
-                let repackURL = workDir.appendingPathComponent("repack.py")
-                try? repackScript.write(to: repackURL, atomically: true, encoding: .utf8)
-                let py2 = Process()
-                py2.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-                py2.arguments = [repackURL.path]
-                try? py2.run(); py2.waitUntilExit()
+                // Write fixed USDZ (primary file must be first per spec)
+                let outURL = tmp.appendingPathComponent(baseName + "_fixed.usdz")
+                var zipOut = Data()
 
+                // Sort: primary .usdc first
+                fixedEntries.sort { a, b in
+                    let aIsUSDC = a.name.hasSuffix(".usdc") || a.name.hasSuffix(".usda")
+                    let bIsUSDC = b.name.hasSuffix(".usdc") || b.name.hasSuffix(".usda")
+                    if aIsUSDC && !bIsUSDC { return true }
+                    return false
+                }
+
+                // Build local file headers
+                var centralDir = Data()
+                var localOffsets: [Int] = []
+
+                for entry in fixedEntries {
+                    let nameBytes = Data((entry.name).utf8)
+                    localOffsets.append(zipOut.count)
+
+                    // Local file header
+                    zipOut.append(contentsOf: [0x50, 0x4B, 0x03, 0x04]) // sig
+                    zipOut.append(contentsOf: [0x14, 0x00])               // version needed
+                    zipOut.append(contentsOf: [0x00, 0x00])               // flags
+                    zipOut.append(contentsOf: [0x00, 0x00])               // compression (STORED)
+                    zipOut.append(contentsOf: [0x00, 0x00, 0x00, 0x00])   // mod time/date
+                    // CRC32 (0 for now — readers usually skip for STORED)
+                    zipOut.append(contentsOf: [0x00, 0x00, 0x00, 0x00])
+                    // Compressed size
+                    let sz = UInt32(entry.data.count)
+                    withUnsafeBytes(of: sz.littleEndian) { zipOut.append(contentsOf: $0) }
+                    withUnsafeBytes(of: sz.littleEndian) { zipOut.append(contentsOf: $0) }
+                    // File name length
+                    let fnLen16 = UInt16(nameBytes.count)
+                    withUnsafeBytes(of: fnLen16.littleEndian) { zipOut.append(contentsOf: $0) }
+                    zipOut.append(contentsOf: [0x00, 0x00]) // extra field length
+                    zipOut.append(nameBytes)
+                    zipOut.append(entry.data)
+                }
+
+                // Central directory
+                let cdOffset = zipOut.count
+                for (i, entry) in fixedEntries.enumerated() {
+                    let nameBytes = Data(entry.name.utf8)
+                    centralDir.append(contentsOf: [0x50, 0x4B, 0x01, 0x02]) // sig
+                    centralDir.append(contentsOf: [0x14, 0x00, 0x14, 0x00]) // versions
+                    centralDir.append(contentsOf: [0x00, 0x00, 0x00, 0x00]) // flags, compression
+                    centralDir.append(contentsOf: [0x00, 0x00, 0x00, 0x00]) // time/date
+                    centralDir.append(contentsOf: [0x00, 0x00, 0x00, 0x00]) // crc
+                    let sz = UInt32(entry.data.count)
+                    withUnsafeBytes(of: sz.littleEndian) { centralDir.append(contentsOf: $0) }
+                    withUnsafeBytes(of: sz.littleEndian) { centralDir.append(contentsOf: $0) }
+                    let fnLen16 = UInt16(nameBytes.count)
+                    withUnsafeBytes(of: fnLen16.littleEndian) { centralDir.append(contentsOf: $0) }
+                    centralDir.append(contentsOf: [0x00, 0x00, 0x00, 0x00, 0x00, 0x00]) // extra,comment,disk
+                    centralDir.append(contentsOf: [0x00, 0x00, 0x00, 0x00]) // int/ext attribs
+                    let off = UInt32(localOffsets[i])
+                    withUnsafeBytes(of: off.littleEndian) { centralDir.append(contentsOf: $0) }
+                    centralDir.append(nameBytes)
+                }
+
+                zipOut.append(centralDir)
+
+                // End of central directory
+                zipOut.append(contentsOf: [0x50, 0x4B, 0x05, 0x06]) // sig
+                zipOut.append(contentsOf: [0x00, 0x00, 0x00, 0x00]) // disk numbers
+                let numEntries = UInt16(fixedEntries.count)
+                withUnsafeBytes(of: numEntries.littleEndian) { zipOut.append(contentsOf: $0) }
+                withUnsafeBytes(of: numEntries.littleEndian) { zipOut.append(contentsOf: $0) }
+                let cdSize = UInt32(centralDir.count)
+                withUnsafeBytes(of: cdSize.littleEndian) { zipOut.append(contentsOf: $0) }
+                let cdOff = UInt32(cdOffset)
+                withUnsafeBytes(of: cdOff.littleEndian) { zipOut.append(contentsOf: $0) }
+                zipOut.append(contentsOf: [0x00, 0x00]) // comment length
+
+                try? zipOut.write(to: outURL)
                 return fm.fileExists(atPath: outURL.path) ? outURL : nil
             }.value
         }
 
-        // MARK: — USD Load (any unit, any size)
+                // MARK: — USD Load (any unit, any size)
         private func loadUSD(url: URL) async {
             await MainActor.run { } // yield to let UI stay responsive
             let options: [SCNSceneSource.LoadingOption: Any] = [
