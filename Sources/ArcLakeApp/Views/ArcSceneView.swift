@@ -130,14 +130,22 @@ public struct ArcSceneView: UIViewRepresentable {
 
         // ── 1-finger: ORBIT ──────────────────────────────────────
         // Tumbles camera around pivot — standard 3D viewport feel
+        private var lastOrbitTranslation = CGPoint.zero
+
         @objc func handleOrbit(_ g: UIPanGestureRecognizer) {
             guard let v = scnView else { return }
-            if g.state == .began { θ0 = theta; φ0 = phi }
+            if g.state == .began {
+                lastOrbitTranslation = .zero
+            }
             if g.state == .changed {
-                let d = g.translation(in: v)
-                // Sensitivity tuned to Nomad Sculpt feel
-                theta = θ0 - Float(d.x) * 0.006
-                phi   = max(0.02, min(.pi - 0.02, φ0 - Float(d.y) * 0.006))
+                let cur = g.translation(in: v)
+                // Per-frame delta — no accumulation lag, no damping
+                let dx = Float(cur.x - lastOrbitTranslation.x)
+                let dy = Float(cur.y - lastOrbitTranslation.y)
+                lastOrbitTranslation = cur
+
+                theta -= dx * 0.006
+                phi    = max(0.02, min(.pi - 0.02, phi - dy * 0.006))
                 commit()
             }
         }
@@ -145,23 +153,35 @@ public struct ArcSceneView: UIViewRepresentable {
         // ── 2-finger: PAN (truck/pedestal) ───────────────────────
         // Physically moves camera + pivot through world space.
         // Speed proportional to distance so close/far feel consistent.
+        // Last translation snapshot — lets us compute per-frame delta (no damping)
+        private var lastPanTranslation = CGPoint.zero
+
         @objc func handlePan(_ g: UIPanGestureRecognizer) {
             guard let v = scnView else { return }
-            if g.state == .began { pivot0 = pivot }
+            if g.state == .began {
+                lastPanTranslation = .zero
+            }
             if g.state == .changed {
-                let d = g.translation(in: v)
+                let cur = g.translation(in: v)
+                // Delta since last frame — 1:1 with finger, zero damping
+                let dx = Float(cur.x - lastPanTranslation.x)
+                let dy = Float(cur.y - lastPanTranslation.y)
+                lastPanTranslation = cur
+
                 let speed = radius * 0.0014
 
-                // Camera's local right and up vectors at current orientation
+                // Camera local axes
                 let right = SIMD3<Float>( cos(theta),  0, -sin(theta))
                 let fwd   = SIMD3<Float>(-sin(theta) * sin(phi),
                                           cos(phi),
                                           -cos(theta) * sin(phi))
-                let up    = cross(fwd, right)  // true camera-up
+                let up    = cross(fwd, right)
 
-                pivot = pivot0
-                    - right * Float(d.x) * speed
-                    + up    * Float(d.y) * speed
+                // X: right/left same as before
+                // Y: INVERTED — drag up (negative dy) → camera moves down (scene appears to move up)
+                pivot = pivot
+                    - right * dx * speed
+                    - up    * dy * speed   // note: minus dy = inverted vertical
                 commit()
             }
         }
