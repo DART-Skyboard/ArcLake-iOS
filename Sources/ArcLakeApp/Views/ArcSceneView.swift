@@ -349,14 +349,42 @@ struct ArcAssetImporter: UIViewControllerRepresentable {
         }
 
         private func loadDirect(url: URL) {
+            // convertUnitsToMeters + checkConsistency handles metersPerUnit=100 files
+            // from apps like Nomad Sculpt that export in centimeters
+            let options: [SCNSceneSource.LoadingOption: Any] = [
+                .convertToYUp:         true,
+                .convertUnitsToMeters: 1.0,
+                .checkConsistency:     false,   // skip strict validation — allows non-Apple USDZ
+                .flattenScene:         false,    // preserve hierarchy
+                .createNormalsIfAbsent: true,
+            ]
             do {
-                let scene = try SCNScene(url: url, options:[
-                    .convertToYUp: true, .convertUnitsToMeters: 1.0])
+                let scene = try SCNScene(url: url, options: options)
                 let root = scene.rootNode.clone()
                 root.name = "imported_\(url.deletingPathExtension().lastPathComponent)"
+                // Apply emission to any material that has displayColor but no emission
+                applyEmissionFix(root)
                 normalizeScale(root)
                 DispatchQueue.main.async { self.onLoad(root) }
-            } catch { print("[ArcImport] direct load error: \(error)") }
+            } catch {
+                print("[ArcImport] direct load error: \(error)")
+            }
+        }
+
+        // Preserve vertex colors as emission so SceneKit renders them with glow
+        private func applyEmissionFix(_ node: SCNNode) {
+            node.enumerateChildNodes { child, _ in
+                guard let geo = child.geometry else { return }
+                for mat in geo.materials {
+                    // If diffuse has content but emission is empty, mirror it to emission
+                    if mat.diffuse.contents != nil && mat.emission.contents == nil {
+                        mat.emission.contents = mat.diffuse.contents
+                        mat.emission.intensity = 0.3
+                    }
+                    // Enable double-sided rendering for sculpted meshes
+                    mat.isDoubleSided = true
+                }
+            }
         }
 
         private func loadGLB(url: URL) {
