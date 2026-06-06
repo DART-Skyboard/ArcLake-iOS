@@ -645,7 +645,8 @@ public final class ArcLabViewModel: ObservableObject {
     }
 
     public func rebuildGrid() {
-        let gnames: Set<String> = ["grid","grid_xz","grid_xy","grid_yz"]
+        // Remove all grid AND axis nodes before re-adding
+        let gnames: Set<String> = ["grid","grid_xz","grid_xy","grid_yz","axis_origin"]
         scene.rootNode.childNodes.filter{gnames.contains($0.name ?? "")}.forEach{$0.removeFromParentNode()}
         if showGrid { addGridFloor(to: scene) }
     }
@@ -686,5 +687,6 @@ private extension Array {
         indices.contains(index) ? self[index] : nil
     }
 }
+
 
 
