@@ -413,18 +413,19 @@ extension ArcAuthViewModel:
     ASAuthorizationControllerPresentationContextProviding {
 
     public func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
-        // Find the key window from the active foreground scene (iOS 15+ compatible)
-        let scenes = UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-        // Prefer foreground active, fall back to any connected scene
-        let scene = scenes.first(where: { $0.activationState == .foregroundActive })
-                 ?? scenes.first
-        if let window = scene?.windows.first(where: { $0.isKeyWindow }) { return window }
-        if let window = scene?.windows.first { return window }
-        // Last resort: create a visible window on the current scene
-        let w = UIWindow(frame: UIScreen.main.bounds)
-        w.makeKeyAndVisible()
-        return w
+        // Must run on main thread — always true since ArcAuthViewModel is @MainActor
+        // Walk all window scenes to find the one with a key window
+        for scene in UIApplication.shared.connectedScenes {
+            guard let ws = scene as? UIWindowScene else { continue }
+            for window in ws.windows where window.isKeyWindow { return window }
+        }
+        // Fallback: any visible window
+        for scene in UIApplication.shared.connectedScenes {
+            guard let ws = scene as? UIWindowScene else { continue }
+            for window in ws.windows where !window.isHidden { return window }
+        }
+        // Should never reach here in a normal app lifecycle
+        return UIApplication.shared.windows.first ?? UIWindow()
     }
 
     public func authorizationController(
@@ -532,6 +533,7 @@ struct KeychainHelper {
         SecItemDelete(q as CFDictionary)
     }
 }
+
 
 
 
