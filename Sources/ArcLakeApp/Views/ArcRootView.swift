@@ -49,17 +49,7 @@ public struct DARTRootView: View {
                             }
                         }
 
-                        // Atom tap info card — slides up from bottom of viewport
-                        if let el = labVM.tappedElement {
-                            VStack {
-                                Spacer()
-                                AtomInfoCard(element: el)
-                                    .transition(.move(edge: .bottom).combined(with: .opacity))
-                                    .padding(.bottom, 12)
-                            }
-                            .animation(.spring(response: 0.35, dampingFraction: 0.82),
-                                       value: labVM.tappedElement?.id)
-                        }
+                        // AtomInfoCard moved to top-level ZStack as draggable panel
                     }
                     .frame(height: geo.size.height * 0.44)
 
@@ -82,8 +72,19 @@ public struct DARTRootView: View {
                                value: labVM.isMolCanvasVisible)
                     .animation(.spring(response: 0.3, dampingFraction: 0.8),
                                value: labVM.isMantisNavVisible)
+
+                // ── Atom info card — free-floating DragShell, not clipped ──
+                if let el = labVM.tappedElement {
+                    DragShell(geoSize: geo.size,
+                              width: min(geo.size.width - 20, 360),
+                              height: 260) {
+                        AtomInfoCard(element: el)
+                    }
+                    .transition(.opacity.combined(with: .scale(scale: 0.95)))
                     .animation(.spring(response: 0.35, dampingFraction: 0.82),
                                value: labVM.tappedElement?.id)
+                    .zIndex(999)
+                }
             }
         }
         .preferredColorScheme(.dark)
