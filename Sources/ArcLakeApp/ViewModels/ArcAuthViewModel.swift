@@ -115,21 +115,43 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
     public func configureAppleRequest(_ request: ASAuthorizationAppleIDRequest) {
         error = nil
         request.requestedScopes = [.fullName, .email]
-        request.nonce = "arcLakeNonce"  // for security
+        // No nonce — only needed for server-side JWT verification (Firebase etc.)
     }
 
-    // Called by SignInWithAppleButton's onCompletion with the result
+    // Called by SwiftUI SignInWithAppleButton onCompletion
     public func handleAppleResult(_ result: Result<ASAuthorization, Error>) {
         switch result {
         case .success(let auth):
-            authorizationController(
-                controller: ASAuthorizationController(authorizationRequests: []),
-                didCompleteWithAuthorization: auth)
+            // Process directly without routing through ASAuthorizationController delegate
+            guard let appleID = auth.credential as? ASAuthorizationAppleIDCredential else { return }
+            let uid     = appleID.user
+            let first   = appleID.fullName?.givenName ?? ""
+            let last    = appleID.fullName?.familyName ?? ""
+            let newName = [first, last].filter { !$0.isEmpty }.joined(separator: " ")
+            let display = newName.isEmpty
+                ? (KeychainHelper.load(key: displayNameKey) ?? "Apple User")
+                : newName
+
+            KeychainHelper.save(key: keychainKey,    value: uid)
+            KeychainHelper.save(key: displayNameKey, value: display)
+
+            if !savedAppleAccounts.contains(where: { $0.id == uid }) {
+                savedAppleAccounts.append(ArcSavedAccount(id: uid, displayName: display))
+                if let d = try? JSONEncoder().encode(savedAppleAccounts) {
+                    UserDefaults.standard.set(d, forKey: "arc_saved_apple")
+                }
+            }
+
+            appleUserId = uid; username = display
+            isSignedIn  = true; isGuest = false; error = nil
+            Task { await ArcVaultService.shared.setup(
+                githubUsername: githubConnected ? githubUsername : nil) }
+
         case .failure(let err):
             let asErr = err as? ASAuthorizationError
             switch asErr?.code {
-            case .canceled, .unknown: break  // silent
-            default: self.error = "Sign in failed: enable iCloud in Settings."
+            case .canceled, .unknown: break  // user dismissed — not an error
+            default: self.error = "Apple Sign-In failed: \(err.localizedDescription)"
             }
         }
     }
