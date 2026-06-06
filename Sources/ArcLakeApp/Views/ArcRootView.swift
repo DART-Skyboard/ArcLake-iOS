@@ -609,8 +609,8 @@ struct ArcProfileSheet: View {
         ZStack {
             Color(red:0.024,green:0.039,blue:0.063).ignoresSafeArea()
             VStack(spacing: 0) {
-                Capsule().fill(Color.white.opacity(0.2))
-                    .frame(width: 40, height: 4).padding(.top, 20).padding(.bottom, 24)
+                // Sheet drag indicator provided by .presentationDragIndicator(.visible)
+                Spacer().frame(height: 12)
                 ZStack {
                     Circle().fill(themeVM.accent.opacity(0.12)).frame(width: 72, height: 72)
                     Circle().stroke(themeVM.accent.opacity(0.4), lineWidth: 1.5).frame(width: 72, height: 72)
@@ -844,6 +844,7 @@ struct ArcMusicControls: View {
         }
     }
 }
+
 
 
 
