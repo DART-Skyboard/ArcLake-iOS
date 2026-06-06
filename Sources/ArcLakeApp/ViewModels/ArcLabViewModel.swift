@@ -507,6 +507,19 @@ public final class ArcLabViewModel: ObservableObject {
                 SCNAction.rotateBy(x: 0, y: CGFloat.pi*2, z: 0, duration: period)))
         }
 
+        // Invisible hit-sphere covering the whole atom — makes tap reliable
+        // even when particle density is low near the edges
+        let totalR = Float(element.electronOrbits.count) * 1.15 + nucleusR + 1.5
+        let hitGeo = SCNSphere(radius: CGFloat(totalR))
+        hitGeo.firstMaterial?.diffuse.contents  = UIColor.clear
+        hitGeo.firstMaterial?.isDoubleSided = true
+        hitGeo.firstMaterial?.lightingModel = .constant
+        hitGeo.firstMaterial?.writesToDepthBuffer = false
+        hitGeo.firstMaterial?.colorBufferWriteMask = []
+        let hitNode = SCNNode(geometry: hitGeo)
+        hitNode.name = "atomZ_hit:\(element.id)"  // also recognizable if needed
+        root.addChildNode(hitNode)
+
         // Atom label
         let text = SCNText(string: element.elementSymbol, extrusionDepth: 0.01)
         text.font = UIFont.systemFont(ofSize: 0.35, weight: .bold)
@@ -687,6 +700,7 @@ private extension Array {
         indices.contains(index) ? self[index] : nil
     }
 }
+
 
 
 
