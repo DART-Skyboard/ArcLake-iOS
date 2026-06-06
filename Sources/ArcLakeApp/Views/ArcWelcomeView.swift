@@ -67,71 +67,98 @@ struct ArcWelcomeView: View {
                 // ── Auth buttons ──────────────────────────────────────
                 VStack(spacing: 12) {
 
-                    // ① GitHub — dynamic label based on stored token
-                    if hasStoredGitHub {
-                        // Already authorized — just resume, no Device Flow
-                        Button {
-                            authVM.resumeStoredGitHubSession()
-                        } label: {
-                            HStack(spacing: 10) {
-                                ZStack {
-                                    Circle()
-                                        .fill(themeVM.accent.opacity(0.15))
-                                        .frame(width: 30, height: 30)
-                                    Text(String(storedGitHubUser.prefix(1)).uppercased())
-                                        .font(.system(size: 13, weight: .bold, design: .monospaced))
-                                        .foregroundColor(themeVM.accent)
+                    // ① Sign in with Apple — ALWAYS first
+                    if !authVM.savedAppleAccounts.isEmpty {
+                        // Saved Apple accounts — show them as quick-resume rows
+                        ForEach(authVM.savedAppleAccounts) { account in
+                            Button { authVM.switchAppleAccount(to: account) } label: {
+                                HStack(spacing: 12) {
+                                    ZStack {
+                                        Circle().fill(Color.white.opacity(0.1)).frame(width:32,height:32)
+                                        Image(systemName: "applelogo")
+                                            .font(.system(size:13)).foregroundColor(.white)
+                                    }
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("Continue as \(account.displayName)")
+                                            .font(.custom("Exo2-SemiBold", size: 15))
+                                            .foregroundColor(.white)
+                                        Text("Apple ID · saved")
+                                            .font(.system(size: 9, design: .monospaced))
+                                            .foregroundColor(.green.opacity(0.7))
+                                    }
+                                    Spacer()
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundColor(.green.opacity(0.8))
                                 }
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("Continue as \(storedGitHubUser)")
-                                        .font(.custom("Exo2-SemiBold", size: 15))
-                                        .foregroundColor(.white)
-                                    Text("GitHub · already authorized")
-                                        .font(.system(size: 9, design: .monospaced))
-                                        .foregroundColor(.green.opacity(0.7))
-                                }
-                                Spacer()
-                                Image(systemName: "checkmark.circle.fill")
-                                    .font(.system(size: 17))
-                                    .foregroundColor(.green.opacity(0.8))
+                                .padding(.horizontal, 14)
+                                .frame(maxWidth: .infinity).frame(height: 56)
+                                .background(Color.white.opacity(0.07))
+                                .clipShape(RoundedRectangle(cornerRadius: 12))
+                                .overlay(RoundedRectangle(cornerRadius: 12)
+                                    .stroke(Color.white.opacity(0.2), lineWidth: 1))
                             }
-                            .padding(.horizontal, 14)
-                            .frame(maxWidth: .infinity).frame(height: 58)
-                            .background(themeVM.accent.opacity(0.08))
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
-                            .overlay(RoundedRectangle(cornerRadius: 12)
-                                .stroke(themeVM.accent.opacity(0.4), lineWidth: 1.2))
                         }
-
-                        // Option to switch / use a different account
-                        Button { showGitHubSheet = true } label: {
-                            Text("Use a different GitHub account")
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundColor(.white.opacity(0.3))
-                                .underline()
-                        }
-                        .padding(.top, -4)
-
-                    } else {
-                        // ① Sign in with Apple
+                        // Add another Apple ID
                         SignInWithAppleButton(.signIn) { req in
                             authVM.configureAppleRequest(req)
                         } onCompletion: { result in
                             authVM.handleAppleResult(result)
                         }
                         .signInWithAppleButtonStyle(.white)
-                        .frame(height: 52)
-                        .cornerRadius(12)
+                        .frame(height: 44).cornerRadius(10)
+                    } else {
+                        // No saved Apple accounts — show full Sign In button
+                        SignInWithAppleButton(.signIn) { req in
+                            authVM.configureAppleRequest(req)
+                        } onCompletion: { result in
+                            authVM.handleAppleResult(result)
+                        }
+                        .signInWithAppleButtonStyle(.white)
+                        .frame(height: 52).cornerRadius(12)
+                    }
 
-                        // ② Connect GitHub (first time)
+                    // ② GitHub — dynamic label based on stored token
+                    if hasStoredGitHub {
+                        Button { authVM.resumeStoredGitHubSession() } label: {
+                            HStack(spacing: 10) {
+                                ZStack {
+                                    Circle().fill(themeVM.accent.opacity(0.15)).frame(width:30,height:30)
+                                    Text(String(storedGitHubUser.prefix(1)).uppercased())
+                                        .font(.system(size:13, weight:.bold, design:.monospaced))
+                                        .foregroundColor(themeVM.accent)
+                                }
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Continue as \(storedGitHubUser)")
+                                        .font(.custom("Exo2-SemiBold", size: 15)).foregroundColor(.white)
+                                    Text("GitHub · already authorized")
+                                        .font(.system(size:9, design:.monospaced))
+                                        .foregroundColor(.green.opacity(0.7))
+                                }
+                                Spacer()
+                                Image(systemName:"checkmark.circle.fill")
+                                    .font(.system(size:17)).foregroundColor(.green.opacity(0.8))
+                            }
+                            .padding(.horizontal, 14)
+                            .frame(maxWidth:.infinity).frame(height: 58)
+                            .background(themeVM.accent.opacity(0.08))
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                            .overlay(RoundedRectangle(cornerRadius: 12)
+                                .stroke(themeVM.accent.opacity(0.4), lineWidth: 1.2))
+                        }
+                        Button { showGitHubSheet = true } label: {
+                            Text("Use a different GitHub account")
+                                .font(.system(size:11, design:.monospaced))
+                                .foregroundColor(.white.opacity(0.3)).underline()
+                        }
+                        .padding(.top, -4)
+                    } else {
                         Button { showGitHubSheet = true } label: {
                             HStack(spacing: 10) {
-                                Image(systemName: "link.circle.fill").font(.system(size: 17))
-                                Text("Connect GitHub")
-                                    .font(.custom("Exo2-SemiBold", size: 15))
+                                Image(systemName:"link.circle.fill").font(.system(size:17))
+                                Text("Connect GitHub").font(.custom("Exo2-SemiBold", size: 15))
                             }
                             .foregroundColor(themeVM.accent)
-                            .frame(maxWidth: .infinity).frame(height: 52)
+                            .frame(maxWidth:.infinity).frame(height: 52)
                             .background(RoundedRectangle(cornerRadius: 12)
                                 .stroke(themeVM.accent.opacity(0.35), lineWidth: 1.2))
                         }
@@ -140,13 +167,13 @@ struct ArcWelcomeView: View {
                     // ③ Continue as Guest — always visible
                     Button { authVM.continueAsGuest() } label: {
                         HStack(spacing: 8) {
-                            Image(systemName: "person.fill")
-                                .font(.system(size: 14)).foregroundColor(.white.opacity(0.5))
+                            Image(systemName:"person.fill")
+                                .font(.system(size:14)).foregroundColor(.white.opacity(0.5))
                             Text("Continue as Guest")
                                 .font(.custom("Exo2-Regular", size: 14))
                                 .foregroundColor(.white.opacity(0.6))
                         }
-                        .frame(maxWidth: .infinity).frame(height: 48)
+                        .frame(maxWidth:.infinity).frame(height: 48)
                         .background(Color.white.opacity(0.05)).cornerRadius(12)
                         .overlay(RoundedRectangle(cornerRadius: 12)
                             .stroke(Color.white.opacity(0.1), lineWidth: 1))
@@ -316,3 +343,4 @@ struct ArcSafariView: UIViewControllerRepresentable {
     }
     func updateUIViewController(_ vc: SFSafariViewController, context: Context) {}
 }
+
