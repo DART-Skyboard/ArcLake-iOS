@@ -142,14 +142,32 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
     }
 
     // MARK: — Switch Apple account
+    // Verify credential state before switching (handles expired sessions)
     public func switchAppleAccount(to account: ArcSavedAccount) {
-        appleUserId = account.id
-        username    = account.displayName
-        KeychainHelper.save(key: keychainKey,      value: account.id)
-        KeychainHelper.save(key: displayNameKey,   value: account.displayName)
-        isSignedIn = true; isGuest = false
-        Task { await ArcVaultService.shared.setup(
-            githubUsername: githubConnected ? githubUsername : nil) }
+        ASAuthorizationAppleIDProvider().getCredentialState(forUserID: account.id) { [weak self] state, _ in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch state {
+                case .authorized, .transferred:
+                    self.appleUserId = account.id
+                    self.username    = account.displayName
+                    KeychainHelper.save(key: self.keychainKey,    value: account.id)
+                    KeychainHelper.save(key: self.displayNameKey, value: account.displayName)
+                    self.isSignedIn = true; self.isGuest = false; self.error = nil
+                    Task { await ArcVaultService.shared.setup(
+                        githubUsername: self.githubConnected ? self.githubUsername : nil) }
+                case .revoked, .notFound:
+                    // Session expired — remove stale account, prompt re-auth
+                    self.savedAppleAccounts.removeAll { $0.id == account.id }
+                    if let d = try? JSONEncoder().encode(self.savedAppleAccounts) {
+                        UserDefaults.standard.set(d, forKey: "arc_saved_apple")
+                    }
+                    self.error = "Apple ID session expired — please sign in again"
+                    self.signInWithApple()
+                @unknown default: break
+                }
+            }
+        }
     }
 
     // MARK: — GitHub Device Flow
@@ -428,5 +446,6 @@ struct KeychainHelper {
         SecItemDelete(q as CFDictionary)
     }
 }
+
 
 
