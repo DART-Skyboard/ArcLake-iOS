@@ -79,8 +79,10 @@ public struct DARTRootView: View {
                 if let el = labVM.tappedElement {
                     DragShell(geoSize: geo.size,
                               width: min(geo.size.width - 20, 360),
-                              height: 260) {
-                        AtomInfoCard(element: el)
+                              height: 300) {
+                        ScrollView {
+                            AtomInfoCard(element: el)
+                        }
                     }
                     .transition(.opacity.combined(with: .scale(scale: 0.95)))
                     .animation(.spring(response: 0.35, dampingFraction: 0.82),
@@ -670,6 +672,13 @@ struct ArcProfileSheet: View {
                     Divider().background(Color.white.opacity(0.08))
                     arcRow("GitHub", authVM.githubConnected ? authVM.githubUsername : "Not connected",
                            authVM.githubConnected ? themeVM.accent : .white.opacity(0.3)) { showGitHubPicker = true }
+                    Divider().background(Color.white.opacity(0.08))
+                    arcRow("Google",
+                           authVM.googleConnected ? authVM.googleEmail : "Not connected",
+                           authVM.googleConnected ? Color(red:0.26,green:0.52,blue:0.96) : .white.opacity(0.3)) {
+                        if authVM.googleConnected { authVM.signOutGoogle() }
+                        else { authVM.signInWithGoogle() }
+                    }
                     Divider().background(Color.white.opacity(0.08))
                     HStack {
                         Text("Vault").font(.system(size: 13, design: .monospaced)).foregroundColor(.white.opacity(0.4))
