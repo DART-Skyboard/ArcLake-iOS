@@ -12,6 +12,7 @@ public final class ArcLabViewModel: ObservableObject {
     @Published public var isCFDActive = false
     @Published public var logEntries: [LogEntry] = []
     @Published public var probeTarget: ArcElement? = nil
+    @Published public var tappedElement: ArcElement? = nil   // atom tap info card
     @Published public var isOrbitDeltaVisible = false
     @Published public var molCanvasPendingElement: ArcElement? = nil
     @Published public var cfdParticles: [SPHEngine.Particle] = []
@@ -27,7 +28,8 @@ public final class ArcLabViewModel: ObservableObject {
     @Published public var showGridXY = true
     @Published public var showGridYZ = true
     @Published public var showFloor = false
-    @Published public var showAxisLabels = true
+    @Published public var showAxisLabels     = true
+    @Published public var showAxisIndicators = true
     @Published public var periodicTableMode: PeriodicTableMode = .addToScene
     @Published public var molAtoms: [MolAtomNode] = []
     @Published public var molBonds: [MolBond] = []
@@ -100,6 +102,7 @@ public final class ArcLabViewModel: ObservableObject {
         let target = s ?? scene
         let N = 20; let step: Float = 1.5; let ext = Float(N) * step
 
+        // Grid line — cyan, constant lighting
         func makeLine(_ a: SCNVector3, _ b: SCNVector3, alpha: CGFloat) -> SCNNode {
             let dx=b.x-a.x, dy=b.y-a.y, dz=b.z-a.z
             let len=sqrt(dx*dx+dy*dy+dz*dz)
@@ -113,65 +116,104 @@ public final class ArcLabViewModel: ObservableObject {
             return n
         }
 
-        // Axis shaft — full-length cylinder
-        func axisNode(_ color: UIColor, _ rx: Float, _ rz: Float) -> SCNNode {
-            let c=SCNCylinder(radius:0.015, height:CGFloat(ext*2))
-            c.firstMaterial?.emission.contents=color; c.firstMaterial?.lightingModel = .constant
-            let n=SCNNode(geometry:c); n.eulerAngles=SCNVector3(rx,0,rz); return n
-        }
-
-        // Arrowhead cone at the positive tip of each axis
-        // X=red(+X), Y=green(+Y), Z=blue(+Z)
-        func arrowHead(color: UIColor, pos: SCNVector3, rx: Float, rz: Float) -> SCNNode {
-            let cone = SCNCone(topRadius: 0, bottomRadius: 0.08, height: 0.28)
-            cone.firstMaterial?.emission.contents = color
-            cone.firstMaterial?.lightingModel = .constant
-            let n = SCNNode(geometry: cone)
-            n.position = pos
+        // Solid positive half-axis
+        func posAxis(_ color: UIColor, length: Float, rx: Float, rz: Float,
+                     offset: SCNVector3) -> SCNNode {
+            let c = SCNCylinder(radius: 0.018, height: CGFloat(length))
+            c.firstMaterial?.emission.contents = color
+            c.firstMaterial?.lightingModel = .constant
+            let n = SCNNode(geometry: c)
             n.eulerAngles = SCNVector3(rx, 0, rz)
+            n.position = offset
             return n
         }
 
-        // Axis label text at tip
+        // Dashed negative half-axis — same color, lower opacity, segmented cylinders
+        func negAxis(_ color: UIColor, length: Float, rx: Float, rz: Float,
+                     dir: SIMD3<Float>) -> SCNNode {
+            let group = SCNNode()
+            let dashLen: Float = 0.35; let gapLen: Float = 0.25
+            var t: Float = gapLen
+            while t < length {
+                let dLen = min(dashLen, length - t)
+                let c = SCNCylinder(radius: 0.01, height: CGFloat(dLen))
+                c.firstMaterial?.emission.contents = color.withAlphaComponent(0.45)
+                c.firstMaterial?.lightingModel = .constant
+                let dn = SCNNode(geometry: c)
+                dn.eulerAngles = SCNVector3(rx, 0, rz)
+                let center = t + dLen/2
+                dn.position = SCNVector3(dir.x*center, dir.y*center, dir.z*center)
+                group.addChildNode(dn)
+                t += dashLen + gapLen
+            }
+            return group
+        }
+
+        func arrowHead(color: UIColor, pos: SCNVector3, rx: Float, rz: Float) -> SCNNode {
+            let cone = SCNCone(topRadius: 0, bottomRadius: 0.09, height: 0.32)
+            cone.firstMaterial?.emission.contents = color
+            cone.firstMaterial?.lightingModel = .constant
+            let n = SCNNode(geometry: cone)
+            n.position = pos; n.eulerAngles = SCNVector3(rx, 0, rz)
+            return n
+        }
+
         func axisLabel(_ text: String, color: UIColor, pos: SCNVector3) -> SCNNode {
             let t = SCNText(string: text, extrusionDepth: 0.02)
-            t.font = UIFont.systemFont(ofSize: 0.3, weight: .bold)
+            t.font = UIFont.systemFont(ofSize: 0.32, weight: .bold)
             t.firstMaterial?.emission.contents = color
             t.firstMaterial?.lightingModel = .constant
             let n = SCNNode(geometry: t)
             n.position = pos
-            n.scale = SCNVector3(1, 1, 1)
             return n
         }
 
-        let xCol = UIColor(red:1,   green:0.2, blue:0.2, alpha:0.9)
-        let yCol = UIColor(red:0.2, green:1,   blue:0.3, alpha:0.9)
-        let zCol = UIColor(red:0.2, green:0.4, blue:1.0, alpha:0.9)
-        let axisGroup = SCNNode(); axisGroup.name = "axis_origin"
+        // Pure saturated RGB — visible against white grid lines
+        let xCol = UIColor(red:1.0, green:0.0, blue:0.0, alpha:1.0)  // X = red
+        let yCol = UIColor(red:0.0, green:1.0, blue:0.0, alpha:1.0)  // Y = green
+        let zCol = UIColor(red:0.0, green:0.3, blue:1.0, alpha:1.0)  // Z = blue
 
-        // X axis — red — shaft + arrowhead at +X edge
-        let xShaft = axisNode(xCol.withAlphaComponent(0.65), 0, Float.pi/2)
-        axisGroup.addChildNode(xShaft)
-        axisGroup.addChildNode(arrowHead(color: xCol,
-            pos: SCNVector3(ext, 0, 0), rx: 0, rz: -Float.pi/2))
-        axisGroup.addChildNode(axisLabel("+X", color: xCol,
-            pos: SCNVector3(ext + 0.3, -0.1, -0.15)))
+        if showAxisIndicators {
+            let axisGroup = SCNNode(); axisGroup.name = "axis_origin"
 
-        // Y axis — green — shaft + arrowhead at +Y
-        let yShaft = axisNode(yCol.withAlphaComponent(0.65), 0, 0)
-        axisGroup.addChildNode(yShaft)
-        axisGroup.addChildNode(arrowHead(color: yCol,
-            pos: SCNVector3(0, ext, 0), rx: 0, rz: 0))
-        axisGroup.addChildNode(axisLabel("+Y", color: yCol,
-            pos: SCNVector3(0.1, ext + 0.3, -0.15)))
+            // X — red positive solid, negative dashed
+            axisGroup.addChildNode(posAxis(xCol, length: ext, rx: 0, rz: Float.pi/2,
+                offset: SCNVector3(ext/2, 0, 0)))
+            axisGroup.addChildNode(negAxis(xCol, length: ext, rx: 0, rz: Float.pi/2,
+                dir: SIMD3<Float>(-1,0,0)))
+            axisGroup.addChildNode(arrowHead(color: xCol,
+                pos: SCNVector3(ext+0.16, 0, 0), rx: 0, rz: -Float.pi/2))
+            if showAxisLabels {
+                axisGroup.addChildNode(axisLabel("+X", color: xCol,
+                    pos: SCNVector3(ext+0.35, -0.12, -0.15)))
+            }
 
-        // Z axis — blue — shaft + arrowhead at +Z
-        let zShaft = axisNode(zCol.withAlphaComponent(0.65), Float.pi/2, 0)
-        axisGroup.addChildNode(zShaft)
-        axisGroup.addChildNode(arrowHead(color: zCol,
-            pos: SCNVector3(0, 0, ext), rx: Float.pi/2, rz: 0))
-        axisGroup.addChildNode(axisLabel("+Z", color: zCol,
-            pos: SCNVector3(0.1, -0.1, ext + 0.3)))
+            // Y — green positive solid, negative dashed
+            axisGroup.addChildNode(posAxis(yCol, length: ext, rx: 0, rz: 0,
+                offset: SCNVector3(0, ext/2, 0)))
+            axisGroup.addChildNode(negAxis(yCol, length: ext, rx: 0, rz: 0,
+                dir: SIMD3<Float>(0,-1,0)))
+            axisGroup.addChildNode(arrowHead(color: yCol,
+                pos: SCNVector3(0, ext+0.16, 0), rx: 0, rz: 0))
+            if showAxisLabels {
+                axisGroup.addChildNode(axisLabel("+Y", color: yCol,
+                    pos: SCNVector3(0.12, ext+0.35, -0.15)))
+            }
+
+            // Z — blue positive solid, negative dashed
+            axisGroup.addChildNode(posAxis(zCol, length: ext, rx: Float.pi/2, rz: 0,
+                offset: SCNVector3(0, 0, ext/2)))
+            axisGroup.addChildNode(negAxis(zCol, length: ext, rx: Float.pi/2, rz: 0,
+                dir: SIMD3<Float>(0,0,-1)))
+            axisGroup.addChildNode(arrowHead(color: zCol,
+                pos: SCNVector3(0, 0, ext+0.16), rx: Float.pi/2, rz: 0))
+            if showAxisLabels {
+                axisGroup.addChildNode(axisLabel("+Z", color: zCol,
+                    pos: SCNVector3(0.12, -0.12, ext+0.35)))
+            }
+
+            target.rootNode.addChildNode(axisGroup)
+        }
 
         if showGridXZ {
             let g=SCNNode(); g.name="grid_xz"
@@ -201,8 +243,6 @@ public final class ArcLabViewModel: ObservableObject {
             }
             target.rootNode.addChildNode(g)
         }
-        // Axes always rendered on top of grid planes
-        target.rootNode.addChildNode(axisGroup)
     }
 
     // MARK: — Element management
@@ -589,6 +629,11 @@ public final class ArcLabViewModel: ObservableObject {
         log("Mol Canvas added to \(newTab ? "new":"current") scene")
     }
 
+    public func toggleAxisIndicators() {
+        showAxisIndicators.toggle()
+        rebuildGrid()
+    }
+
     public func toggleGridPlane(_ plane: String) {
         switch plane {
         case "xz": showGridXZ.toggle()
@@ -641,4 +686,5 @@ private extension Array {
         indices.contains(index) ? self[index] : nil
     }
 }
+
 
