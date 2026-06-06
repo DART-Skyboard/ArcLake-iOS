@@ -617,7 +617,7 @@ struct ArcProfileSheet: View {
             Color(red:0.024,green:0.039,blue:0.063).ignoresSafeArea()
             VStack(spacing: 0) {
                 Capsule().fill(Color.white.opacity(0.2))
-                    .frame(width: 40, height: 4).padding(.top, 12).padding(.bottom, 20)
+                    .frame(width: 40, height: 4).padding(.top, 20).padding(.bottom, 24)
                 ZStack {
                     Circle().fill(themeVM.accent.opacity(0.12)).frame(width: 72, height: 72)
                     Circle().stroke(themeVM.accent.opacity(0.4), lineWidth: 1.5).frame(width: 72, height: 72)
@@ -693,6 +693,8 @@ struct ArcProfileSheet: View {
                     .overlay(RoundedRectangle(cornerRadius:10).stroke(Color.pink.opacity(0.2), lineWidth:0.7))
                 }
                 .padding(.horizontal, 20)
+
+                Spacer().frame(height: 12)   // breathing room between Support and Sign Out
 
                 Button { authVM.signOut(); dismiss() } label: {
                     Text("Sign Out").font(.custom("Exo2-SemiBold", size: 15)).foregroundColor(.red)
