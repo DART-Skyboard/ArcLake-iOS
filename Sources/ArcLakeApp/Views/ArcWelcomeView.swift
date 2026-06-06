@@ -117,7 +117,51 @@ struct ArcWelcomeView: View {
                         .frame(height: 52).cornerRadius(12)
                     }
 
-                    // ② GitHub — dynamic label based on stored token
+                    // ② Google Sign-In
+                    if authVM.googleConnected {
+                        Button { authVM.signOutGoogle() } label: {
+                            HStack(spacing: 12) {
+                                ZStack {
+                                    Circle().fill(Color.white.opacity(0.1)).frame(width:32,height:32)
+                                    // Google "G" in brand colors
+                                    Text("G").font(.system(size:14,weight:.bold)).foregroundColor(.white)
+                                }
+                                VStack(alignment:.leading, spacing:2) {
+                                    Text("Signed in: \(authVM.googleEmail)")
+                                        .font(.custom("Exo2-SemiBold",size:13)).foregroundColor(.white)
+                                    Text("Google · tap to disconnect")
+                                        .font(.system(size:9,design:.monospaced))
+                                        .foregroundColor(.white.opacity(0.4))
+                                }
+                                Spacer()
+                                Image(systemName:"checkmark.circle.fill").foregroundColor(.green.opacity(0.8))
+                            }
+                            .padding(.horizontal,14).frame(maxWidth:.infinity).frame(height:52)
+                            .background(Color.white.opacity(0.06))
+                            .clipShape(RoundedRectangle(cornerRadius:12))
+                            .overlay(RoundedRectangle(cornerRadius:12)
+                                .stroke(Color.white.opacity(0.15),lineWidth:1))
+                        }
+                    } else {
+                        Button { authVM.signInWithGoogle() } label: {
+                            HStack(spacing:10) {
+                                ZStack {
+                                    Circle().fill(Color.white.opacity(0.1)).frame(width:32,height:32)
+                                    Text("G").font(.system(size:14,weight:.bold)).foregroundColor(.white)
+                                }
+                                Text("Sign in with Google")
+                                    .font(.custom("Exo2-SemiBold",size:15)).foregroundColor(.white)
+                                Spacer()
+                            }
+                            .padding(.horizontal,14).frame(maxWidth:.infinity).frame(height:52)
+                            .background(Color(red:0.26,green:0.52,blue:0.96).opacity(0.15))
+                            .clipShape(RoundedRectangle(cornerRadius:12))
+                            .overlay(RoundedRectangle(cornerRadius:12)
+                                .stroke(Color(red:0.26,green:0.52,blue:0.96).opacity(0.4),lineWidth:1))
+                        }
+                    }
+
+                    // ③ GitHub — dynamic label based on stored token
                     if hasStoredGitHub {
                         Button { authVM.resumeStoredGitHubSession() } label: {
                             HStack(spacing: 10) {
@@ -343,4 +387,5 @@ struct ArcSafariView: UIViewControllerRepresentable {
     }
     func updateUIViewController(_ vc: SFSafariViewController, context: Context) {}
 }
+
 
