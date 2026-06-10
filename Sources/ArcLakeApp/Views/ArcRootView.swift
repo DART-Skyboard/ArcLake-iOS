@@ -11,7 +11,6 @@ public struct DARTRootView: View {
     @EnvironmentObject var themeVM: ArcThemeViewModel
     @EnvironmentObject var authVM: ArcAuthViewModel
     @State private var showProfile  = false
-    @State private var showArcSettings = false
     @State private var showAppleAccountSheet = false
     @State private var showSupportSheet = false
     @State private var showAR       = false
@@ -81,7 +80,6 @@ public struct DARTRootView: View {
         }
         .preferredColorScheme(.dark)
         .sheet(isPresented: $showProfile) { ArcProfileSheet() }
-        .sheet(isPresented: $showArcSettings) { ArcSettingsView() }
 
         .overlay(alignment: .bottomTrailing) {
             AutumnOverlay()
@@ -145,6 +143,7 @@ struct DARTBackground: View {
 
 // MARK: — Top Bar
 struct DARTTopBar: View {
+    @State private var showArcSettings = false
     @Binding var showProfile: Bool
     @Binding var showAR: Bool
     @Binding var showImporter: Bool
@@ -232,6 +231,7 @@ struct DARTTopBar: View {
                     DARTIconButton(icon: "gearshape", active: false) {
                         showArcSettings = true
                     }
+                    .sheet(isPresented: $showArcSettings) { ArcSettingsView() }
                     // Per-plane grid toggles — always visible (not conditional)
                     DARTIconButton(icon: "square.split.bottomrightquarter",
                                    active: labVM.showGridXZ) {
