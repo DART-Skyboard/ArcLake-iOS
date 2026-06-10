@@ -440,17 +440,25 @@ struct NodeEditorView: View {
     private func connectionPath(_ conn: NodeConnection, in size: CGSize) -> some View {
         if let from = nodes.first(where:{$0.id==conn.fromNodeId}),
            let to   = nodes.first(where:{$0.id==conn.toNodeId}) {
-            let startX = from.position.x + canvasOffset.width + 90
-            let startY = from.position.y + canvasOffset.height + 18
+            // Socket positions: right edge of 'from' node, left edge of 'to' node
+            // nodeWidth=100, headerH=28, portRowH=20 — out port is first row right side
+            let nodeW: CGFloat = 100
+            let headerH: CGFloat = 28
+            let portRowH: CGFloat = 20
+            let socketY = headerH + portRowH / 2 + 4  // first port row center + padding
+
+            let startX = from.position.x + canvasOffset.width + nodeW
+            let startY = from.position.y + canvasOffset.height + socketY
             let endX   = to.position.x   + canvasOffset.width
-            let endY   = to.position.y   + canvasOffset.height + 18
+            let endY   = to.position.y   + canvasOffset.height + socketY
+            let cpX    = (startX + endX) / 2
             Path { p in
-                p.move(to:    CGPoint(x: startX, y: startY))
-                p.addCurve(to: CGPoint(x: endX, y: endY),
-                           control1: CGPoint(x: (startX+endX)/2, y: startY),
-                           control2: CGPoint(x: (startX+endX)/2, y: endY))
+                p.move(to: CGPoint(x: startX, y: startY))
+                p.addCurve(to:     CGPoint(x: endX,   y: endY),
+                           control1: CGPoint(x: cpX,  y: startY),
+                           control2: CGPoint(x: cpX,  y: endY))
             }
-            .stroke(Color.cyan.opacity(0.5), style: StrokeStyle(lineWidth: 1.5, dash: [4,3]))
+            .stroke(Color.cyan.opacity(0.6), style: StrokeStyle(lineWidth: 1.5, dash: [4,3]))
         }
     }
 }
@@ -467,46 +475,94 @@ struct EditorNodeView: View {
     @GestureState private var dragDelta = CGSize.zero
     @State private var dragDeltaBase = CGPoint.zero
 
+    // Port y-offset from node top — header is 28pt, each port row is 20pt
+    private let headerH: CGFloat = 28
+    private let portRowH: CGFloat = 20
+    private let nodeWidth: CGFloat = 100
+    private let socketR: CGFloat = 6
+
+    private func socketY(portIndex: Int) -> CGFloat {
+        headerH + CGFloat(portIndex) * portRowH + portRowH / 2
+    }
+
     var body: some View {
-        VStack(spacing: 0) {
-            // Node header
-            HStack(spacing: 6) {
-                Circle().fill(node.color).frame(width: 6, height: 6)
-                Text(node.title)
-                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                    .foregroundColor(.white)
-                    .lineLimit(1)
-                Spacer()
-                Text(node.type.rawValue.prefix(3))
-                    .font(.system(size: 7, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.3))
-            }
-            .padding(.horizontal, 8).padding(.vertical, 5)
-            .background(node.color.opacity(0.12))
+        let inPorts  = node.ports.filter { $0 == "in"  || $0.hasPrefix("in") }
+        let outPorts = node.ports.filter { $0 == "out" || $0.hasPrefix("out") }
+        let totalRows = max(inPorts.count, outPorts.count)
 
-            Divider().background(node.color.opacity(0.2))
+        ZStack(alignment: .topLeading) {
+            // Node body
+            VStack(spacing: 0) {
+                // Header
+                HStack(spacing: 5) {
+                    Circle().fill(node.color).frame(width: 6, height: 6)
+                    Text(node.title)
+                        .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                        .foregroundColor(.white).lineLimit(1)
+                    Spacer()
+                    Text(node.type.rawValue.prefix(3).uppercased())
+                        .font(.system(size: 7, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.3))
+                }
+                .frame(height: headerH)
+                .padding(.horizontal, 10)
+                .background(node.color.opacity(0.14))
 
-            // Ports
-            VStack(spacing: 3) {
-                ForEach(node.ports, id: \.self) { port in
-                    Button { onPortTap(port) } label: {
+                Divider().background(node.color.opacity(0.2))
+
+                // Port labels row
+                VStack(spacing: 0) {
+                    ForEach(0..<totalRows, id: \.self) { i in
                         HStack {
-                            Circle().fill(node.color.opacity(0.5)).frame(width: 5, height: 5)
-                            Text(port).font(.system(size: 8, design: .monospaced))
-                                .foregroundColor(.white.opacity(0.4))
+                            // In port label
+                            if i < inPorts.count {
+                                Text(inPorts[i])
+                                    .font(.system(size: 8, design: .monospaced))
+                                    .foregroundColor(.white.opacity(0.45))
+                            }
+                            Spacer()
+                            // Out port label
+                            if i < outPorts.count {
+                                Text(outPorts[i])
+                                    .font(.system(size: 8, design: .monospaced))
+                                    .foregroundColor(.white.opacity(0.45))
+                            }
                         }
+                        .padding(.horizontal, 14)
+                        .frame(height: portRowH)
                     }
                 }
+                .padding(.vertical, 4)
             }
-            .padding(.horizontal, 8).padding(.vertical, 5)
+            .frame(width: nodeWidth)
+            .background(Color(red:0.07, green:0.1, blue:0.17))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8)
+                .stroke(isSelected ? node.color.opacity(0.8) : node.color.opacity(0.25),
+                        lineWidth: isSelected ? 1.5 : 0.8))
+
+            // Left-edge sockets (in ports)
+            ForEach(Array(inPorts.enumerated()), id: \.offset) { i, _ in
+                Button { onPortTap(inPorts[i]) } label: {
+                    Circle()
+                        .fill(node.color)
+                        .frame(width: socketR*2, height: socketR*2)
+                        .overlay(Circle().stroke(Color.black.opacity(0.4), lineWidth: 1))
+                }
+                .offset(x: -socketR, y: socketY(portIndex: i) - socketR)
+            }
+
+            // Right-edge sockets (out ports)
+            ForEach(Array(outPorts.enumerated()), id: \.offset) { i, _ in
+                Button { onPortTap(outPorts[i]) } label: {
+                    Circle()
+                        .fill(node.color)
+                        .frame(width: socketR*2, height: socketR*2)
+                        .overlay(Circle().stroke(Color.black.opacity(0.4), lineWidth: 1))
+                }
+                .offset(x: nodeWidth - socketR, y: socketY(portIndex: i) - socketR)
+            }
         }
-        .frame(width: 92)
-        .background(Color(red:0.07,green:0.1,blue:0.17))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8)
-            .stroke(isSelected
-                ? node.color.opacity(0.8)
-                : node.color.opacity(0.25), lineWidth: isSelected ? 1.5 : 0.8))
         .shadow(color: .black.opacity(0.4), radius: 8)
         .position(CGPoint(
             x: node.position.x + dragDelta.width,
@@ -529,6 +585,7 @@ struct EditorNodeView: View {
         .onTapGesture { onTap() }
     }
 }
+
 
 
 
