@@ -793,12 +793,7 @@ struct AtomInfoCard: View {
             }
             .padding(.horizontal, 12).padding(.vertical, 8)
         }
-        .background(Color(red:0.04, green:0.07, blue:0.14))
-        .clipShape(RoundedRectangle(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14)
-            .stroke(Color(element.category.color).opacity(0.4), lineWidth: 1))
-        .shadow(color: .black.opacity(0.5), radius: 20)
-        .padding(.horizontal, 16)
+        // No background/clipShape here — DragShell in ArcOverlays is the container
     }
 
     private func infoCell(_ label: String, _ value: String) -> some View {
@@ -813,5 +808,6 @@ struct AtomInfoCard: View {
         .frame(maxWidth: .infinity)
     }
 }
+
 
 
