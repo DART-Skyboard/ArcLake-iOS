@@ -24,9 +24,20 @@ public final class ArcLabViewModel: ObservableObject {
     @Published public var isNodeEditorVisible = false
     @Published public var isMantisNavVisible = false
     @Published public var showGrid   = true
+    // Arc Edge Vector defaults: XZ floor plane only; XY / YZ toggleable on demand
     @Published public var showGridXZ = true
-    @Published public var showGridXY = true
-    @Published public var showGridYZ = true
+    @Published public var showGridXY = false
+    @Published public var showGridYZ = false
+
+    // ── Arc Edge advanced settings (arc-edge-vector.html parity) ──
+    @Published public var gridDivisions: Int = 20      // 20×20 unit floor plane
+    @Published public var arcDOC: Double = 3.0          // Arc Edge doc constant (replaces π)
+    @Published public var sigmaMX: Double = 0           // Sigma Meridian shared 3D point
+    @Published public var sigmaMY: Double = 0
+    @Published public var sigmaMZ: Double = 0
+    @Published public var meridianJoinXZ = true          // per-plane meridian join
+    @Published public var meridianJoinXY = true
+    @Published public var meridianJoinZY = true
     @Published public var showFloor = false
     @Published public var showAxisLabels     = true
     @Published public var showAxisIndicators = true
@@ -100,7 +111,8 @@ public final class ArcLabViewModel: ObservableObject {
 
     private func addGridFloor(to s: SCNScene? = nil) {
         let target = s ?? scene
-        let N = 20; let step: Float = 1.5; let ext = Float(N) * step
+        // 20×20 unit floor plane by default (gridDivisions cells per side)
+        let N = max(2, gridDivisions / 2); let step: Float = 1.5; let ext = Float(N) * step
 
         // Grid line — cyan, constant lighting
         func makeLine(_ a: SCNVector3, _ b: SCNVector3, alpha: CGFloat) -> SCNNode {
@@ -704,6 +716,7 @@ private extension Array {
         indices.contains(index) ? self[index] : nil
     }
 }
+
 
 
 
