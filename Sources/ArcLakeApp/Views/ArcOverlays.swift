@@ -95,9 +95,7 @@ struct ArcOverlays: View {
                 DragShell(geoSize: geoSize,
                           width: min(geoSize.width - 20, 340),
                           height: 310) {
-                    ScrollView(showsIndicators: false) {
-                        AtomInfoCard(element: el)
-                    }
+                    AtomInfoCard(element: el)
                 }
                 .id("atomcard-\(el.id)-\(openKey("atomcard"))")
                 .zIndex(Double(zOrder["atomcard"] ?? 999))
@@ -126,9 +124,8 @@ struct DragShell<Content: View>: View {
 
     var body: some View {
         content()
-            .frame(width: width, height: height)
-            // No clipShape — content flows freely, each panel has its own background.
-            // Visual rounding only from cornerRadius on content itself + overlay border.
+            // Width is fixed; height wraps content naturally — no clipping
+            .frame(width: width)
             .cornerRadius(14)
             .overlay(RoundedRectangle(cornerRadius: 14)
                 .stroke(Color.white.opacity(0.12), lineWidth: 0.7))
@@ -152,6 +149,7 @@ struct DragShell<Content: View>: View {
             )
     }
 }
+
 
 
 
