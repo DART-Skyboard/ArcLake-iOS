@@ -11,6 +11,7 @@ public struct DARTRootView: View {
     @EnvironmentObject var themeVM: ArcThemeViewModel
     @EnvironmentObject var authVM: ArcAuthViewModel
     @State private var showProfile  = false
+    @State private var showArcSettings = false
     @State private var showAppleAccountSheet = false
     @State private var showSupportSheet = false
     @State private var showAR       = false
@@ -80,6 +81,7 @@ public struct DARTRootView: View {
         }
         .preferredColorScheme(.dark)
         .sheet(isPresented: $showProfile) { ArcProfileSheet() }
+        .sheet(isPresented: $showArcSettings) { ArcSettingsView() }
 
         .overlay(alignment: .bottomTrailing) {
             AutumnOverlay()
@@ -225,6 +227,10 @@ struct DARTTopBar: View {
                     DARTIconButton(icon: "arrow.up.and.down.and.arrow.left.and.right",
                         active: labVM.showAxisIndicators) {
                         labVM.toggleAxisIndicators()
+                    }
+                    // Settings — 3D scene defaults + Arc Edge advanced physics
+                    DARTIconButton(icon: "gearshape", active: false) {
+                        showArcSettings = true
                     }
                     // Per-plane grid toggles — always visible (not conditional)
                     DARTIconButton(icon: "square.split.bottomrightquarter",
@@ -849,6 +855,7 @@ struct ArcMusicControls: View {
         }
     }
 }
+
 
 
 
