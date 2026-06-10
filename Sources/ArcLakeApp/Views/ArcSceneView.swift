@@ -115,16 +115,23 @@ public struct ArcSceneView: UIViewRepresentable {
         var camNode: SCNNode?
         var lastScene: SCNScene?
 
-        // Spherical coordinates of camera relative to pivot
-        private var theta:  Float = 0.4       // azimuth
-        private var phi:    Float = 0.6       // polar angle from Y-up
-        private var radius: Float = 20.0      // distance (dolly changes this)
-        private var pivot   = SIMD3<Float>.zero
+        // ── Arc Edge Vector turntable camera (quaternion) ────────
+        // Ported 1:1 from arc-edge-vector.html CAM system:
+        //   q    — orientation quaternion
+        //   r    — orbit distance
+        //   pan  — world-space look-at center (pivot)
+        // Yaw rotates around world-Y, pitch around camera-right —
+        // the horizon always stays level (turntable, not trackball).
+        static let defaultQ: simd_quatf = simd_normalize(
+            simd_quatf(angle:  0.52, axis: SIMD3<Float>(0,1,0)) *
+            simd_quatf(angle: -0.38, axis: SIMD3<Float>(1,0,0)))
 
-        // Gesture start snapshots
-        private var θ0: Float = 0;  private var φ0: Float = 0
-        private var r0: Float = 0;  private var roll0: Float = 0
-        private var pivot0 = SIMD3<Float>.zero
+        private var camQ:   simd_quatf = Coordinator.defaultQ
+        private var radius: Float = 20.0
+        private var pivot   = SIMD3<Float>.zero   // == CAM.pan
+
+        // Gesture start snapshot for pinch dolly
+        private var r0: Float = 0
 
         init(labVM: ArcLabViewModel) { self.labVM = labVM }
 
@@ -143,10 +150,15 @@ public struct ArcSceneView: UIViewRepresentable {
                 let dy = Float(cur.y - lastOrbitTranslation.y)
                 lastOrbitTranslation = cur
 
-                // Build 171 orbit — matches user preference
-                // theta subtracts dx, phi subtracts dy
-                theta -= dx * 0.006
-                phi    = max(0.02, min(.pi - 0.02, phi - dy * 0.006))
+                // Arc Edge Vector turntable:
+                //   qYaw   around world-Y      (horizon stays level)
+                //   qPitch around camera-right
+                //   q = qYaw * qPitch * q   (exact web-app order)
+                let spd: Float = 0.006
+                let right = camQ.act(SIMD3<Float>(1,0,0))
+                let qYaw   = simd_quatf(angle: -dx * spd, axis: SIMD3<Float>(0,1,0))
+                let qPitch = simd_quatf(angle: -dy * spd, axis: right)
+                camQ = simd_normalize(qYaw * qPitch * camQ)
                 commit()
             }
         }
@@ -169,20 +181,12 @@ public struct ArcSceneView: UIViewRepresentable {
                 let dy = Float(cur.y - lastPanTranslation.y)
                 lastPanTranslation = cur
 
-                let speed = radius * 0.0014
-
-                // Camera local axes
-                let right = SIMD3<Float>( cos(theta),  0, -sin(theta))
-                let fwd   = SIMD3<Float>(-sin(theta) * sin(phi),
-                                          cos(phi),
-                                          -cos(theta) * sin(phi))
-                let up    = cross(fwd, right)
-
-                // X: right/left same as before
-                // Y: INVERTED — drag up (negative dy) → camera moves down (scene appears to move up)
-                pivot = pivot
-                    - right * dx * speed
-                    - up    * dy * speed   // note: minus dy = inverted vertical
+                // Arc Edge Vector 2-finger pan — exact web formula:
+                //   pan -= (right*dx - up*dy) * r * 0.0028
+                let spd = radius * 0.0028
+                let right = camQ.act(SIMD3<Float>(1,0,0))
+                let up    = camQ.act(SIMD3<Float>(0,1,0))
+                pivot -= (right * dx - up * dy) * spd
                 commit()
             }
         }
@@ -201,7 +205,8 @@ public struct ArcSceneView: UIViewRepresentable {
 
         // ── Double-tap: RESET ────────────────────────────────────
         @objc func resetView() {
-            theta = 0.4;  phi = 0.6;  radius = 20.0
+            camQ = Coordinator.defaultQ
+            radius = 20.0
             pivot = .zero
             SCNTransaction.begin()
             SCNTransaction.animationDuration = 0.45
@@ -276,23 +281,17 @@ public struct ArcSceneView: UIViewRepresentable {
         }
 
         // ── Place camera on sphere around pivot ───────────────────
-        // Converts spherical (theta, phi, radius) + roll into a camera transform.
+        // Arc Edge Vector turntable — quaternion orbit, horizon always level.
         // FOV stays at 60° always.
         func commit() {
             guard let cam = camNode else { return }
-            let sp = sin(phi),  cp = cos(phi)
-            let st = sin(theta), ct = cos(theta)
-
-            // Camera position on sphere
-            cam.position = SCNVector3(
-                pivot.x + radius * sp * st,
-                pivot.y + radius * cp,
-                pivot.z + radius * sp * ct)
-
-            // Look at pivot, then apply roll rotation
-            cam.look(at: SCNVector3(pivot.x, pivot.y, pivot.z))
-
-
+            // Exact Arc Edge Vector camera transform:
+            //   eye = q · [0,0,r] + pan ;  camera orientation = q
+            // A camera with orientation q looks along q·[0,0,-1] — which points
+            // from eye straight at pan, with up = q·[0,1,0]. No look(at:) needed.
+            let eye = camQ.act(SIMD3<Float>(0, 0, radius)) + pivot
+            cam.simdPosition    = eye
+            cam.simdOrientation = camQ
         }
 
         // All gestures can fire simultaneously
@@ -808,6 +807,7 @@ struct AtomInfoCard: View {
         .frame(maxWidth: .infinity)
     }
 }
+
 
 
 
