@@ -9,6 +9,9 @@ public final class SCNExportHelper {
 
     public enum ExportFormat { case glb, usdz }
 
+    /// Recorded animation frames to embed in GLB exports (set by caller)
+    public var recordedFrames: [RecordedFrame]? = nil
+
     public func exportScene(_ scene: SCNScene, name: String) -> URL? {
         exportScene(scene, name: name, format: .usdz)
     }
@@ -19,6 +22,18 @@ public final class SCNExportHelper {
 
         // Before export: ensure all materials are properly configured
         prepareSceneForExport(scene)
+
+        // ── REAL binary glTF 2.0 — geometry, particles (POINTS), lines,
+        //    materials, vertex colors, hierarchy + recorded animation.
+        //    Round-trips with Nomad Sculpt / Blender / three.js.
+        if format == .glb {
+            let frames = recordedFrames ?? []
+            if ArcGLBExporter().export(scene: scene, recorded: frames, to: dest) {
+                return dest
+            }
+            print("[SCNExportHelper] GLB export failed")
+            return nil
+        }
 
         let usdzTmp = tmp.appendingPathComponent("\(name)_export_tmp.usdz")
         scene.write(to: usdzTmp, options: nil, delegate: nil, progressHandler: nil)
@@ -75,3 +90,4 @@ public final class SCNExportHelper {
         }
     }
 }
+
