@@ -112,6 +112,11 @@ public let ARC_MATH_OPS: [(val: String, label: String, sym: String)] = [
 ]
 public let ARC_SHELL_NAMES = ["K","L","M","N","O","P","Q","R"]
 
+public enum ArcMeasureMode: String, CaseIterable {
+    case distance = "Distance"                       // straight default iteration
+    case velocityPotential = "Velocity Potential"    // flux bend + κ readout
+}
+
 public struct RecordedFrame {
     public let time: Double
     public let positions: [Int: SIMD3<Float>]
@@ -212,11 +217,10 @@ extension ArcLabViewModel {
                     p += offset
                     pts.append(p)
                 }
-                // Flux bend: displace interior points along arcPerp by the
-                // potential deviation from the arc's mean field. Endpoints
-                // stay welded to the components (zero displacement).
+                // Flux bend — ONLY in velocity-potential mode. Distance mode
+                // keeps the arc perfectly straight (default iteration).
                 let φmean = phis.reduce(0, +) / Double(phis.count)
-                let fluxGain: Float = 0.35
+                let fluxGain: Float = arcMeasureMode == .velocityPotential ? 0.35 : 0
                 for i in 1..<segs {
                     let t = Float(i) / Float(segs)
                     let weld = 1 - pow(2*t - 1, 2)           // 0 at ends, 1 at meridian
@@ -467,13 +471,25 @@ extension ArcLabViewModel {
         guard !isPlaying else { return }
         isPlaying = true
         startEngineTick()
+        setImportedAnimations(paused: false)   // GLB animations play with sim
         log("Simulation started")
+    }
+
+    // Resume / pause any animation players that came in with GLB imports
+    func setImportedAnimations(paused: Bool) {
+        scene.rootNode.enumerateChildNodes { node, _ in
+            for key in node.animationKeys where key.hasPrefix("glb_") {
+                node.animationPlayer(forKey: key)?.paused = paused
+            }
+        }
     }
 
     public func transportStop() {
         isPlaying = false
         if isRecording { transportStopRecording() }
         stopEngineTick()
+        setImportedAnimations(paused: true)
+        atomVelocities = [:]
         log("Simulation stopped")
     }
 
@@ -517,23 +533,69 @@ extension ArcLabViewModel {
         engineTimer = nil
     }
 
-    // 30 fps simulation tick: temperature jitter + wind drift + frame capture.
-    // Measurement lines stay connected and update dynamically every tick.
+    // 30 fps simulation tick — the full physics interaction model:
+    //   ENVIRONMENT: gravity preset, wind drift, temperature Brownian motion
+    //   ELEMENT ↔ ELEMENT: every pair couples through a gravity-like velocity
+    //   potential Φ = m·m/r², but ALL math is delivered neutron-first —
+    //   the neutron count is the blueprint mass, the proton acts as the
+    //   radian/mole passage (matter-state bridge), and the result lands on
+    //   the electron shells as motion. coupling = bridgeA · bridgeB.
     func engineTick() {
         guard isPlaying else { return }
         let dt: Float = 1.0 / 30.0
         let tempK = Float(max(0, (physics.temperature - 32) * 5/9 + 273.15))
         let jitter = (tempK / 293.0) * 0.004          // Brownian by temperature
         let wind = windDirection.vector * Float(windVelocity) * 0.002
+        let envG = Float(physics.gravity)
 
+        // Snapshot positions + per-atom neutron blueprint & bridge factor
+        struct Body { let id: Int; let pos: SIMD3<Float>
+                      let blueprint: Float; let bridge: Float }
+        var bodies: [Body] = []
         for el in selectedElements {
             guard let n = atomNode(for: el.id) else { continue }
-            var p = n.simdPosition
-            p += wind * dt * 30
+            bodies.append(Body(id: el.id, pos: n.simdPosition,
+                blueprint: Float(el.neutrons),                 // neutron = mass blueprint
+                bridge: Float(protonBridge(el.id).factor)))    // proton state passage
+        }
+
+        let G: Float = 0.012 * (envG / 9.8)   // env gravity scales the coupling
+        for i in bodies.indices {
+            guard let node = atomNode(for: bodies[i].id) else { continue }
+            var vel = atomVelocities[bodies[i].id] ?? .zero
+
+            // ── pairwise velocity-potential forces, bridge-modulated ──
+            for j in bodies.indices where j != i {
+                let dvec = bodies[j].pos - bodies[i].pos
+                let r = simd_length(dvec)
+                guard r > 0.6 else {
+                    // contact repulsion — atoms never collapse into each other
+                    if r > 1e-4 { vel -= simd_normalize(dvec) * 0.02 }
+                    continue
+                }
+                // Φ-gradient: blueprintA·blueprintB / r², passed through BOTH
+                // proton bridges (gas/liquid/solid/plasma congruency)
+                let coupling = bodies[i].bridge * bodies[j].bridge
+                let f = G * bodies[i].blueprint * bodies[j].blueprint
+                    * coupling / (r * r)
+                vel += simd_normalize(dvec) * min(f, 0.5) * dt
+            }
+
+            // ── environment ──
+            vel += wind * dt * 30
+            vel *= 0.985                                   // damping (viscosity)
+            // soft boundary — fold back inside the grid extent
+            let limit: Float = Float(gridDivisions) * 0.75 + 6
+            var p = bodies[i].pos + vel
+            for k in 0..<3 where abs(p[k]) > limit {
+                p[k] = p[k].sign == .minus ? -limit : limit
+                vel[k] *= -0.5
+            }
             p += SIMD3<Float>(Float.random(in: -jitter...jitter),
                               Float.random(in: -jitter...jitter),
                               Float.random(in: -jitter...jitter))
-            n.simdPosition = p
+            node.simdPosition = p
+            atomVelocities[bodies[i].id] = vel
         }
 
         if isRecording {
