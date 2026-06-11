@@ -178,7 +178,7 @@ struct DARTPhysicsPanel: View {
 
                         // Presets
                         HStack(spacing: 6) {
-                            ForEach([("Low",5),("Def",30),("Med",100),("Hi",250),("Max",500)], id: \.0) { lbl, val in
+                            ForEach([("Low",10),("Def",30),("Med",300),("Hi",1000),("Max",3000)], id: \.0) { lbl, val in
                                 Button {
                                     labVM.ptsPerComponent = val
                                     labVM.rebuildAllAtoms()
@@ -690,3 +690,4 @@ struct DARTLogPanel: View {
         }
     }
 }
+
