@@ -18,6 +18,7 @@ public struct ArcTabView: View {
     public var body: some View {
         ScrollView {
             VStack(spacing: 12) {
+                ArcFieldArraySection()  // Arc Edge Field Array — web parity
 
                 SectionCard(title: "Arc Edge Algorithm", icon: "circle.and.line.horizontal") {
                     // DOC constant display
@@ -179,3 +180,4 @@ struct QuantumSocketCalc: View {
         }
     }
 }
+
