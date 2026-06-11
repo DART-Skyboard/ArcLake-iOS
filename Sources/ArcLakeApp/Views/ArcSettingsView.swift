@@ -68,6 +68,23 @@ struct ArcSettingsView: View {
                     .onChange(of: labVM.showAxisLabels)    { _ in labVM.rebuildGrid() }
                     .onChange(of: labVM.gridDivisions)     { _ in labVM.rebuildGrid() }
 
+                    // ── UNITS OF MEASURE ──────────────────────────
+                    settingsCard("VIEWPORT UNITS OF MEASURE") {
+                        Text("Arc Vector 1=1 is the native unit of the arc-vector hardware graphics logic. All 3D scenes — chemistry, Arc Edge CFD, and Mantis Navigation — update dynamically.")
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.35))
+                            .fixedSize(horizontal: false, vertical: true)
+                        Picker("Units", selection: $labVM.unitSystem) {
+                            ForEach(ArcLabViewModel.ArcUnitSystem.allCases, id: \.self) { u in
+                                Text(u.rawValue).tag(u)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        Text("1 unit = " + labVM.lengthLabel(1.0))
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(themeVM.accent)
+                    }
+
                     // ── ARC EDGE PHYSICS (ADVANCED) ───────────────
                     settingsCard("ARC EDGE PHYSICS · ADVANCED") {
                         Button {
@@ -97,6 +114,23 @@ struct ArcSettingsView: View {
                                       value: $labVM.arcDOC, range: 1.0...6.0,
                                       format: "%.2f",
                                       hint: "Arc Edge deviation constant — replaces π in arc math")
+
+                            Divider().background(Color.white.opacity(0.08))
+
+                            // Physics pipe — ArcLake environment → meridian
+                            Text("ARC PHYSICS PIPE — environment → meridian")
+                                .font(.system(size: 8, design: .monospaced))
+                                .foregroundColor(.white.opacity(0.4)).tracking(1.5)
+                            Picker("Pipe", selection: $labVM.arcPhysicsPipe) {
+                                ForEach(ArcLabViewModel.ArcPipeMode.allCases, id: \.self) { m in
+                                    Text(m.rawValue).tag(m)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            Text("Pipes ArcLake temperature + gravity directly into the Sigma Meridian. Local: each arc vector deforms at its own meridian. Global: the whole welded grid propagates as one unified arc vector from world origin.")
+                                .font(.system(size: 8, design: .monospaced))
+                                .foregroundColor(.white.opacity(0.3))
+                                .fixedSize(horizontal: false, vertical: true)
 
                             Divider().background(Color.white.opacity(0.08))
 
@@ -138,6 +172,17 @@ struct ArcSettingsView: View {
                         }
                     }
 
+                    // Live rebuild — arc-vector grid deforms as you adjust
+                    Color.clear.frame(width: 0, height: 0)
+                        .onChange(of: labVM.arcDOC)          { _ in labVM.rebuildGrid() }
+                        .onChange(of: labVM.sigmaMX)         { _ in labVM.rebuildGrid() }
+                        .onChange(of: labVM.sigmaMY)         { _ in labVM.rebuildGrid() }
+                        .onChange(of: labVM.sigmaMZ)         { _ in labVM.rebuildGrid() }
+                        .onChange(of: labVM.meridianJoinXZ)  { _ in labVM.rebuildGrid() }
+                        .onChange(of: labVM.meridianJoinXY)  { _ in labVM.rebuildGrid() }
+                        .onChange(of: labVM.meridianJoinZY)  { _ in labVM.rebuildGrid() }
+                        .onChange(of: labVM.arcPhysicsPipe)  { _ in labVM.rebuildGrid() }
+
                     // ── ABOUT / OPEN SOURCE ───────────────────────
                     settingsCard("ABOUT · OPEN SOURCE") {
                         aboutRow("3D Engine",
@@ -151,6 +196,10 @@ struct ArcSettingsView: View {
                         aboutRow("GL Translation Research",
                                  "MetalANGLE — OpenGL ES → Metal API translation layer (MIT)",
                                  link: "https://github.com/kakashidinho/metalangle")
+                        Divider().background(Color.white.opacity(0.08))
+                        aboutRow("USDZ Interop Research",
+                                 "OpenUSD — Universal Scene Description (Nomad Sculpt-compatible USDZ packaging)",
+                                 link: "https://github.com/PixarAnimationStudios/OpenUSD")
                         Divider().background(Color.white.opacity(0.08))
                         aboutRow("Framework",
                                  "LEATR · BRPN · mc³ — Radical Deepscale LLC",
