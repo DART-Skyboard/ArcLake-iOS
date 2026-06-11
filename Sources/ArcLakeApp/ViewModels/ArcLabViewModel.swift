@@ -814,7 +814,11 @@ public final class ArcLabViewModel: ObservableObject {
         addGridFloor(to: scene)
     }
 
-    public func exportGLB() -> URL? { SCNExportHelper().exportScene(scene, name:"ArcLake_Export", format: .glb) }
+    public func exportGLB() -> URL? {
+        let helper = SCNExportHelper()
+        helper.recordedFrames = recordedFrames   // animation data rides in the GLB
+        return helper.exportScene(scene, name: "ArcLake_Export", format: .glb)
+    }
     public func exportUSDZ() -> URL? { SCNExportHelper().exportScene(scene, name:"ArcLake_Export", format: .usdz) }
 
 
