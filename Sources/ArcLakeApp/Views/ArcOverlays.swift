@@ -67,15 +67,14 @@ struct ArcOverlays: View {
             }
 
             if labVM.isOrbitDeltaVisible, let el = labVM.probeTarget {
-                DragShell(geoSize: geoSize, width: min(geoSize.width - 20, 420),
-                          height: 380) {
-                    OrbitDeltaNodeView(element: el)
-                }
-                .id("probe-\(el.id)-\(openKey("probe"))")
-                .zIndex(Double(zOrder["probe"] ?? 0))
-                .onTapGesture { bringToFront("probe") }
-                .transition(.opacity.combined(with: .scale(scale: 0.95)))
-                .onAppear { recordOpen("probe") }
+                // OrbitDeltaNodeView is fully self-contained (glass card + own drag).
+                // NO DragShell wrapper — it floats free over the entire UI, never clipped.
+                OrbitDeltaNodeView(element: el)
+                    .id("probe-\(el.id)-\(openKey("probe"))")
+                    .zIndex(Double(zOrder["probe"] ?? 999))
+                    .onTapGesture { bringToFront("probe") }
+                    .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                    .onAppear { recordOpen("probe") }
             }
 
             if labVM.isMantisNavVisible {
@@ -90,22 +89,6 @@ struct ArcOverlays: View {
                 .onAppear { recordOpen("mantis") }
             }
 
-            // AtomInfoCard — same layer as all panels, proper z-ordering, no clipping
-            if let el = labVM.tappedElement {
-                DragShell(geoSize: geoSize,
-                          width: min(geoSize.width - 20, 340),
-                          height: 310) {
-                    AtomInfoCard(element: el)
-                }
-                .id("atomcard-\(el.id)-\(openKey("atomcard"))")
-                .zIndex(Double(zOrder["atomcard"] ?? 999))
-                .onTapGesture { bringToFront("atomcard") }
-                .transition(.opacity.combined(with: .scale(scale: 0.95)))
-                .onAppear { recordOpen("atomcard") }
-                .onChange(of: labVM.tappedElement?.id) { _ in
-                    if labVM.tappedElement != nil { recordOpen("atomcard") }
-                }
-            }
         }
     }
 }
@@ -122,13 +105,46 @@ struct DragShell<Content: View>: View {
     @GestureState private var dragDelta = CGSize.zero
     @State private var baseOffset = CGSize.zero
 
+    // Resizable — like windows on macOS / iPadOS, works with touch too.
+    // nil until the user grabs the corner handle; then the live size.
+    @State private var userWidth:  CGFloat? = nil
+    @State private var userHeight: CGFloat? = nil
+    @State private var resizeStart: CGSize? = nil
+
+    private var liveWidth:  CGFloat { userWidth  ?? width }
+
     var body: some View {
         content()
-            // Width is fixed; height wraps content naturally — no clipping
-            .frame(width: width)
+            // Width is fixed (or user-resized); height wraps content
+            // until the user grabs the handle — then it's pinned.
+            .frame(width: liveWidth)
+            .frame(height: userHeight, alignment: .top)
             .cornerRadius(14)
             .overlay(RoundedRectangle(cornerRadius: 14)
                 .stroke(Color.white.opacity(0.12), lineWidth: 0.7))
+            // Resize grip — bottom-right corner, drag to resize
+            .overlay(alignment: .bottomTrailing) {
+                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(.white.opacity(0.45))
+                    .frame(width: 26, height: 26)
+                    .background(Color.white.opacity(0.08))
+                    .clipShape(RoundedRectangle(cornerRadius: 7))
+                    .padding(5)
+                    .gesture(
+                        DragGesture(minimumDistance: 2)
+                            .onChanged { val in
+                                if resizeStart == nil {
+                                    resizeStart = CGSize(width: liveWidth,
+                                                         height: userHeight ?? height)
+                                }
+                                guard let s = resizeStart else { return }
+                                userWidth  = max(240, min(geoSize.width,  s.width  + val.translation.width))
+                                userHeight = max(180, min(geoSize.height, s.height + val.translation.height))
+                            }
+                            .onEnded { _ in resizeStart = nil }
+                    )
+            }
             .shadow(color: .black.opacity(0.55), radius: 22, y: 6)
             .offset(CGSize(
                 width:  baseOffset.width  + dragDelta.width,
