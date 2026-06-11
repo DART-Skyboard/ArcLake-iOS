@@ -289,14 +289,12 @@ struct NodeEditorView: View {
                     }
                 }
 
-                // Connections
-                ForEach(connections) { conn in
-                    connectionPath(conn, in: geo.size)
-                }
-
-                // Nodes — all inside one transform group so .position()
-                // coordinates stay consistent with canvas pan/zoom
+                // Connections + nodes share ONE transform group, so link
+                // endpoints land exactly on sockets at any pan/zoom.
                 ZStack {
+                    ForEach(connections) { conn in
+                        connectionPath(conn, in: geo.size)
+                    }
                     ForEach(sortedNodes) { node in
                         nodeView(node)
                             .zIndex(node.id == zTop ? 100 : 0)
@@ -437,26 +435,41 @@ struct NodeEditorView: View {
     }
 
     @ViewBuilder
+    // Node geometry — EXACT mirror of EditorNodeView's layout constants
+    private func nodeRows(_ n: EditorNode) -> Int {
+        let inP  = n.ports.filter { $0 == "in"  || $0.hasPrefix("in")  }.count
+        let outP = n.ports.filter { $0 == "out" || $0.hasPrefix("out") }.count
+        return max(inP, outP, 1)
+    }
+    private func nodeHeight(_ n: EditorNode) -> CGFloat {
+        // header 28 + divider 1 + port rows + vertical padding 8
+        28 + 1 + CGFloat(nodeRows(n)) * 20 + 8
+    }
+    /// Socket centers in canvas space. Nodes are placed with .position()
+    /// (CENTER anchor), so convert center → top-left, then add socket offsets
+    /// identical to EditorNodeView: x at node edges, y = headerH + row/2.
+    private func outSocketPoint(_ n: EditorNode) -> CGPoint {
+        CGPoint(x: n.position.x + 50,
+                y: n.position.y - nodeHeight(n)/2 + 28 + 10)
+    }
+    private func inSocketPoint(_ n: EditorNode) -> CGPoint {
+        CGPoint(x: n.position.x - 50,
+                y: n.position.y - nodeHeight(n)/2 + 28 + 10)
+    }
+
     private func connectionPath(_ conn: NodeConnection, in size: CGSize) -> some View {
         if let from = nodes.first(where:{$0.id==conn.fromNodeId}),
            let to   = nodes.first(where:{$0.id==conn.toNodeId}) {
-            // Socket positions: right edge of 'from' node, left edge of 'to' node
-            // nodeWidth=100, headerH=28, portRowH=20 — out port is first row right side
-            let nodeW: CGFloat = 100
-            let headerH: CGFloat = 28
-            let portRowH: CGFloat = 20
-            let socketY = headerH + portRowH / 2 + 4  // first port row center + padding
-
-            let startX = from.position.x + canvasOffset.width + nodeW
-            let startY = from.position.y + canvasOffset.height + socketY
-            let endX   = to.position.x   + canvasOffset.width
-            let endY   = to.position.y   + canvasOffset.height + socketY
-            let cpX    = (startX + endX) / 2
+            // Drawn INSIDE the same transform group as the nodes —
+            // no manual canvasOffset/scale math, perfect socket registration
+            let s = outSocketPoint(from)
+            let e = inSocketPoint(to)
+            let cpX = (s.x + e.x) / 2
             Path { p in
-                p.move(to: CGPoint(x: startX, y: startY))
-                p.addCurve(to:     CGPoint(x: endX,   y: endY),
-                           control1: CGPoint(x: cpX,  y: startY),
-                           control2: CGPoint(x: cpX,  y: endY))
+                p.move(to: s)
+                p.addCurve(to: e,
+                           control1: CGPoint(x: cpX, y: s.y),
+                           control2: CGPoint(x: cpX, y: e.y))
             }
             .stroke(Color.cyan.opacity(0.6), style: StrokeStyle(lineWidth: 1.5, dash: [4,3]))
         }
@@ -508,7 +521,7 @@ struct EditorNodeView: View {
                 .padding(.horizontal, 10)
                 .background(node.color.opacity(0.14))
 
-                Divider().background(node.color.opacity(0.2))
+                Divider().frame(height: 1).background(node.color.opacity(0.2))
 
                 // Port labels row
                 VStack(spacing: 0) {
@@ -534,7 +547,8 @@ struct EditorNodeView: View {
                 }
                 .padding(.vertical, 4)
             }
-            .frame(width: nodeWidth)
+            .frame(width: nodeWidth,
+                   height: headerH + 1 + CGFloat(totalRows) * portRowH + 8)
             .background(Color(red:0.07, green:0.1, blue:0.17))
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8)
@@ -585,6 +599,7 @@ struct EditorNodeView: View {
         .onTapGesture { onTap() }
     }
 }
+
 
 
 
