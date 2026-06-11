@@ -198,7 +198,7 @@ struct MathSetsSection: View {
                 setCard(i)
                 if i < labVM.mathSets.count - 1 {
                     Toggle(isOn: Binding(
-                        get: { labVM.mathSets[safe: i+1]?.linked ?? false },
+                        get: { labVM.mathSets[i+1].linked },
                         set: { if i+1 < labVM.mathSets.count { labVM.mathSets[i+1].linked = $0 } })) {
                         Text("🔗 Link set \(i+1) → \(i+2) (nest outward)")
                             .font(.system(size: 10, design: .monospaced))
@@ -257,7 +257,7 @@ struct MathSetsSection: View {
                     .foregroundColor(themeVM.accent).tracking(1.5)
                 Spacer()
                 Toggle(isOn: Binding(
-                    get: { labVM.mathSets[safe: i]?.vsEnv ?? false },
+                    get: { labVM.mathSets[i].vsEnv },
                     set: { if i < labVM.mathSets.count { labVM.mathSets[i].vsEnv = $0 } })) {
                     Text("vs Env")
                         .font(.system(size: 9, design: .monospaced))
@@ -278,7 +278,7 @@ struct MathSetsSection: View {
                             }
                         }
                     } label: {
-                        Text(ARC_MATH_OPS.first(where: { $0.val == labVM.mathSets[safe: i]?.op })?.label ?? "×")
+                        Text(ARC_MATH_OPS.first(where: { $0.val == labVM.mathSets[i].op })?.label ?? "×")
                             .font(.system(size: 13, weight: .bold, design: .monospaced))
                             .foregroundColor(themeVM.accent)
                             .frame(width: 44, height: 30)
@@ -286,7 +286,7 @@ struct MathSetsSection: View {
                             .clipShape(RoundedRectangle(cornerRadius: 7))
                     }
                     Toggle(isOn: Binding(
-                        get: { labVM.mathSets[safe: i]?.radical ?? false },
+                        get: { labVM.mathSets[i].radical },
                         set: { if i < labVM.mathSets.count { labVM.mathSets[i].radical = $0 } })) {
                         Text("√").font(.system(size: 12, weight: .bold))
                             .foregroundColor(.white.opacity(0.7))
@@ -296,7 +296,7 @@ struct MathSetsSection: View {
                 atomCompColumn(i, isSource: false)
             }
 
-            if let r = labVM.mathSets[safe: i]?.result {
+            if let r = labVM.mathSets[i].result {
                 Text("= \(labVM.fmtMath(r))")
                     .font(.system(size: 11, weight: .bold, design: .monospaced))
                     .foregroundColor(themeVM.accent)
@@ -324,8 +324,8 @@ struct MathSetsSection: View {
                     }
                 }
             } label: {
-                let cur = isSource ? labVM.mathSets[safe: i]?.atomA : labVM.mathSets[safe: i]?.atomB
-                Text(cur.flatMap { labVM.mathLabel($0) } ?? "Atom (?)")
+                let cur = isSource ? labVM.mathSets[i].atomA : labVM.mathSets[i].atomB
+                Text(cur != nil ? labVM.mathLabel(cur) : "Atom (?)")
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundColor(.white.opacity(cur == nil ? 0.4 : 0.9))
                     .frame(maxWidth: .infinity).padding(.vertical, 6)
@@ -342,7 +342,7 @@ struct MathSetsSection: View {
                     }
                 }
             } label: {
-                let cur = (isSource ? labVM.mathSets[safe: i]?.compA : labVM.mathSets[safe: i]?.compB) ?? ""
+                let cur = isSource ? labVM.mathSets[i].compA : labVM.mathSets[i].compB
                 Text(comps.first(where: { $0.0 == cur })?.1 ?? cur)
                     .font(.system(size: 9, design: .monospaced))
                     .foregroundColor(.white.opacity(0.7))
