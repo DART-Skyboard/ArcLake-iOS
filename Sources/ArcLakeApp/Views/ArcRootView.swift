@@ -17,6 +17,7 @@ public struct DARTRootView: View {
     @State private var showImporter = false
     @State private var showFeedback = false
     @State private var selectedTab: DARTTab = .scene
+    @State private var sidebarCollapsed = false
 
     public var body: some View {
         GeometryReader { geo in
@@ -25,41 +26,64 @@ public struct DARTRootView: View {
                 DARTBackground().ignoresSafeArea()
 
                 VStack(spacing: 0) {
-                    // ── Top chrome ─────────────────────────────────
+                    // ── HEADER (always in view) ─────────────────────
                     DARTTopBar(showProfile: $showProfile, showAR: $showAR, showImporter: $showImporter, showFeedback: $showFeedback)
-
-                    // ── Scene tab bar ───────────────────────────────
                     DARTSceneTabBar()
 
-                    // ── Main viewport ───────────────────────────────
-                    ZStack {
-                        ArcSceneView()
-                            .frame(height: geo.size.height * 0.44)
+                    // ── BODY: collapsible LEFT menu + viewport RIGHT ─
+                    // Same layout as the Arc Lake web app: side panel
+                    // collapses so the 3D view fills the whole screen.
+                    HStack(spacing: 0) {
+                        if !sidebarCollapsed {
+                            DARTBottomPanel()
+                                .frame(width: min(geo.size.width * 0.52, 380))
+                                .transition(.move(edge: .leading).combined(with: .opacity))
+                        }
 
-                        // CFD badge
-                        if labVM.isCFDActive {
+                        ZStack {
+                            ArcSceneView()
+
+                            // Sidebar collapse handle — pinned to viewport's left edge
                             VStack {
+                                Button {
+                                    withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+                                        sidebarCollapsed.toggle()
+                                    }
+                                } label: {
+                                    Image(systemName: sidebarCollapsed ? "sidebar.left" : "chevron.left")
+                                        .font(.system(size: 12, weight: .bold))
+                                        .foregroundColor(themeVM.accent)
+                                        .frame(width: 26, height: 40)
+                                        .background(.ultraThinMaterial)
+                                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                                        .overlay(RoundedRectangle(cornerRadius: 8)
+                                            .stroke(themeVM.accent.opacity(0.3), lineWidth: 0.6))
+                                }
+                                .padding(.top, 10)
                                 Spacer()
-                                HStack {
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.leading, 6)
+
+                            // CFD badge
+                            if labVM.isCFDActive {
+                                VStack {
                                     Spacer()
-                                    DARTCFDBadge()
-                                        .padding(.trailing, 16)
-                                        .padding(.bottom, 12)
-                                        .frame(maxWidth: .infinity, alignment: .trailing)
-                                        .padding(.leading, 80)
+                                    HStack {
+                                        Spacer()
+                                        DARTCFDBadge()
+                                            .padding(.trailing, 16)
+                                            .padding(.bottom, 12)
+                                    }
                                 }
                             }
                         }
-
-                        // AtomInfoCard moved to top-level ZStack as draggable panel
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
-                    .frame(height: geo.size.height * 0.44)
+                    .frame(maxHeight: .infinity)
 
-                    // ── Sigma HUD strip ─────────────────────────────
+                    // ── FOOTER (always in view) ─────────────────────
                     DARTSigmaStrip()
-
-                    // ── Bottom panel ────────────────────────────────
-                    DARTBottomPanel()
                 }
 
                 // No dim overlay — each panel has its own close button
@@ -172,9 +196,12 @@ struct DARTTopBar: View {
                     .tracking(1)
                     .lineLimit(1)
                     .fixedSize()
-                Text("v1.45")
-                    .font(.system(size: 9, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.25))
+                Text("v" + (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.5.0"))
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .foregroundColor(themeVM.accent.opacity(0.9))
+                    .shadow(color: themeVM.accent.opacity(0.9), radius: 5)
+                    .lineLimit(1)
+                    .fixedSize()
                     .padding(.leading, 2)
             }
             .padding(.leading, 16)
@@ -200,8 +227,11 @@ struct DARTTopBar: View {
                 }
 
                 Text("\(labVM.selectedElements.count) atoms")
-                    .font(.system(size: 9, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.35))
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .foregroundColor(themeVM.accent.opacity(0.85))
+                    .shadow(color: themeVM.accent.opacity(0.5), radius: 4)
+                    .lineLimit(1)
+                    .fixedSize()
             }
 
             Spacer()
@@ -415,7 +445,7 @@ struct DARTSigmaStrip: View {
                 sigmaItem("ATOMS", value: "\(labVM.selectedElements.count)", color: .white.opacity(0.7))
                 if let el = labVM.selectedElements.first {
                     sigmaItem("C=√(d×3)²",
-                              value: String(format: "%.3f", el.arcEdgeCircumference),
+                              value: labVM.lengthLabel(el.arcEdgeCircumference),
                               color: themeVM.accent)
                 }
             }
