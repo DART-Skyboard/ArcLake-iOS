@@ -83,6 +83,7 @@ public struct DARTRootView: View {
                     .frame(maxHeight: .infinity)
 
                     // ── FOOTER (always in view) ─────────────────────
+                    ArcTransportBar()   // play / stop / REC / scrubber — web parity
                     DARTSigmaStrip()
                 }
 
@@ -462,7 +463,7 @@ struct DARTSigmaStrip: View {
 
             // Right — sigma + QS
             HStack(spacing: 12) {
-                sigmaItem("Σ", value: String(format: "%.4f", sigmaVal), color: themeVM.accent)
+                sigmaItem("Σ", value: String(format: "%.4f", labVM.mathSigma != 0 ? labVM.mathSigma : sigmaVal), color: themeVM.accent)
                 sigmaItem("QS", value: String(format: "%.4f", qsVal), color: .purple)
             }
             .padding(.trailing, 14)
