@@ -272,7 +272,8 @@ public struct ArcSceneView: UIViewRepresentable {
         private func fireAtomTap(_ el: ArcElement, pivot wp: SCNVector3) {
             pivot = SIMD3<Float>(wp.x, wp.y, wp.z)
             radius = min(radius, 8.0)
-            Task { @MainActor in self.labVM.tappedElement = el }
+            // Open the original Orbit Delta info card (same one the magnifier opens)
+            Task { @MainActor in self.labVM.openProbe(for: el) }
             SCNTransaction.begin()
             SCNTransaction.animationDuration = 0.35
             SCNTransaction.animationTimingFunction = CAMediaTimingFunction(name: .easeOut)
@@ -321,53 +322,86 @@ public struct ArcSceneView: UIViewRepresentable {
 struct ArcARView: UIViewRepresentable {
     @EnvironmentObject var labVM: ArcLabViewModel
 
-    func makeUIView(context: Context) -> ARView {
-        let arView = ARView(frame:.zero, cameraMode:.ar, automaticallyConfigureSession:true)
-        arView.environment.background = .cameraFeed()
+    // AR mode — renders the ACTUAL lab scene (atoms, particle shells,
+    // imported 3D assets, animations) anchored in the room.
+    // Gestures: 1-finger drag = turntable yaw, pinch = scale,
+    // tap = reposition onto a detected real-world surface.
+    func makeUIView(context: Context) -> ARSCNView {
+        let v = ARSCNView(frame: .zero)
+        v.automaticallyUpdatesLighting = true
+        v.autoenablesDefaultLighting   = true
+        v.scene = SCNScene()
+
         let config = ARWorldTrackingConfiguration()
         config.planeDetection = [.horizontal, .vertical]
         config.environmentTexturing = .automatic
-        if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) {
-            config.sceneReconstruction = .mesh
+        v.session.run(config, options: [.resetTracking, .removeExistingAnchors])
+
+        // Holder node — whole lab scene lives under this, scaled to room size
+        let holder = SCNNode()
+        holder.name = "ar_holder"
+        holder.scale = SCNVector3(0.02, 0.02, 0.02)   // atom ≈ palm-sized
+        holder.position = SCNVector3(0, -0.1, -0.6)   // 60 cm in front of camera
+
+        // Clone every atom + imported asset from the live lab scene.
+        // Grid planes / axis gimbal stay out — the real room is the floor.
+        let skip: Set<String> = ["grid","grid_xz","grid_xy","grid_yz","axis_origin"]
+        for child in labVM.scene.rootNode.childNodes {
+            if let n = child.name, skip.contains(n) { continue }
+            if child.camera != nil || child.light != nil { continue }
+            holder.addChildNode(child.clone())   // clone preserves particles + animations
         }
-        arView.session.run(config, options:[.resetTracking,.removeExistingAnchors])
-        spawnAtomEntities(in: arView)
-        let tap = UITapGestureRecognizer(target:context.coordinator,
-            action:#selector(Coordinator.handleTap(_:)))
-        arView.addGestureRecognizer(tap)
-        context.coordinator.arView = arView
-        return arView
+        v.scene.rootNode.addChildNode(holder)
+
+        // Gestures
+        let c = context.coordinator
+        c.arView = v
+        c.holder = holder
+        let rot   = UIPanGestureRecognizer(target: c, action: #selector(Coordinator.handleRotate(_:)))
+        rot.maximumNumberOfTouches = 1
+        let pinch = UIPinchGestureRecognizer(target: c, action: #selector(Coordinator.handlePinch(_:)))
+        let tap   = UITapGestureRecognizer(target: c, action: #selector(Coordinator.handleTap(_:)))
+        [rot, pinch, tap].forEach { v.addGestureRecognizer($0) }
+        return v
     }
 
-    func updateUIView(_ uiView: ARView, context: Context) {}
+    func updateUIView(_ uiView: ARSCNView, context: Context) {}
     func makeCoordinator() -> Coordinator { Coordinator() }
 
-    private func spawnAtomEntities(in arView: ARView) {
-        for (idx, el) in labVM.selectedElements.enumerated() {
-            let mesh   = MeshResource.generateSphere(radius: 0.04)
-            let mat    = SimpleMaterial(color: el.category.color.withAlphaComponent(0.85),
-                                        isMetallic: true)
-            let entity = ModelEntity(mesh: mesh, materials: [mat])
-            let anchor = AnchorEntity(world: SIMD3<Float>(
-                Float(idx) * 0.12 - Float(labVM.selectedElements.count) * 0.06,
-                0, -0.5))
-            anchor.addChild(entity)
-            arView.scene.addAnchor(anchor)
-        }
-    }
-
     final class Coordinator: NSObject {
-        var arView: ARView?
+        weak var arView: ARSCNView?
+        weak var holder: SCNNode?
+        private var yaw0:   Float = 0
+        private var scale0: Float = 0.02
+
+        // Turntable yaw — same feel as the main 3D scene
+        @objc func handleRotate(_ g: UIPanGestureRecognizer) {
+            guard let h = holder, let v = arView else { return }
+            if g.state == .began { yaw0 = h.eulerAngles.y }
+            if g.state == .changed {
+                let dx = Float(g.translation(in: v).x)
+                h.eulerAngles.y = yaw0 + dx * 0.008
+            }
+        }
+
+        // Pinch — grow the lab from palm-size toward room-size
+        @objc func handlePinch(_ g: UIPinchGestureRecognizer) {
+            guard let h = holder else { return }
+            if g.state == .began { scale0 = h.scale.x }
+            if g.state == .changed {
+                let s = max(0.002, min(0.5, scale0 * Float(g.scale)))
+                h.scale = SCNVector3(s, s, s)
+            }
+        }
+
+        // Tap — move the lab onto a detected real-world surface
         @objc func handleTap(_ g: UITapGestureRecognizer) {
-            guard let av = arView else { return }
-            let results = av.raycast(from: g.location(in: av),
-                allowing:.estimatedPlane, alignment:.any)
-            if let hit = results.first {
-                let mesh = MeshResource.generateSphere(radius: 0.018)
-                let mat  = SimpleMaterial(color: .cyan, isMetallic: false)
-                let e    = ModelEntity(mesh: mesh, materials: [mat])
-                let anchor = AnchorEntity(world: hit.worldTransform.columns.3.xyz)
-                anchor.addChild(e); av.scene.addAnchor(anchor)
+            guard let v = arView, let h = holder else { return }
+            let pt = g.location(in: v)
+            if let query = v.raycastQuery(from: pt, allowing: .estimatedPlane, alignment: .any),
+               let hit = v.session.raycast(query).first {
+                let t = hit.worldTransform.columns.3
+                h.position = SCNVector3(t.x, t.y, t.z)
             }
         }
     }
@@ -680,134 +714,3 @@ import UniformTypeIdentifiers
 extension SIMD4 where Scalar == Float {
     var xyz: SIMD3<Float> { SIMD3(x,y,z) }
 }
-
-
-
-
-// MARK: — AtomInfoCard
-// Shown when user taps an atom in the 3D scene.
-// Displays element details + "Add to Mol Canvas" button.
-struct AtomInfoCard: View {
-    let element: ArcElement
-    @EnvironmentObject var labVM: ArcLabViewModel
-    @EnvironmentObject var themeVM: ArcThemeViewModel
-
-    var body: some View {
-        VStack(spacing: 0) {
-            // Header strip
-            HStack(spacing: 10) {
-                // Element badge
-                ZStack {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color(element.category.color).opacity(0.25))
-                        .frame(width: 52, height: 52)
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color(element.category.color), lineWidth: 1.2)
-                        .frame(width: 52, height: 52)
-                    VStack(spacing: 1) {
-                        Text(element.elementSymbol)
-                            .font(.system(size: 18, weight: .bold, design: .monospaced))
-                            .foregroundColor(.white)
-                        Text("\(element.protons)")
-                            .font(.system(size: 9, design: .monospaced))
-                            .foregroundColor(.white.opacity(0.6))
-                    }
-                }
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(element.elementName)
-                        .font(.custom("Orbitron-Bold", size: 13))
-                        .foregroundColor(.white)
-                    Text(element.category.rawValue)
-                        .font(.system(size: 9, design: .monospaced))
-                        .foregroundColor(Color(element.category.color))
-                    Text("Z=\(element.protons)  n=\(element.neutrons)  mass=\(String(format:"%.3f", element.atomicMass)) u")
-                        .font(.system(size: 9, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.5))
-                }
-                Spacer()
-                Button { labVM.tappedElement = nil } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(.white.opacity(0.4))
-                        .frame(width: 24, height: 24)
-                        .background(Color.white.opacity(0.07))
-                        .clipShape(RoundedRectangle(cornerRadius: 5))
-                }
-            }
-            .padding(12)
-
-            Divider().background(themeVM.accent.opacity(0.15))
-
-            // Stats row
-            HStack(spacing: 0) {
-                infoCell("ARC EDGE", String(format: "%.3f pm", element.arcEdgeCircumference))
-                Divider().frame(height: 32).background(Color.white.opacity(0.1))
-                infoCell("NEUTRONS", "\(element.neutrons)")
-                Divider().frame(height: 32).background(Color.white.opacity(0.1))
-                infoCell("ELECTRONS", "\(element.protons)")
-            }
-            .padding(.vertical, 8)
-
-            Divider().background(themeVM.accent.opacity(0.15))
-
-            // Action buttons
-            HStack(spacing: 8) {
-                // Add to Mol Canvas
-                Button {
-                    labVM.addToMolCanvas(element)
-                    labVM.tappedElement = nil
-                } label: {
-                    Label("Mol Canvas", systemImage: "scribble")
-                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                        .foregroundColor(.black)
-                        .padding(.horizontal, 10).padding(.vertical, 7)
-                        .background(Color.purple)
-                        .clipShape(Capsule())
-                }
-
-                // Open probe chart
-                Button {
-                    labVM.openProbe(for: element)
-                    labVM.tappedElement = nil
-                } label: {
-                    Label("Probe", systemImage: "chart.bar.xaxis")
-                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                        .foregroundColor(themeVM.accent)
-                        .padding(.horizontal, 10).padding(.vertical, 7)
-                        .background(themeVM.accent.opacity(0.12))
-                        .clipShape(Capsule())
-                }
-
-                Spacer()
-
-                // Remove from scene
-                Button {
-                    labVM.removeElement(element)
-                    labVM.tappedElement = nil
-                } label: {
-                    Image(systemName: "minus.circle.fill")
-                        .font(.system(size: 18))
-                        .foregroundColor(.red.opacity(0.7))
-                }
-            }
-            .padding(.horizontal, 12).padding(.vertical, 8)
-        }
-        // No background/clipShape here — DragShell in ArcOverlays is the container
-    }
-
-    private func infoCell(_ label: String, _ value: String) -> some View {
-        VStack(spacing: 2) {
-            Text(label)
-                .font(.system(size: 7, design: .monospaced))
-                .foregroundColor(.white.opacity(0.35))
-            Text(value)
-                .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                .foregroundColor(themeVM.accent)
-        }
-        .frame(maxWidth: .infinity)
-    }
-}
-
-
-
-
