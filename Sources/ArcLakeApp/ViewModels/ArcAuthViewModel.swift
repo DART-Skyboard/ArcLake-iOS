@@ -38,6 +38,11 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
         // Restore GitHub silently — token in keychain means already authorized,
         // never show OAuth flow again on relaunch
         if let pat = KeychainHelper.load(key: "arc_github_pat"), !pat.isEmpty {
+            // Instant: restore cached avatar from last session — no network wait
+            if let cached = KeychainHelper.load(key: "arc_github_avatar_url"),
+               let cachedURL = URL(string: cached) {
+                githubAvatarURL = cachedURL
+            }
             Task {
                 await ArcGitHubClient.shared.setToken(pat)
                 // Verify token still valid
@@ -51,6 +56,8 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
                             username   = user
                         }
                     }
+                    // Refresh avatar from GitHub (also re-caches to keychain)
+                    await self.fetchGitHubAvatar(for: user)
                 }
             }
             let ghUser = KeychainHelper.load(key: "arc_github_username") ?? ""
@@ -316,6 +323,7 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
         Task { await ArcGitHubClient.shared.setToken(token) }
         githubUsername = account.displayName; githubConnected = true
         Task { await ArcVaultService.shared.setup(githubUsername: account.displayName) }
+        Task { await self.fetchGitHubAvatar(for: account.displayName) }
     }
 
     public func disconnectGitHub() {
