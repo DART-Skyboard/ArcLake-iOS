@@ -359,9 +359,12 @@ struct ArcARView: UIViewRepresentable {
         c.holder = holder
         let rot   = UIPanGestureRecognizer(target: c, action: #selector(Coordinator.handleRotate(_:)))
         rot.maximumNumberOfTouches = 1
+        let pan2  = UIPanGestureRecognizer(target: c, action: #selector(Coordinator.handlePan(_:)))
+        pan2.minimumNumberOfTouches = 2
+        pan2.maximumNumberOfTouches = 2
         let pinch = UIPinchGestureRecognizer(target: c, action: #selector(Coordinator.handlePinch(_:)))
         let tap   = UITapGestureRecognizer(target: c, action: #selector(Coordinator.handleTap(_:)))
-        [rot, pinch, tap].forEach { v.addGestureRecognizer($0) }
+        [rot, pan2, pinch, tap].forEach { v.addGestureRecognizer($0) }
         return v
     }
 
@@ -371,17 +374,47 @@ struct ArcARView: UIViewRepresentable {
     final class Coordinator: NSObject {
         weak var arView: ARSCNView?
         weak var holder: SCNNode?
-        private var yaw0:   Float = 0
         private var scale0: Float = 0.02
+        private var lastPt: CGPoint = .zero
+        private var panLast: CGPoint = .zero
 
-        // Turntable yaw — same feel as the main 3D scene
+        // EXACT scene-mode turntable, applied to the AR holder:
+        //   qYaw around world-Y, qPitch around the DEVICE CAMERA's right
+        //   axis — q = qYaw · qPitch · q, same 0.006 speed, horizon level.
         @objc func handleRotate(_ g: UIPanGestureRecognizer) {
             guard let h = holder, let v = arView else { return }
-            if g.state == .began { yaw0 = h.eulerAngles.y }
-            if g.state == .changed {
-                let dx = Float(g.translation(in: v).x)
-                h.eulerAngles.y = yaw0 + dx * 0.008
-            }
+            let pt = g.translation(in: v)
+            if g.state == .began { lastPt = pt; return }
+            guard g.state == .changed else { return }
+            let dx = Float(pt.x - lastPt.x)
+            let dy = Float(pt.y - lastPt.y)
+            lastPt = pt
+            let spd: Float = 0.006
+            // Camera-right in world space — pitch feels screen-relative
+            let camRight: SIMD3<Float> = v.pointOfView.map {
+                simd_normalize($0.simdWorldRight)
+            } ?? SIMD3<Float>(1, 0, 0)
+            let qYaw   = simd_quatf(angle:  dx * spd, axis: SIMD3<Float>(0, 1, 0))
+            let qPitch = simd_quatf(angle:  dy * spd, axis: camRight)
+            h.simdOrientation = simd_normalize(qYaw * qPitch * h.simdOrientation)
+        }
+
+        // 2-finger pan — moves the holder in the camera plane, same as
+        // scene mode's pan (right·dx − up·dy, distance-scaled)
+        @objc func handlePan(_ g: UIPanGestureRecognizer) {
+            guard let h = holder, let v = arView,
+                  let pov = v.pointOfView else { return }
+            let pt = g.translation(in: v)
+            if g.state == .began { panLast = pt; return }
+            guard g.state == .changed else { return }
+            let dx = Float(pt.x - panLast.x)
+            let dy = Float(pt.y - panLast.y)
+            panLast = pt
+            let dist = max(simd_distance(pov.simdWorldPosition, h.simdWorldPosition), 0.15)
+            let spd = dist * 0.0028
+            let right = simd_normalize(pov.simdWorldRight)
+            let up    = simd_normalize(pov.simdWorldUp)
+            h.simdPosition -= (right * dx - up * dy) * spd
         }
 
         // Pinch — grow the lab from palm-size toward room-size
