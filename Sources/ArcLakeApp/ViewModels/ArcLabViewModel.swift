@@ -38,6 +38,48 @@ public final class ArcLabViewModel: ObservableObject {
     @Published public var meridianJoinXZ = true          // per-plane meridian join
     @Published public var meridianJoinXY = true
     @Published public var meridianJoinZY = true
+
+    // ── Arc physics pipe — routes ArcLake environment physics into the
+    //    Sigma Meridian of the arc-vector grid (arc-edge-vector.html parity)
+    public enum ArcPipeMode: String, CaseIterable {
+        case off          = "Off"
+        case localMeridian = "Local Meridian"   // each arc vector deforms at its own meridian
+        case globalGrid    = "Global Grid"      // whole grid deforms as one unified arc from world origin
+    }
+    @Published public var arcPhysicsPipe: ArcPipeMode = .off
+
+    // ── Viewport units of measure ──────────────────────────────────
+    // Arc Vector 1=1 is the native unit of the arc-vector hardware logic.
+    public enum ArcUnitSystem: String, CaseIterable {
+        case arcVector = "Arc Vector: 1=1"
+        case metric    = "Metric"
+        case imperial  = "Imperial"
+    }
+    @Published public var unitSystem: ArcUnitSystem = ArcUnitSystem(
+        rawValue: UserDefaults.standard.string(forKey: "arcLakeUnits") ?? ""
+    ) ?? .arcVector {
+        didSet { UserDefaults.standard.set(unitSystem.rawValue, forKey: "arcLakeUnits") }
+    }
+    /// Human-readable length for `units` scene units, in the active unit system.
+    /// 1 scene unit = 1 arc vector = 1 metre (metric) = 3.28084 ft (imperial).
+    public func lengthLabel(_ units: Double) -> String {
+        switch unitSystem {
+        case .arcVector: return String(format: "%.3f av", units)
+        case .metric:    return units >= 1000 ? String(format: "%.3f km", units/1000)
+                                              : String(format: "%.3f m",  units)
+        case .imperial:
+            let ft = units * 3.28084
+            return ft >= 5280 ? String(format: "%.3f mi", ft/5280)
+                              : String(format: "%.2f ft", ft)
+        }
+    }
+    public var unitSuffix: String {
+        switch unitSystem {
+        case .arcVector: return "av"
+        case .metric:    return "m"
+        case .imperial:  return "ft"
+        }
+    }
     @Published public var showFloor = false
     @Published public var showAxisLabels     = true
     @Published public var showAxisIndicators = true
@@ -114,6 +156,35 @@ public final class ArcLabViewModel: ObservableObject {
         // 20×20 unit floor plane by default (gridDivisions cells per side)
         let N = max(2, gridDivisions / 2); let step: Float = 1.5; let ext = Float(N) * step
 
+        // ── Arc-vector sigma: physics pipe feeds environment physics
+        //    directly into the Sigma Meridian (temperature + gravity terms)
+        let baseSigma = SIMD3<Float>(Float(sigmaMX), Float(sigmaMY), Float(sigmaMZ))
+        var sigma = baseSigma
+        if arcPhysicsPipe != .off {
+            let tempTerm = Float((physics.temperature - 72.0) / 72.0) * 1.5   // °F deviation
+            let gravTerm = Float((physics.gravity - 9.8) / 9.8) * 1.5          // m/s² deviation
+            sigma += SIMD3<Float>(gravTerm, tempTerm, gravTerm)
+        }
+        let docScale  = Float(arcDOC) / 3.0          // DOC replaces π — 3.0 = neutral
+        let deformOn  = simd_length(sigma) > 0.0005
+        let globalMode = (arcPhysicsPipe == .globalGrid)
+
+        // Arc-vector displacement field (arc-edge-vector.html parity):
+        // bell(u) = 1 − u² — welds to zero at arc-vector endpoints, peaks at meridian.
+        // local  : each line is its own arc vector (meridian at its midpoint)
+        // global : the entire grid is ONE unified arc vector propagating from world
+        //          origin — the unified surface the per-plane Join Meridian creates.
+        func arcDisp(_ t: Float, _ ortho: Float, _ amp: Float) -> Float {
+            guard deformOn, amp != 0 else { return 0 }
+            if globalMode {
+                let r = sqrt(t*t + ortho*ortho) / ext
+                return amp * max(0, 1 - r*r) * docScale
+            } else {
+                let u = t / ext
+                return amp * max(0, 1 - u*u) * docScale
+            }
+        }
+
         // Grid line — cyan, constant lighting
         func makeLine(_ a: SCNVector3, _ b: SCNVector3, alpha: CGFloat) -> SCNNode {
             let dx=b.x-a.x, dy=b.y-a.y, dz=b.z-a.z
@@ -127,6 +198,28 @@ public final class ArcLabViewModel: ObservableObject {
             else if abs(dz)>0.001 { n.eulerAngles=SCNVector3(Float.pi/2,0,0) }
             return n
         }
+
+        // Arc-vector grid line — when deformation is active, the line renders
+        // as a sampled polyline of the quad spline; otherwise one cylinder.
+        func makeArcLine(_ a: SCNVector3, _ b: SCNVector3, alpha: CGFloat,
+                         axis: Int, lift: Int, ortho: Float, joined: Bool) -> SCNNode {
+            let amp: Float = joined ? sigma[lift] : 0
+            guard deformOn, amp != 0 else { return makeLine(a, b, alpha: alpha) }
+            let parent = SCNNode()
+            let segs = 24
+            var prev: SCNVector3? = nil
+            for i in 0...segs {
+                let f = Float(i) / Float(segs)
+                var p = SCNVector3(a.x + (b.x-a.x)*f, a.y + (b.y-a.y)*f, a.z + (b.z-a.z)*f)
+                let t = (axis == 0 ? p.x : (axis == 1 ? p.y : p.z))
+                let d = arcDisp(t, ortho, amp)
+                if lift == 0 { p.x += d } else if lift == 1 { p.y += d } else { p.z += d }
+                if let q = prev { parent.addChildNode(makeLine(q, p, alpha: alpha)) }
+                prev = p
+            }
+            return parent
+        }
+
 
         // Solid positive half-axis
         func posAxis(_ color: UIColor, length: Float, rx: Float, rz: Float,
@@ -235,8 +328,12 @@ public final class ArcLabViewModel: ObservableObject {
             for i in stride(from: -N, through: N, by: 1) {
                 let o=Float(i)*step; let major=(i%4==0)
                 let a: CGFloat = major ? 0.18 : 0.06
-                g.addChildNode(makeLine(SCNVector3(-ext,0,o),SCNVector3(ext,0,o),alpha:a))
-                g.addChildNode(makeLine(SCNVector3(o,0,-ext),SCNVector3(o,0,ext),alpha:a))
+                // XZ floor plane — each line is an arc vector lifting in Y;
+                // Join Meridian welds them into one unified deformable surface
+                g.addChildNode(makeArcLine(SCNVector3(-ext,0,o),SCNVector3(ext,0,o),alpha:a,
+                                           axis:0, lift:1, ortho:o, joined:meridianJoinXZ))
+                g.addChildNode(makeArcLine(SCNVector3(o,0,-ext),SCNVector3(o,0,ext),alpha:a,
+                                           axis:2, lift:1, ortho:o, joined:meridianJoinXZ))
             }
             target.rootNode.addChildNode(g)
         }
@@ -244,8 +341,10 @@ public final class ArcLabViewModel: ObservableObject {
             let g=SCNNode(); g.name="grid_xy"
             for i in stride(from: -N, through: N, by: 1) {
                 let o=Float(i)*step; let major=(i%4==0); let a: CGFloat = major ? 0.18 : 0.06
-                g.addChildNode(makeLine(SCNVector3(-ext,o,0),SCNVector3(ext,o,0),alpha:a))
-                g.addChildNode(makeLine(SCNVector3(o,-ext,0),SCNVector3(o,ext,0),alpha:a))
+                g.addChildNode(makeArcLine(SCNVector3(-ext,o,0),SCNVector3(ext,o,0),alpha:a,
+                                           axis:0, lift:2, ortho:o, joined:meridianJoinXY))
+                g.addChildNode(makeArcLine(SCNVector3(o,-ext,0),SCNVector3(o,ext,0),alpha:a,
+                                           axis:1, lift:2, ortho:o, joined:meridianJoinXY))
             }
             target.rootNode.addChildNode(g)
         }
@@ -253,8 +352,10 @@ public final class ArcLabViewModel: ObservableObject {
             let g=SCNNode(); g.name="grid_yz"
             for i in stride(from: -N, through: N, by: 1) {
                 let o=Float(i)*step; let major=(i%4==0); let a: CGFloat = major ? 0.18 : 0.06
-                g.addChildNode(makeLine(SCNVector3(0,-ext,o),SCNVector3(0,ext,o),alpha:a))
-                g.addChildNode(makeLine(SCNVector3(0,o,-ext),SCNVector3(0,o,ext),alpha:a))
+                g.addChildNode(makeArcLine(SCNVector3(0,-ext,o),SCNVector3(0,ext,o),alpha:a,
+                                           axis:1, lift:0, ortho:o, joined:meridianJoinZY))
+                g.addChildNode(makeArcLine(SCNVector3(0,o,-ext),SCNVector3(0,o,ext),alpha:a,
+                                           axis:2, lift:0, ortho:o, joined:meridianJoinZY))
             }
             target.rootNode.addChildNode(g)
         }
