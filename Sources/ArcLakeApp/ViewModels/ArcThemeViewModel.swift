@@ -37,7 +37,11 @@ public final class ArcThemeViewModel: ObservableObject {
         }
     }
 
-    @Published public var current: Theme = .stealth
+    @Published public var current: Theme = Theme(
+        rawValue: UserDefaults.standard.string(forKey: "arcLakeTheme") ?? ""
+    ) ?? .stealth {
+        didSet { UserDefaults.standard.set(current.rawValue, forKey: "arcLakeTheme") }
+    }
 
     public var bg: Color     { current.background }
     public var accent: Color { current.accent }
@@ -60,3 +64,4 @@ extension Color {
         self.init(red: r, green: g, blue: b)
     }
 }
+
