@@ -7,6 +7,7 @@ public struct PhysicsTabView: View {
     public var body: some View {
         ScrollView {
             VStack(spacing: 12) {
+                PhysicsEnvSection()  // Env presets · matter state · wind
 
                 // ── Point cloud resolution ──────────────────────────
                 SectionCard(title: "Particle Resolution", icon: "circle.grid.3x3") {
@@ -215,3 +216,4 @@ struct PhysicsSlider: View {
         }.padding(.vertical, 2)
     }
 }
+
