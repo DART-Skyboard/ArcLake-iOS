@@ -6,6 +6,7 @@ public struct OrbitDeltaNodeView: View {
     @EnvironmentObject var labVM: ArcLabViewModel
     @EnvironmentObject var themeVM: ArcThemeViewModel
     @State private var dragOffset = CGSize.zero
+    @State private var basePos    = CGSize.zero
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -114,8 +115,18 @@ public struct OrbitDeltaNodeView: View {
         .overlay(RoundedRectangle(cornerRadius: 12)
             .stroke(themeVM.accent.opacity(0.35), lineWidth: 0.5))
         .shadow(color: themeVM.accent.opacity(0.2), radius: 12)
-        .offset(dragOffset)
-        .gesture(DragGesture().onChanged { dragOffset = $0.translation })
+        .offset(CGSize(width:  basePos.width  + dragOffset.width,
+                       height: basePos.height + dragOffset.height))
+        .gesture(
+            DragGesture()
+                .onChanged { dragOffset = $0.translation }
+                .onEnded { val in
+                    // Accumulate — card stays where you leave it, anywhere on screen
+                    basePos.width  += val.translation.width
+                    basePos.height += val.translation.height
+                    dragOffset = .zero
+                }
+        )
     }
 
     private func probeRow(_ label: String, _ value: String, _ color: Color) -> some View {
@@ -129,3 +140,4 @@ public struct OrbitDeltaNodeView: View {
         .padding(.horizontal, 12).padding(.vertical, 2)
     }
 }
+
