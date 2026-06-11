@@ -44,6 +44,19 @@ struct ArcFieldArraySection: View {
                 .clipShape(RoundedRectangle(cornerRadius: 8))
             }
 
+            // Measure mode — straight distance vs velocity-potential flux
+            Picker("Mode", selection: Binding(
+                get: { labVM.arcMeasureMode },
+                set: { labVM.arcMeasureMode = $0; labVM.rebuildArcMeasures() })) {
+                ForEach(ArcMeasureMode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            Text(labVM.arcMeasureMode == .distance
+                 ? "Straight arc — measures component distance"
+                 : "Arc bends with neighbor Φ flux — κ curvature readout active")
+                .font(.system(size: 8.5, design: .monospaced))
+                .foregroundColor(.white.opacity(0.35))
+
             // Mode 2 — Sequential selection
             Text("SEQUENTIAL SELECTION (MULTI-SELECT)")
                 .font(.system(size: 9, weight: .bold, design: .monospaced))
