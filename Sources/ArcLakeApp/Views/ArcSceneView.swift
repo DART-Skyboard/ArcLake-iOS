@@ -666,6 +666,15 @@ struct ArcAssetImporter: UIViewControllerRepresentable {
 
         // MARK: — GLB Load via ModelIO
         private func loadGLB(url: URL) async {
+            // 1) True binary glTF parse — handles Nomad Sculpt GLB exports
+            //    (points, lines, vertex colors) that ModelIO refuses
+            if url.pathExtension.lowercased() == "glb",
+               let node = ArcGLBImporter().importGLB(url: url) {
+                normalizeScale(node)
+                await MainActor.run { self.onLoad(node) }
+                return
+            }
+            // 2) Fallback: ModelIO GLB/GLTF → USD conversion
             let tmp = FileManager.default.temporaryDirectory
                 .appendingPathComponent(url.deletingPathExtension().lastPathComponent + "_arc.usdz")
             do {
