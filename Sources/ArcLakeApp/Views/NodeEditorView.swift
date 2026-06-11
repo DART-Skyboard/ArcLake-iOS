@@ -434,7 +434,6 @@ struct NodeEditorView: View {
         return $nodes[idx]
     }
 
-    @ViewBuilder
     // Node geometry — EXACT mirror of EditorNodeView's layout constants
     private func nodeRows(_ n: EditorNode) -> Int {
         let inP  = n.ports.filter { $0 == "in"  || $0.hasPrefix("in")  }.count
@@ -457,6 +456,7 @@ struct NodeEditorView: View {
                 y: n.position.y - nodeHeight(n)/2 + 28 + 10)
     }
 
+    @ViewBuilder
     private func connectionPath(_ conn: NodeConnection, in size: CGSize) -> some View {
         if let from = nodes.first(where:{$0.id==conn.fromNodeId}),
            let to   = nodes.first(where:{$0.id==conn.toNodeId}) {
