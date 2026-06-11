@@ -15,6 +15,7 @@ public struct MathTabView: View {
     public var body: some View {
         ScrollView {
             VStack(spacing: 12) {
+                MathSetsSection()  // SET 1–4 neutron-first math engine
 
                 SectionCard(title: "Neutron-First Math", icon: "function") {
                     Text("n⁰ → p⁺ → K → L → M → N → O → P → Q")
@@ -123,3 +124,4 @@ public struct MathTabView: View {
         .padding(.vertical, 2)
     }
 }
+
