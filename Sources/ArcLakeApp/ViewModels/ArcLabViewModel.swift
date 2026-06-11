@@ -20,7 +20,40 @@ public final class ArcLabViewModel: ObservableObject {
 
     // ── Particle resolution — pts per component (proton/neutron/electron)
     // Default 30, user-adjustable in Physics tab
-    @Published public var ptsPerComponent: Int = 30
+    @Published public var ptsPerComponent: Int = 30   // range 1…3000 (web parity)
+
+    // ── Arc Edge Field Array state ───────────────────────────────────
+    @Published public var arcAllSceneComponent: ArcComponentField? = nil
+    @Published public var arcFieldComponents: Set<ArcComponentField> =
+        [.group, .neutron, .proton, .electron]
+    @Published public var arcSeqSelection: [Int] = []      // atoms in LINK ORDER
+    @Published public var arcSameKindFilter = false
+    @Published public var arcMeasureResults: [ArcMeasureResult] = []
+    @Published public var arcEdgeLengthSum: Double = 0
+
+    // ── Math engine state (SET 1–4 cards) ───────────────────────────
+    @Published public var mathSets: [ArcMathSet] =
+        [ArcMathSet(), ArcMathSet(), ArcMathSet(), ArcMathSet()]
+    @Published public var mathSigma: Double = 0
+    @Published public var mathChain: [String] = []
+    @Published public var mathSigmaEnv = false
+
+    // ── Physics environment ──────────────────────────────────────────
+    @Published public var matterState: MatterState = .gas
+    @Published public var envPreset: EnvPreset = .earth
+    @Published public var windVelocity: Double = 0
+    @Published public var windDirection: WindDir = .plusZ
+
+    // ── Transport / recorder ─────────────────────────────────────────
+    @Published public var isPlaying = false
+    @Published public var isRecording = false
+    @Published public var playheadFrame: Int = 0
+    @Published public var recordedFrameCount: Int = 0
+    public var recordedFrames: [RecordedFrame] = []
+    var engineTimer: Timer? = nil
+
+    // Engine extension (separate file) needs atom node access
+    public func atomNode(for id: Int) -> SCNNode? { atomNodes[id] }
     @Published public var isNodeEditorVisible = false
     @Published public var isMantisNavVisible = false
     @Published public var showGrid   = true
@@ -817,6 +850,7 @@ private extension Array {
         indices.contains(index) ? self[index] : nil
     }
 }
+
 
 
 
