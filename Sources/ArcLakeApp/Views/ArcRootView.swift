@@ -67,7 +67,9 @@ public struct DARTRootView: View {
 
                             // Mantis Navigation HUD — bottom-centered over the
                             // 3D viewport, semi-transparent, web parity
-                            if labVM.mantis.isActive {
+                            // HUD lives on the Mantis Nav tab only
+                            if labVM.mantis.isActive,
+                               labVM.activeTabIndex == labVM.mantisTabIndex {
                                 VStack {
                                     Spacer()
                                     MantisHUDOverlay(model: labVM.mantis)
@@ -106,8 +108,6 @@ public struct DARTRootView: View {
                                value: labVM.isPeriodicTableVisible)
                     .animation(.spring(response: 0.3, dampingFraction: 0.8),
                                value: labVM.isMolCanvasVisible)
-                    .animation(.spring(response: 0.3, dampingFraction: 0.8),
-                               value: labVM.isMantisNavVisible)
 
                 // AtomInfoCard is now in ArcOverlays — same layer as all panels
             }
@@ -303,9 +303,6 @@ struct DARTTopBar: View {
                         showAR.toggle()
                     }
                     // Mantis Navigation
-                    DARTIconButton(icon: "airplane", active: labVM.isMantisNavVisible) {
-                        withAnimation(.spring()) { labVM.isMantisNavVisible.toggle() }
-                    }
                     DARTIconButton(icon: "bubble.left.and.bubble.right", active: false) {
                         showFeedback = true
                     }
@@ -393,6 +390,8 @@ struct DARTSceneTab: View {
     var isActive: Bool { labVM.activeTabIndex == index }
     var isCFD: Bool { index < labVM.sceneTabsCFD.count ? labVM.sceneTabsCFD[index] : false }
     var name: String { index < labVM.sceneTabs_data.count ? labVM.sceneTabs_data[index] : "" }
+    var isMantis: Bool { name == "Mantis Nav" }
+    static let skyBlue = Color(red: 0.35, green: 0.78, blue: 1.0)
 
     var body: some View {
         HStack(spacing: 4) {
@@ -401,9 +400,15 @@ struct DARTSceneTab: View {
                     .fill(Color(red:0.2,green:0.7,blue:1.0))
                     .frame(width: 4, height: 4)
             }
+            if isMantis {
+                Image(systemName: "paperplane.fill")
+                    .font(.system(size: 7))
+                    .foregroundColor(Self.skyBlue)
+            }
             Text(name)
                 .font(.system(size: 9, weight: isActive ? .semibold : .regular, design: .monospaced))
-                .foregroundColor(isActive ? themeVM.accent : .white.opacity(0.35))
+                .foregroundColor(isMantis ? Self.skyBlue
+                                 : (isActive ? themeVM.accent : .white.opacity(0.35)))
             if labVM.sceneTabs_data.count > 1 {
                 Button { labVM.removeSceneTab(index) } label: {
                     Image(systemName: "xmark")
@@ -413,10 +418,14 @@ struct DARTSceneTab: View {
             }
         }
         .padding(.horizontal, 9).padding(.vertical, 4)
-        .background(isActive ? themeVM.accent.opacity(0.1) : Color.white.opacity(0.03))
+        .background(isMantis ? Self.skyBlue.opacity(isActive ? 0.16 : 0.08)
+                    : (isActive ? themeVM.accent.opacity(0.1) : Color.white.opacity(0.03)))
         .clipShape(RoundedRectangle(cornerRadius: 4))
         .overlay(RoundedRectangle(cornerRadius: 4)
-            .stroke(isActive ? themeVM.accent.opacity(0.35) : Color.clear, lineWidth: 0.7))
+            .stroke(isMantis ? Self.skyBlue.opacity(isActive ? 0.85 : 0.45)
+                    : (isActive ? themeVM.accent.opacity(0.35) : Color.clear), lineWidth: 0.7))
+        .shadow(color: isMantis ? Self.skyBlue.opacity(isActive ? 0.7 : 0.35) : .clear,
+                radius: isMantis ? 6 : 0)
         .onTapGesture { labVM.switchTab(index) }
     }
 }
