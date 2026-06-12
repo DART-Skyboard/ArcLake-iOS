@@ -13,6 +13,11 @@ struct NodeEditorView: View {
 
     @State private var nodes:       [EditorNode]       = []
     @State private var connections: [NodeConnection]   = []
+    // Per-tab node state — each scene tab keeps its own graph
+    @State private var tabNodes:       [Int: [EditorNode]]     = [:]
+    @State private var tabConnections: [Int: [NodeConnection]] = [:]
+    @State private var tabGroups:      [Int: [NodeGroup]]      = [:]
+    @State private var shownTab: Int = -1
     @State private var canvasOffset  = CGSize.zero
     @State private var canvasPanBase = CGSize.zero   // tracks pan start so no drift
     @State private var canvasScale: CGFloat = 1.0
@@ -68,10 +73,61 @@ struct NodeEditorView: View {
             footer
         }
         .background(Color(red:0.03, green:0.06, blue:0.12))   // opaque — prevents see-through
-        .onAppear { syncFromMolCanvas() }
+        .onAppear {
+            shownTab = labVM.activeTabIndex
+            loadTab(shownTab)
+            syncFromSceneAtoms()
+            syncFromMolCanvas()
+        }
         .onChange(of: labVM.molAtoms.count) { _ in syncFromMolCanvas() }
-        // Note: syncFromSceneAtoms removed — NodeEditor syncs from Mol Canvas only.
-        // The info card "Mol Canvas" button → addToMolCanvas → syncs here naturally.
+        // Dynamic per-tab graph: switching scene tabs swaps the node graph,
+        // and atoms added to the active scene auto-create element nodes.
+        .onChange(of: labVM.activeTabIndex) { newTab in
+            saveTab(shownTab)
+            shownTab = newTab
+            loadTab(newTab)
+            syncFromSceneAtoms()
+        }
+        .onChange(of: labVM.selectedElements.count) { _ in
+            syncFromSceneAtoms()
+        }
+    }
+
+    // ── Per-tab graph persistence ─────────────────────────────────
+    private func saveTab(_ idx: Int) {
+        guard idx >= 0 else { return }
+        tabNodes[idx] = nodes
+        tabConnections[idx] = connections
+        tabGroups[idx] = nodeGroups
+    }
+    private func loadTab(_ idx: Int) {
+        nodes = tabNodes[idx] ?? []
+        connections = tabConnections[idx] ?? []
+        nodeGroups = tabGroups[idx] ?? []
+        pendingFrom = nil
+        selectedForGroup = []
+    }
+
+    // Atoms in the ACTIVE scene tab → element nodes (added when atoms add)
+    private func syncFromSceneAtoms() {
+        for el in labVM.selectedElements {
+            let title = "\(el.elementSymbol) (\(el.id))"
+            if !nodes.contains(where: { $0.title == title }) {
+                nodes.append(EditorNode(
+                    type: .element, title: title,
+                    position: CGPoint(
+                        x: 50 + CGFloat(nodes.count % 5) * 90,
+                        y: 50 + CGFloat(nodes.count / 5) * 80),
+                    color: Color(el.category.color),
+                    ports: ["in","out"]))
+            }
+        }
+        // Remove nodes for atoms no longer in the scene (scene-pattern titles only)
+        let valid = Set(labVM.selectedElements.map { "\($0.elementSymbol) (\($0.id))" })
+        nodes.removeAll { n in
+            n.type == .element && n.title.hasSuffix(")") && n.title.contains(" (")
+                && !valid.contains(n.title)
+        }
     }
 
     // MARK: — Header
