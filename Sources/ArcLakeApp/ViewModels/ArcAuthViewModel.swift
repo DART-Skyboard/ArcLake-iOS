@@ -71,8 +71,10 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
         // Check saved Apple credential state
         guard let savedUID = KeychainHelper.load(key: keychainKey),
               !savedUID.isEmpty else {
-            // No saved credential — check for existing accounts silently
-            performExistingAccountSetupFlows()
+            // No saved credential — show the welcome screen quietly.
+            // NOTE: deliberately NOT calling performExistingAccountSetupFlows()
+            // here: its ASAuthorizationPasswordProvider request makes iOS pop
+            // the keychain-password sheet on every cold launch.
             return
         }
 
@@ -90,12 +92,11 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
                     Task { await ArcVaultService.shared.setup(
                         githubUsername: self.githubConnected ? self.githubUsername : nil) }
                 case .revoked, .notFound:
-                    // Credential revoked — clear and show login
+                    // Credential revoked — clear silently; user re-picks a method
                     KeychainHelper.delete(key: self.keychainKey)
                     KeychainHelper.delete(key: self.displayNameKey)
-                    self.performExistingAccountSetupFlows()
                 @unknown default:
-                    self.performExistingAccountSetupFlows()
+                    break   // no automatic credential prompts at launch
                 }
             }
         }
