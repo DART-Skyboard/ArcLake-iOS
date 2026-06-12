@@ -33,14 +33,57 @@ public final class MantisNavModel: ObservableObject {
     @Published public var joyX: Double = 0           // −1…1
     @Published public var joyY: Double = 0
     @Published public var thrust: Double = 0         // 0…1
-    // Chemistry controls
-    @Published public var oxidizer = MantisPropellant()
-    @Published public var fuel = MantisPropellant(psi: 120, density: 0.8)
+    // Chemistry — MULTIPLE propellant sets (oxidizer+fuel+chamber each),
+    // all contributing to the launch force, each assignable to a 3D asset
+    public struct PropSet: Identifiable {
+        public let id = UUID()
+        public var oxidizer = MantisPropellant()
+        public var fuel = MantisPropellant(psi: 120, density: 0.8)
+        public var depressPsi: Double = 0
+        public var depressAtmPsi: Double = 14.7
+        public var assetName: String? = nil      // nil = default drone
+    }
+    @Published public var propSets: [PropSet] = [PropSet()]
     @Published public var oxiFlow: Double = 0        // 0…100 (%)
     @Published public var fuelFlow: Double = 0
-    @Published public var depressPsi: Double = 0
-    @Published public var depressAtmPsi: Double = 14.7
     @Published public var isLaunched = false
+    // Vehicle: default drone or any imported 3D asset
+    @Published public var vehicleAsset: String? = nil   // node-name prefix match
+    // Camera modes — MN.html parity (follow = behind+above, asset faces away)
+    public enum CamMode: String, CaseIterable {
+        case orbit = "Orbit", follow = "Follow", fpv = "FPV",
+             top = "Top", front = "Front", back = "Back",
+             left = "Left", right = "Right"
+    }
+    @Published public var cameraMode: CamMode = .follow
+    // Environment presets — MN.html envPhysics verbatim (g0 / P0)
+    public enum MantisEnv: String, CaseIterable {
+        case earth = "🌍 Earth", moon = "🌙 Moon", mars = "🔴 Mars",
+             titan = "🟠 Titan", custom = "⚙ Custom"
+        var g0: Double? { switch self {
+            case .earth: return 9.81; case .moon: return 1.62
+            case .mars: return 3.72; case .titan: return 1.35
+            case .custom: return nil } }
+        var psi: Double? { switch self {
+            case .earth: return 14.7; case .moon: return 0.0000001
+            case .mars: return 0.092; case .titan: return 21.3
+            case .custom: return nil } }
+    }
+    @Published public var envPreset: MantisEnv = .earth
+    @Published public var customG: Double = 9.81
+    @Published public var customPsi: Double = 14.7
+    public weak var labVM: ArcLabViewModel?
+    public var gravityScale: Double {
+        (envPreset.g0 ?? customG) / 9.81
+    }
+    public func applyEnv(_ e: MantisEnv) {
+        envPreset = e
+        // Sync into the ArcLake physics on the active tab — both ways
+        if let g = e.g0 { labVM?.physics.gravity = g; customG = g }
+        else { labVM?.physics.gravity = customG }
+        if let p = e.psi { labVM?.physics.pressure = p; customPsi = p }
+        else { labVM?.physics.pressure = customPsi }
+    }
     // HUD readouts
     @Published public var hudForce: Double = 0
     @Published public var hudLift: Double = 0
@@ -100,36 +143,76 @@ public final class MantisNavModel: ObservableObject {
     }
 
     // getPropData → force: potential · density · valveGate · flow%, clamped
-    private func propForce(_ p: MantisPropellant, flowPct: Double) -> Double {
-        let depressTotal = depressPsi + depressAtmPsi
+    private func propForce(_ p: MantisPropellant, depress: Double, flowPct: Double) -> Double {
         var potential = p.totalPressure
-        if depressTotal < p.totalPressure {
-            potential += (p.totalPressure - depressTotal)        // pressure differential
+        if depress < p.totalPressure {
+            potential += (p.totalPressure - depress)             // pressure differential
         }
         let valveGate = p.valveAngle / 180.0
         return min(potential * p.density * valveGate * (flowPct / 100.0), p.maxFlow)
+    }
+    // Total force across ALL propellant sets at given throttle %
+    func totalChemForce(oxiPct: Double, fuelPct: Double) -> Double {
+        propSets.reduce(0) { acc, s in
+            let d = s.depressPsi + s.depressAtmPsi
+            return acc + propForce(s.oxidizer, depress: d, flowPct: oxiPct)
+                       + propForce(s.fuel,     depress: d, flowPct: fuelPct)
+        }
+    }
+    var totalWeightLbs: Double {
+        max(propSets.reduce(0) { $0 + $1.oxidizer.totalWeightLbs + $1.fuel.totalWeightLbs }, 0.001)
+    }
+    // The vehicle node — default drone or selected imported asset
+    func vehicleNode(in scene: SCNScene) -> SCNNode? {
+        if let name = vehicleAsset,
+           let n = scene.rootNode.childNodes.first(where: { $0.name?.contains(name) == true }) {
+            return n
+        }
+        return scene.rootNode.childNode(withName: "mantis_drone", recursively: false)
+    }
+    // Imported asset names available for assignment
+    public func importedAssets() -> [String] {
+        guard let scene = scene else { return [] }
+        return scene.rootNode.childNodes.compactMap { n in
+            guard let nm = n.name,
+                  nm.hasPrefix("imported_") || nm.hasPrefix("glb_import_") else { return nil }
+            return nm
+        }
+    }
+    // IDLE — drone: thrust = (g·2.2)/maxLift (MN.html line 1414), env-scaled.
+    // Chemistry: solve flow% so totalForce·liftScalar == appliedGravity (hover).
+    public func engageIdle() {
+        if chemistryMode {
+            let needed = (baseGravity * gravityScale * totalWeightLbs) / liftScalar
+            let fullForce = totalChemForce(oxiPct: 100, fuelPct: 100)
+            guard fullForce > 0 else { return }
+            let pct = min(100, (needed / fullForce) * 100)
+            oxiFlow = pct; fuelFlow = pct
+            isLaunched = true
+        } else {
+            thrust = min(1.0, (baseGravity * gravityScale * 2.2) / baseMaxLift)
+        }
     }
 
     // The MN.html animate() physics — verbatim integration
     private func tick() {
         guard isActive, let scene,
-              let drone = scene.rootNode.childNode(withName: "mantis_drone", recursively: false)
+              let drone = vehicleNode(in: scene)
         else { return }
 
         var lift = 0.0
+        let g = baseGravity * gravityScale                       // env preset scaling
         if chemistryMode {
             var totalForce = 0.0
             if isLaunched {                                       // LAUNCH gates the burn
-                totalForce = propForce(oxidizer, flowPct: oxiFlow)
-                          + propForce(fuel,     flowPct: fuelFlow)
+                totalForce = totalChemForce(oxiPct: oxiFlow, fuelPct: fuelFlow)
             }
             lift = totalForce * liftScalar
-            let modelWeightLbs = max(oxidizer.totalWeightLbs + fuel.totalWeightLbs, 0.001)
-            velocity.y -= baseGravity * modelWeightLbs            // appliedGravity
+            velocity.y -= g * totalWeightLbs                      // appliedGravity
             hudForce = totalForce
         } else {
             lift = thrust * baseMaxLift
-            velocity.y -= baseGravity * 2.2
+            velocity.y -= g * 2.2
             hudForce = thrust * 100
         }
         hudLift = lift
@@ -158,6 +241,32 @@ public final class MantisNavModel: ObservableObject {
         }
         hudVelH = sqrt(velocity.x * velocity.x + velocity.z * velocity.z)
         hudVelV = velocity.y
+
+        // ── Camera modes — MN.html lerp offsets, applied to arcCamera.
+        //    Orbit leaves the Arc Edge turntable in full control.
+        if cameraMode != .orbit,
+           let cam = scene.rootNode.childNode(withName: "arcCamera", recursively: false) {
+            let dp = drone.simdPosition
+            func lerpTo(_ target: SIMD3<Float>, look: Bool = true) {
+                cam.simdPosition = simd_mix(cam.simdPosition, target, SIMD3(repeating: 0.1))
+                if look { cam.look(at: SCNVector3(dp.x, dp.y, dp.z)) }
+            }
+            switch cameraMode {
+            case .fpv:
+                let o = drone.simdOrientation.act(SIMD3<Float>(0, 0.2, -0.2))
+                cam.simdPosition = dp + o
+                cam.simdOrientation = drone.simdOrientation
+            case .top:   lerpTo(dp + SIMD3<Float>(0, 20, 0))
+            case .front: lerpTo(dp + SIMD3<Float>(0, 2, 15))
+            case .back:  lerpTo(dp + SIMD3<Float>(0, 2, -15))
+            case .left:  lerpTo(dp + SIMD3<Float>(-15, 2, 0))
+            case .right: lerpTo(dp + SIMD3<Float>(15, 2, 0))
+            case .follow, .orbit:
+                // semi-birdseye behind+above; asset faces away into scene depth
+                let o = drone.simdOrientation.act(SIMD3<Float>(0, 4, 10))
+                lerpTo(dp + o)
+            }
+        }
     }
 }
 
@@ -176,11 +285,50 @@ struct MantisHUDOverlay: View {
                 Text(String(format: "H:%.2f V:%.2f", model.hudVelH, model.hudVelV))
                     .font(.system(size: 9, design: .monospaced))
                     .foregroundColor(.white.opacity(0.6))
+                // Camera attachment — MN.html upper-right HUD parity
+                Menu {
+                    ForEach(MantisNavModel.CamMode.allCases, id: \.self) { m in
+                        Button(m.rawValue) { model.cameraMode = m }
+                    }
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "video.fill").font(.system(size: 8))
+                        Text(model.cameraMode.rawValue)
+                            .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    }
+                    .foregroundColor(themeVM.accent)
+                    .padding(.horizontal, 8).padding(.vertical, 5)
+                    .background(Color.white.opacity(0.07)).clipShape(Capsule())
+                }
                 Button { model.deactivate() } label: {
                     Image(systemName: "xmark").font(.system(size: 10, weight: .bold))
                         .foregroundColor(.white.opacity(0.6))
                         .frame(width: 24, height: 24)
                         .background(Color.white.opacity(0.1)).clipShape(Circle())
+                }
+            }
+
+            // Environment presets — Earth default; syncs ArcLake physics
+            HStack(spacing: 4) {
+                ForEach(MantisNavModel.MantisEnv.allCases, id: \.self) { e in
+                    Button { model.applyEnv(e) } label: {
+                        Text(e.rawValue)
+                            .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                            .foregroundColor(model.envPreset == e ? .black : .white.opacity(0.6))
+                            .padding(.horizontal, 6).padding(.vertical, 4)
+                            .background(model.envPreset == e ? themeVM.accent : Color.white.opacity(0.06))
+                            .clipShape(Capsule())
+                    }
+                }
+                if model.envPreset == .custom {
+                    TextField("g", value: $model.customG, format: .number)
+                        .keyboardType(.decimalPad)
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundColor(themeVM.accent).frame(width: 38)
+                    TextField("psi", value: $model.customPsi, format: .number)
+                        .keyboardType(.decimalPad)
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundColor(themeVM.accent).frame(width: 38)
                 }
             }
 
@@ -194,6 +342,14 @@ struct MantisHUDOverlay: View {
                         Text(String(format: "Lift: %.4f", model.hudLift))
                             .font(.system(size: 9, design: .monospaced))
                             .foregroundColor(.white.opacity(0.5))
+                        Button { model.engageIdle() } label: {
+                            Text("IDLE")
+                                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                .foregroundColor(.black)
+                                .frame(width: 110, height: 26)
+                                .background(Color.yellow.opacity(0.85))
+                                .clipShape(Capsule())
+                        }
                         Button { model.isLaunched.toggle() } label: {
                             Text(model.isLaunched ? "ABORT" : "LAUNCH")
                                 .font(.custom("Orbitron-Bold", size: 13))
@@ -214,6 +370,14 @@ struct MantisHUDOverlay: View {
                             .font(.system(size: 9, design: .monospaced))
                             .foregroundColor(.white.opacity(0.55))
                         droneThrottle
+                        Button { model.engageIdle() } label: {
+                            Text("IDLE")
+                                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                .foregroundColor(.black)
+                                .frame(width: 120, height: 26)
+                                .background(Color.yellow.opacity(0.85))
+                                .clipShape(Capsule())
+                        }
                     }
                 }
             }
@@ -322,25 +486,59 @@ struct MantisSettingsSheet: View {
                         }
                     }.padding(.top, 16)
 
-                    propCard("OXIDIZER", p: Binding(
-                        get: { labVM.mantis.oxidizer }, set: { labVM.mantis.oxidizer = $0 }))
-                    propCard("FUEL", p: Binding(
-                        get: { labVM.mantis.fuel }, set: { labVM.mantis.fuel = $0 }))
-
-                    // Depressurization differential
+                    // ── VEHICLE — default drone or any imported 3D asset ──
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("DEPRESSURIZATION")
+                        Text("VEHICLE")
                             .font(.system(size: 9, weight: .bold, design: .monospaced))
-                            .foregroundColor(.white.opacity(0.45)).tracking(2)
-                        numRow("Chamber psi", v: Binding(
-                            get: { labVM.mantis.depressPsi }, set: { labVM.mantis.depressPsi = $0 }))
-                        numRow("Atm psi", v: Binding(
-                            get: { labVM.mantis.depressAtmPsi }, set: { labVM.mantis.depressAtmPsi = $0 }))
+                            .foregroundColor(themeVM.accent).tracking(2)
+                        Menu {
+                            Button("Default Drone") { labVM.mantis.vehicleAsset = nil }
+                            ForEach(labVM.mantis.importedAssets(), id: \.self) { a in
+                                Button(a) { labVM.mantis.vehicleAsset = a }
+                            }
+                        } label: {
+                            HStack {
+                                Image(systemName: "airplane")
+                                    .font(.system(size: 10)).foregroundColor(themeVM.accent)
+                                Text(labVM.mantis.vehicleAsset ?? "Default Drone")
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundColor(.white.opacity(0.9))
+                                Spacer()
+                                Image(systemName: "chevron.up.chevron.down")
+                                    .font(.system(size: 8)).foregroundColor(.white.opacity(0.35))
+                            }
+                            .padding(9).background(Color.white.opacity(0.05))
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                        }
+                        Text("Import GLB/USDZ assets from the toolbar, then pick one here — or fly the built-in drone.")
+                            .font(.system(size: 8, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.35))
                     }
                     .padding(12).background(Color.white.opacity(0.03))
                     .clipShape(RoundedRectangle(cornerRadius: 12))
 
+                    // ── PROPELLANT SETS — oxidizer + fuel + chamber per set,
+                    //    all summing into the launch force ──
+                    ForEach(labVM.mantis.propSets.indices, id: \.self) { i in
+                        setGroup(i)
+                    }
                     Button {
+                        labVM.mantis.propSets.append(MantisNavModel.PropSet())
+                    } label: {
+                        Label("ADD PROPELLANT SET", systemImage: "plus.circle.fill")
+                            .font(.system(size: 11, weight: .bold, design: .monospaced))
+                            .foregroundColor(themeVM.accent)
+                            .frame(maxWidth: .infinity).padding(.vertical, 11)
+                            .background(Color.white.opacity(0.05))
+                            .overlay(RoundedRectangle(cornerRadius: 10)
+                                .stroke(themeVM.accent.opacity(0.35),
+                                        style: StrokeStyle(lineWidth: 1, dash: [5])))
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                    }
+
+                    Button {
+                        labVM.mantis.labVM = labVM
+                        labVM.mantis.applyEnv(labVM.mantis.envPreset)
                         labVM.mantis.activate(in: labVM.scene)
                         dismiss()
                     } label: {
@@ -356,6 +554,64 @@ struct MantisSettingsSheet: View {
             }
         }
         .preferredColorScheme(.dark)
+    }
+
+    @ViewBuilder
+    private func setGroup(_ i: Int) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("SET \(i + 1)")
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundColor(themeVM.accent).tracking(2)
+                Spacer()
+                // Per-set 3D asset assignment
+                Menu {
+                    Button("Default Drone") { labVM.mantis.propSets[i].assetName = nil }
+                    ForEach(labVM.mantis.importedAssets(), id: \.self) { a in
+                        Button(a) { labVM.mantis.propSets[i].assetName = a }
+                    }
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "cube").font(.system(size: 8))
+                        Text(labVM.mantis.propSets[i].assetName ?? "Default Drone")
+                            .font(.system(size: 8.5, design: .monospaced)).lineLimit(1)
+                    }
+                    .foregroundColor(themeVM.accent.opacity(0.85))
+                    .padding(.horizontal, 7).padding(.vertical, 4)
+                    .background(Color.white.opacity(0.06)).clipShape(Capsule())
+                }
+                if labVM.mantis.propSets.count > 1 {
+                    Button { labVM.mantis.propSets.remove(at: i) } label: {
+                        Image(systemName: "trash").font(.system(size: 9))
+                            .foregroundColor(.red.opacity(0.7))
+                    }
+                }
+            }
+            propCard("OXIDIZER", p: Binding(
+                get: { labVM.mantis.propSets[i].oxidizer },
+                set: { if i < labVM.mantis.propSets.count { labVM.mantis.propSets[i].oxidizer = $0 } }))
+            propCard("FUEL", p: Binding(
+                get: { labVM.mantis.propSets[i].fuel },
+                set: { if i < labVM.mantis.propSets.count { labVM.mantis.propSets[i].fuel = $0 } }))
+            VStack(alignment: .leading, spacing: 7) {
+                Text("PRESSURE CHAMBER")
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.45)).tracking(2)
+                numRow("Chamber psi", v: Binding(
+                    get: { labVM.mantis.propSets[i].depressPsi },
+                    set: { if i < labVM.mantis.propSets.count { labVM.mantis.propSets[i].depressPsi = $0 } }))
+                numRow("Atm psi", v: Binding(
+                    get: { labVM.mantis.propSets[i].depressAtmPsi },
+                    set: { if i < labVM.mantis.propSets.count { labVM.mantis.propSets[i].depressAtmPsi = $0 } }))
+            }
+            .padding(10).background(Color.white.opacity(0.025))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .padding(12)
+        .background(Color.white.opacity(0.035))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14)
+            .stroke(themeVM.accent.opacity(0.18), lineWidth: 1))
     }
 
     @ViewBuilder
