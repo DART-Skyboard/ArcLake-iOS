@@ -124,6 +124,7 @@ public final class MantisNavModel: ObservableObject {
     public func activate(in scene: SCNScene) {
         self.scene = scene
         buildDrone(in: scene)
+        propagateParkedAssets()   // active at origin, others spaced on the grid
         velocity = .zero
         isActive = true
         timer?.invalidate()
@@ -160,8 +161,9 @@ public final class MantisNavModel: ObservableObject {
             mesh.addChildNode(pod)
         }
         root.addChildNode(mesh)
-        root.position = SCNVector3(0, 0.5, 6)
         scene.rootNode.addChildNode(root)
+        root.position = SCNVector3(0, groundedY(root), 0)   // origin, flush on grid
+        groundClampY = Double(groundedY(root))
     }
 
     // getPropData → force: potential · density · valveGate · flow%, clamped
@@ -196,6 +198,72 @@ public final class MantisNavModel: ObservableObject {
     public static let builtInAssets: [(label: String, resource: String)] = [
         ("Arrow (built-in)", "ArrowOptimized"),
     ]
+    // ── Spawn placement — nozzles flush on the grid, origin for the
+    //    active vehicle, parked slots for everyone else ────────────────
+    private var groundClampY: Double = 0.5   // tick floor for the active vehicle
+
+    /// World-space Y so the node's lowest point sits ON the floor plane.
+    func groundedY(_ n: SCNNode) -> Float {
+        let (minB, maxB) = n.boundingBox
+        _ = maxB
+        return -minB.y * n.scale.y
+    }
+
+    /// Parking slots ringed around origin on the floor grid — each asset
+    /// makes room for the others.
+    func parkSlot(_ i: Int) -> SIMD2<Float> {
+        let radius: Float = 7.0 + Float(i / 6) * 5.0
+        let angle = Float(i % 6) * (.pi * 2 / 6) + .pi / 6
+        return SIMD2(cos(angle) * radius, sin(angle) * radius)
+    }
+
+    /// All flight-asset nodes currently in the scene (drone + imports).
+    private func assetNodes(in scene: SCNScene) -> [SCNNode] {
+        scene.rootNode.childNodes.filter { n in
+            guard let nm = n.name else { return false }
+            return nm == "mantis_drone" || nm.hasPrefix("imported_")
+                || nm.hasPrefix("glb_import_")
+        }
+    }
+
+    /// Central vehicle switch — the new active vehicle swaps places with
+    /// the previous one: new → world origin (grounded), old → the slot
+    /// the new one just left (grounded there).
+    public func setActiveVehicle(_ name: String?) {
+        guard let scene = scene ?? labVM?.scene else { vehicleAsset = name; return }
+        let oldName = vehicleAsset
+        let oldNode = vehicleNode(in: scene)
+        vehicleAsset = name                       // didSet refreshes visibility
+        guard let newNode = vehicleNode(in: scene) else { return }
+        let freedSlot = SIMD2<Float>(newNode.position.x, newNode.position.z)
+        // New active → origin, nozzles flush with the grid
+        newNode.position = SCNVector3(0, groundedY(newNode), 0)
+        groundClampY = Double(groundedY(newNode))
+        velocity = .zero
+        // Previous active → the slot the new one vacated
+        if let old = oldNode, old !== newNode, oldName != name {
+            old.position = SCNVector3(freedSlot.x, groundedY(old), freedSlot.y)
+        }
+        applyAssetVisibility()
+    }
+
+    /// Spread every non-active asset to its own slot around the origin.
+    public func propagateParkedAssets() {
+        guard let scene = scene ?? labVM?.scene else { return }
+        var slot = 0
+        for n in assetNodes(in: scene) {
+            let isActive = (vehicleAsset == nil && n.name == "mantis_drone")
+                || (vehicleAsset != nil && n.name == vehicleAsset)
+            if isActive {
+                n.position = SCNVector3(0, groundedY(n), 0)
+                groundClampY = Double(groundedY(n))
+            } else {
+                let s = parkSlot(slot); slot += 1
+                n.position = SCNVector3(s.x, groundedY(n), s.y)
+            }
+        }
+    }
+
     /// Ensures a built-in GLB is loaded into the scene; returns its node name.
     @discardableResult
     public func loadBuiltInAsset(_ resource: String) -> String? {
@@ -214,8 +282,9 @@ public final class MantisNavModel: ObservableObject {
             let s = 3.0 / ext
             node.scale = SCNVector3(s, s, s)
         }
-        node.position = SCNVector3(0, 0.5, 6)
         scene.rootNode.addChildNode(node)
+        let s = parkSlot(max(assetNodes(in: scene).count - 1, 0))
+        node.position = SCNVector3(s.x, groundedY(node), s.y)
         return nodeName
     }
 
@@ -293,7 +362,7 @@ public final class MantisNavModel: ObservableObject {
         var p = SIMD3<Double>(Double(drone.simdPosition.x),
                               Double(drone.simdPosition.y),
                               Double(drone.simdPosition.z)) + velocity
-        if p.y < 0.5 { p.y = 0.5; velocity.y = 0 }                // floor clamp
+        if p.y < groundClampY { p.y = groundClampY; velocity.y = 0 }   // grid floor
         drone.simdPosition = SIMD3<Float>(Float(p.x), Float(p.y), Float(p.z))
 
         // visual bank: rz = −joy.x·0.5, rx = −joy.y·0.3
@@ -574,16 +643,16 @@ struct MantisSettingsSheet: View {
                             .font(.system(size: 9, weight: .bold, design: .monospaced))
                             .foregroundColor(themeVM.accent).tracking(2)
                         Menu {
-                            Button("Default Drone") { model.vehicleAsset = nil }
+                            Button("Default Drone") { model.setActiveVehicle(nil) }
                             ForEach(MantisNavModel.builtInAssets, id: \.resource) { b in
                                 Button(b.label) {
                                     if let n = model.loadBuiltInAsset(b.resource) {
-                                        model.vehicleAsset = n
+                                        model.setActiveVehicle(n)
                                     }
                                 }
                             }
                             ForEach(model.importedAssets(), id: \.self) { a in
-                                Button(a) { model.vehicleAsset = a }
+                                Button(a) { model.setActiveVehicle(a) }
                             }
                         } label: {
                             HStack {
