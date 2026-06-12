@@ -2,6 +2,7 @@ import SwiftUI
 
 // MARK: — Molecule Panel
 struct DARTMoleculePanel: View {
+    @State private var showMantisSettings = false
     @EnvironmentObject var labVM: ArcLabViewModel
     @EnvironmentObject var themeVM: ArcThemeViewModel
 
@@ -53,12 +54,21 @@ struct DARTMoleculePanel: View {
                                     .rootViewController?.present(av, animated: true)
                             }
                         }
+                        DARTActionTile(label: "Mantis\nNav", icon: "paperplane.fill",
+                                       color: Color(red: 0.1, green: 0.85, blue: 0.7)) {
+                            showMantisSettings = true
+                        }
+                        DARTActionTile(label: "Node\nEditor", icon: "circle.grid.cross",
+                                       color: .orange) {
+                            withAnimation(.spring()) { labVM.isNodeEditorVisible.toggle() }
+                        }
                         DARTActionTile(label: "Clear\nAll", icon: "trash",
                                        color: .red.opacity(0.8)) {
                             labVM.clearElements()
                         }
                     }
                 }
+                .sheet(isPresented: $showMantisSettings) { MantisSettingsSheet() }
             }
             .padding(10)
         }
