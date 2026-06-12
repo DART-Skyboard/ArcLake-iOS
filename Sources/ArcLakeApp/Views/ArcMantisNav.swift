@@ -251,6 +251,11 @@ public final class MantisNavModel: ObservableObject {
         guard isActive, let scene,
               let drone = vehicleNode(in: scene)
         else { return }
+        // Tab closed (X) → session ends; the menu tile re-creates it
+        if let lv = labVM, lv.mantisTabIndex == nil {
+            deactivate()
+            return
+        }
 
         var lift = 0.0
         // Gravity rebalance: Earth hover sits at 50% throttle —
@@ -631,19 +636,19 @@ struct MantisSettingsSheet: View {
                             .clipShape(RoundedRectangle(cornerRadius: 10))
                     }
 
-                    Button {
-                        model.labVM = labVM
-                        model.applyEnv(model.envPreset)
-                        model.activate(in: labVM.scene)
-                        dismiss()
-                    } label: {
-                        Text("ACTIVATE MANTIS NAVIGATION")
-                            .font(.custom("Orbitron-Bold", size: 12))
-                            .foregroundColor(.black)
-                            .frame(maxWidth: .infinity).padding(.vertical, 13)
-                            .background(themeVM.accent).clipShape(Capsule())
-                            .shadow(color: themeVM.accent.opacity(0.6), radius: 8)
+                    // Mantis Navigation is always live while its tab is open —
+                    // every change here applies to the scene instantly.
+                    HStack(spacing: 6) {
+                        Circle().fill(Color(red: 0.35, green: 0.78, blue: 1.0))
+                            .frame(width: 7, height: 7)
+                            .shadow(color: Color(red: 0.35, green: 0.78, blue: 1.0), radius: 4)
+                        Text("LIVE — settings apply to the Mantis Nav scene instantly")
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.55))
                     }
+                    .frame(maxWidth: .infinity).padding(.vertical, 10)
+                    .background(Color(red: 0.35, green: 0.78, blue: 1.0).opacity(0.08))
+                    .clipShape(Capsule())
                     Spacer().frame(height: 26)
                 }.padding(.horizontal, 16)
             }
