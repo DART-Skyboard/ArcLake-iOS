@@ -620,6 +620,31 @@ extension ArcLabViewModel {
         rebuildArcMeasures()   // dynamic update during simulation play
     }
 
+    // ── MANTIS NAVIGATION TAB — always-on while its tab lives ────────
+    /// Index of the dedicated "Mantis Nav" tab — tracked by name so it
+    /// survives other tabs being closed (index shifts).
+    public var mantisTabIndex: Int? {
+        sceneTabs_data.firstIndex(of: "Mantis Nav")
+    }
+
+    /// Opening the navigation menu creates (or returns to) the dedicated
+    /// Mantis scene tab and activates flight immediately — no Activate
+    /// button. Settings in the menu apply to the scene live. The tab's
+    /// X closes the session; the menu tile brings it back.
+    public func openMantisTab() {
+        if let i = mantisTabIndex {
+            switchTab(i)
+        } else {
+            addSceneTab()
+            let i = sceneTabs_data.count - 1
+            sceneTabs_data[i] = "Mantis Nav"
+            switchTab(i)
+        }
+        mantis.labVM = self
+        mantis.applyEnv(mantis.envPreset)
+        if !mantis.isActive { mantis.activate(in: scene) }
+    }
+
     // ── ENV PRESETS — applied to active tab like the web app ────────
     public func applyEnvPreset(_ preset: EnvPreset) {
         envPreset = preset
