@@ -97,6 +97,7 @@ public final class MantisNavModel: ObservableObject {
     private var velocity = SIMD3<Double>(0, 0, 0)
     private weak var scene: SCNScene?
     private var timer: Timer?
+    private var tickCount = 0
 
     public init() {}
 
@@ -182,15 +183,18 @@ public final class MantisNavModel: ObservableObject {
     // IDLE — drone: thrust = (g·2.2)/maxLift (MN.html line 1414), env-scaled.
     // Chemistry: solve flow% so totalForce·liftScalar == appliedGravity (hover).
     public func engageIdle() {
+        let gEff = 0.5 * baseMaxLift * gravityScale
         if chemistryMode {
-            let needed = (baseGravity * gravityScale * totalWeightLbs) / liftScalar
+            let weightFactor = min(3.0, max(0.4, totalWeightLbs / 10.0))
+            let needed = (gEff * weightFactor) / liftScalar
             let fullForce = totalChemForce(oxiPct: 100, fuelPct: 100)
             guard fullForce > 0 else { return }
             let pct = min(100, (needed / fullForce) * 100)
             oxiFlow = pct; fuelFlow = pct
             isLaunched = true
         } else {
-            thrust = min(1.0, (baseGravity * gravityScale * 2.2) / baseMaxLift)
+            // hover thrust — exactly cancels gravity at this preset
+            thrust = min(1.0, gEff / baseMaxLift)
         }
     }
 
@@ -201,21 +205,26 @@ public final class MantisNavModel: ObservableObject {
         else { return }
 
         var lift = 0.0
-        let g = baseGravity * gravityScale                       // env preset scaling
+        // Gravity rebalance: Earth hover sits at 50% throttle —
+        // gEff = 0.5·baseMaxLift·gravityScale. Below mid-throttle the craft
+        // visibly descends (gravity takes over); above it climbs.
+        let g = 0.5 * baseMaxLift * gravityScale
+        _ = baseGravity   // MN baseline retained for reference
         if chemistryMode {
             var totalForce = 0.0
             if isLaunched {                                       // LAUNCH gates the burn
                 totalForce = totalChemForce(oxiPct: oxiFlow, fuelPct: fuelFlow)
             }
             lift = totalForce * liftScalar
-            velocity.y -= g * totalWeightLbs                      // appliedGravity
-            hudForce = totalForce
+            let weightFactor = min(3.0, max(0.4, totalWeightLbs / 10.0))
+            velocity.y -= g * weightFactor                        // appliedGravity
+            if tickCount % 6 == 0 { hudForce = totalForce }
         } else {
             lift = thrust * baseMaxLift
-            velocity.y -= g * 2.2
-            hudForce = thrust * 100
+            velocity.y -= g
+            if tickCount % 6 == 0 { hudForce = thrust * 100 }
         }
-        hudLift = lift
+        if tickCount % 6 == 0 { hudLift = lift }
         velocity.y += lift
 
         // yaw: q = qY(−joy.x · yawSpeed) · q
@@ -239,32 +248,48 @@ public final class MantisNavModel: ObservableObject {
             mesh.eulerAngles.z = Float(-joyX * 0.5)
             mesh.eulerAngles.x = Float(-joyY * 0.3)
         }
-        hudVelH = sqrt(velocity.x * velocity.x + velocity.z * velocity.z)
-        hudVelV = velocity.y
+        tickCount += 1
+        if tickCount % 6 == 0 {   // 5 Hz readouts — keeps SwiftUI re-renders calm
+            hudVelH = sqrt(velocity.x * velocity.x + velocity.z * velocity.z)
+            hudVelV = velocity.y
+        }
 
-        // ── Camera modes — MN.html lerp offsets, applied to arcCamera.
-        //    Orbit leaves the Arc Edge turntable in full control.
+        // ── Camera modes — attach to the vehicle but ABIDE BY THE SCENE:
+        //    horizon always level (world-up), offsets from the drone's YAW
+        //    ONLY (never its pitch/roll), exactly like the turntable feel.
         if cameraMode != .orbit,
            let cam = scene.rootNode.childNode(withName: "arcCamera", recursively: false) {
             let dp = drone.simdPosition
-            func lerpTo(_ target: SIMD3<Float>, look: Bool = true) {
-                cam.simdPosition = simd_mix(cam.simdPosition, target, SIMD3(repeating: 0.1))
-                if look { cam.look(at: SCNVector3(dp.x, dp.y, dp.z)) }
+            // Yaw-only frame: project drone forward onto the ground plane
+            let rawFwd = drone.simdOrientation.act(SIMD3<Float>(0, 0, -1))
+            var flatFwd = SIMD3<Float>(rawFwd.x, 0, rawFwd.z)
+            if simd_length(flatFwd) < 1e-4 { flatFwd = SIMD3<Float>(0, 0, -1) }
+            flatFwd = simd_normalize(flatFwd)
+            let flatRight = simd_normalize(simd_cross(flatFwd, SIMD3<Float>(0, 1, 0)))
+
+            func levelLook(from target: SIMD3<Float>, snap: Bool = false) {
+                cam.simdPosition = snap ? target
+                    : simd_mix(cam.simdPosition, target, SIMD3(repeating: 0.1))
+                cam.look(at: SCNVector3(dp.x, dp.y, dp.z),
+                         up: SCNVector3(0, 1, 0),
+                         localFront: SCNVector3(0, 0, -1))   // world-up: zero roll
             }
             switch cameraMode {
             case .fpv:
-                let o = drone.simdOrientation.act(SIMD3<Float>(0, 0.2, -0.2))
-                cam.simdPosition = dp + o
-                cam.simdOrientation = drone.simdOrientation
-            case .top:   lerpTo(dp + SIMD3<Float>(0, 20, 0))
-            case .front: lerpTo(dp + SIMD3<Float>(0, 2, 15))
-            case .back:  lerpTo(dp + SIMD3<Float>(0, 2, -15))
-            case .left:  lerpTo(dp + SIMD3<Float>(-15, 2, 0))
-            case .right: lerpTo(dp + SIMD3<Float>(15, 2, 0))
+                // first-person: at the nose, level gaze along the yaw heading
+                cam.simdPosition = dp + flatFwd * 0.6 + SIMD3<Float>(0, 0.25, 0)
+                let ahead = cam.simdPosition + flatFwd * 10
+                cam.look(at: SCNVector3(ahead.x, ahead.y, ahead.z),
+                         up: SCNVector3(0, 1, 0),
+                         localFront: SCNVector3(0, 0, -1))
+            case .top:   levelLook(from: dp + SIMD3<Float>(0, 20, 0) + flatFwd * 0.01)
+            case .front: levelLook(from: dp + flatFwd * 15 + SIMD3<Float>(0, 2, 0))
+            case .back:  levelLook(from: dp - flatFwd * 15 + SIMD3<Float>(0, 2, 0))
+            case .left:  levelLook(from: dp - flatRight * 15 + SIMD3<Float>(0, 2, 0))
+            case .right: levelLook(from: dp + flatRight * 15 + SIMD3<Float>(0, 2, 0))
             case .follow, .orbit:
-                // semi-birdseye behind+above; asset faces away into scene depth
-                let o = drone.simdOrientation.act(SIMD3<Float>(0, 4, 10))
-                lerpTo(dp + o)
+                // semi-birdseye behind+above off the YAW heading — never rolls
+                levelLook(from: dp - flatFwd * 10 + SIMD3<Float>(0, 4, 0))
             }
         }
     }
@@ -285,26 +310,29 @@ struct MantisHUDOverlay: View {
                 Text(String(format: "H:%.2f V:%.2f", model.hudVelH, model.hudVelV))
                     .font(.system(size: 9, design: .monospaced))
                     .foregroundColor(.white.opacity(0.6))
-                // Camera attachment — MN.html upper-right HUD parity
-                Menu {
-                    ForEach(MantisNavModel.CamMode.allCases, id: \.self) { m in
-                        Button(m.rawValue) { model.cameraMode = m }
-                    }
-                } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: "video.fill").font(.system(size: 8))
-                        Text(model.cameraMode.rawValue)
-                            .font(.system(size: 9, weight: .bold, design: .monospaced))
-                    }
-                    .foregroundColor(themeVM.accent)
-                    .padding(.horizontal, 8).padding(.vertical, 5)
-                    .background(Color.white.opacity(0.07)).clipShape(Capsule())
-                }
                 Button { model.deactivate() } label: {
                     Image(systemName: "xmark").font(.system(size: 10, weight: .bold))
                         .foregroundColor(.white.opacity(0.6))
                         .frame(width: 24, height: 24)
                         .background(Color.white.opacity(0.1)).clipShape(Circle())
+                }
+            }
+
+            // Camera attachment — pills, MN.html upper-right HUD parity
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 4) {
+                    Image(systemName: "video.fill")
+                        .font(.system(size: 8)).foregroundColor(.white.opacity(0.4))
+                    ForEach(MantisNavModel.CamMode.allCases, id: \.self) { m in
+                        Button { model.cameraMode = m } label: {
+                            Text(m.rawValue)
+                                .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                                .foregroundColor(model.cameraMode == m ? .black : .white.opacity(0.6))
+                                .padding(.horizontal, 8).padding(.vertical, 4)
+                                .background(model.cameraMode == m ? themeVM.accent : Color.white.opacity(0.07))
+                                .clipShape(Capsule())
+                        }
+                    }
                 }
             }
 
@@ -465,7 +493,8 @@ struct MantisThumbStick: View {
 struct MantisSettingsSheet: View {
     @EnvironmentObject var labVM: ArcLabViewModel
     @EnvironmentObject var themeVM: ArcThemeViewModel
-    @Environment(\.dismiss) var dismiss
+    @ObservedObject var model: MantisNavModel        // direct observation —
+    @Environment(\.dismiss) var dismiss              // adds/deletes update live
 
     var body: some View {
         ZStack {
@@ -492,15 +521,15 @@ struct MantisSettingsSheet: View {
                             .font(.system(size: 9, weight: .bold, design: .monospaced))
                             .foregroundColor(themeVM.accent).tracking(2)
                         Menu {
-                            Button("Default Drone") { labVM.mantis.vehicleAsset = nil }
-                            ForEach(labVM.mantis.importedAssets(), id: \.self) { a in
-                                Button(a) { labVM.mantis.vehicleAsset = a }
+                            Button("Default Drone") { model.vehicleAsset = nil }
+                            ForEach(model.importedAssets(), id: \.self) { a in
+                                Button(a) { model.vehicleAsset = a }
                             }
                         } label: {
                             HStack {
                                 Image(systemName: "airplane")
                                     .font(.system(size: 10)).foregroundColor(themeVM.accent)
-                                Text(labVM.mantis.vehicleAsset ?? "Default Drone")
+                                Text(model.vehicleAsset ?? "Default Drone")
                                     .font(.system(size: 11, design: .monospaced))
                                     .foregroundColor(.white.opacity(0.9))
                                 Spacer()
@@ -519,11 +548,11 @@ struct MantisSettingsSheet: View {
 
                     // ── PROPELLANT SETS — oxidizer + fuel + chamber per set,
                     //    all summing into the launch force ──
-                    ForEach(labVM.mantis.propSets.indices, id: \.self) { i in
-                        setGroup(i)
+                    ForEach(model.propSets) { s in
+                        setGroup(s.id)
                     }
                     Button {
-                        labVM.mantis.propSets.append(MantisNavModel.PropSet())
+                        model.propSets.append(MantisNavModel.PropSet())
                     } label: {
                         Label("ADD PROPELLANT SET", systemImage: "plus.circle.fill")
                             .font(.system(size: 11, weight: .bold, design: .monospaced))
@@ -537,9 +566,9 @@ struct MantisSettingsSheet: View {
                     }
 
                     Button {
-                        labVM.mantis.labVM = labVM
-                        labVM.mantis.applyEnv(labVM.mantis.envPreset)
-                        labVM.mantis.activate(in: labVM.scene)
+                        model.labVM = labVM
+                        model.applyEnv(model.envPreset)
+                        model.activate(in: labVM.scene)
                         dismiss()
                     } label: {
                         Text("ACTIVATE MANTIS NAVIGATION")
@@ -556,8 +585,28 @@ struct MantisSettingsSheet: View {
         .preferredColorScheme(.dark)
     }
 
+    // Bounds-safe accessors keyed by set id — survives deletion mid-render
+    private func setIndex(_ id: UUID) -> Int? {
+        model.propSets.firstIndex(where: { $0.id == id })
+    }
+    private func propBinding(_ id: UUID,
+                             _ keyPath: WritableKeyPath<MantisNavModel.PropSet, MantisPropellant>)
+        -> Binding<MantisPropellant> {
+        Binding(
+            get: { setIndex(id).map { model.propSets[$0][keyPath: keyPath] } ?? MantisPropellant() },
+            set: { v in if let i = setIndex(id) { model.propSets[i][keyPath: keyPath] = v } })
+    }
+    private func doubleBinding(_ id: UUID,
+                               _ keyPath: WritableKeyPath<MantisNavModel.PropSet, Double>)
+        -> Binding<Double> {
+        Binding(
+            get: { setIndex(id).map { model.propSets[$0][keyPath: keyPath] } ?? 0 },
+            set: { v in if let i = setIndex(id) { model.propSets[i][keyPath: keyPath] = v } })
+    }
+
     @ViewBuilder
-    private func setGroup(_ i: Int) -> some View {
+    private func setGroup(_ sid: UUID) -> some View {
+        let i = setIndex(sid) ?? 0
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("SET \(i + 1)")
@@ -566,43 +615,40 @@ struct MantisSettingsSheet: View {
                 Spacer()
                 // Per-set 3D asset assignment
                 Menu {
-                    Button("Default Drone") { labVM.mantis.propSets[i].assetName = nil }
-                    ForEach(labVM.mantis.importedAssets(), id: \.self) { a in
-                        Button(a) { labVM.mantis.propSets[i].assetName = a }
+                    Button("Default Drone") {
+                        if let k = setIndex(sid) { model.propSets[k].assetName = nil } }
+                    ForEach(model.importedAssets(), id: \.self) { a in
+                        Button(a) {
+                            if let k = setIndex(sid) { model.propSets[k].assetName = a } }
                     }
                 } label: {
                     HStack(spacing: 3) {
                         Image(systemName: "cube").font(.system(size: 8))
-                        Text(labVM.mantis.propSets[i].assetName ?? "Default Drone")
+                        Text((setIndex(sid).map { model.propSets[$0].assetName } ?? nil) ?? "Default Drone")
                             .font(.system(size: 8.5, design: .monospaced)).lineLimit(1)
                     }
                     .foregroundColor(themeVM.accent.opacity(0.85))
                     .padding(.horizontal, 7).padding(.vertical, 4)
                     .background(Color.white.opacity(0.06)).clipShape(Capsule())
                 }
-                if labVM.mantis.propSets.count > 1 {
-                    Button { labVM.mantis.propSets.remove(at: i) } label: {
+                if model.propSets.count > 1 {
+                    Button {
+                        // remove by id — index-free, crash-free
+                        model.propSets.removeAll { $0.id == sid }
+                    } label: {
                         Image(systemName: "trash").font(.system(size: 9))
                             .foregroundColor(.red.opacity(0.7))
                     }
                 }
             }
-            propCard("OXIDIZER", p: Binding(
-                get: { labVM.mantis.propSets[i].oxidizer },
-                set: { if i < labVM.mantis.propSets.count { labVM.mantis.propSets[i].oxidizer = $0 } }))
-            propCard("FUEL", p: Binding(
-                get: { labVM.mantis.propSets[i].fuel },
-                set: { if i < labVM.mantis.propSets.count { labVM.mantis.propSets[i].fuel = $0 } }))
+            propCard("OXIDIZER", p: propBinding(sid, \.oxidizer))
+            propCard("FUEL",     p: propBinding(sid, \.fuel))
             VStack(alignment: .leading, spacing: 7) {
                 Text("PRESSURE CHAMBER")
                     .font(.system(size: 9, weight: .bold, design: .monospaced))
                     .foregroundColor(.white.opacity(0.45)).tracking(2)
-                numRow("Chamber psi", v: Binding(
-                    get: { labVM.mantis.propSets[i].depressPsi },
-                    set: { if i < labVM.mantis.propSets.count { labVM.mantis.propSets[i].depressPsi = $0 } }))
-                numRow("Atm psi", v: Binding(
-                    get: { labVM.mantis.propSets[i].depressAtmPsi },
-                    set: { if i < labVM.mantis.propSets.count { labVM.mantis.propSets[i].depressAtmPsi = $0 } }))
+                numRow("Chamber psi", v: doubleBinding(sid, \.depressPsi))
+                numRow("Atm psi",     v: doubleBinding(sid, \.depressAtmPsi))
             }
             .padding(10).background(Color.white.opacity(0.025))
             .clipShape(RoundedRectangle(cornerRadius: 10))
