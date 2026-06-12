@@ -1,0 +1,406 @@
+import SwiftUI
+import SceneKit
+import simd
+
+// ═══════════════════════════════════════════════════════════════════
+// ArcMantisNav — Mantis Navigation, 1:1 port of MN.html.
+// Exact physics: baseGravity 0.00003 · drag 0.98 · baseMaxLift 0.03 ·
+// thrustPower 0.01 · yawSpeed 0.1 · liftScalar 1e-6.
+// Drone mode: thumbstick (yaw+forward) + thrust slider.
+// Chemistry mode: oxidizer/fuel propellant physics + LAUNCH gate.
+// Settings retained when toggling modes — all dynamically updatable.
+// ═══════════════════════════════════════════════════════════════════
+
+public struct MantisPropellant {
+    public var psi: Double = 100, atmPsi: Double = 14.7
+    public var dimX: Double = 1, dimY: Double = 1, dimZ: Double = 1
+    public var massParts: Double = 10, weightPerPartG: Double = 1
+    public var density: Double = 1, valveAngle: Double = 90
+    public var maxFlow: Double = 500, tempF: Double = 72
+    public var volume: Double { dimX * dimY * dimZ }
+    public var totalPressure: Double { psi + atmPsi }
+    public var totalWeightLbs: Double {
+        (massParts * weightPerPartG * volume) / max(density, 0.0001) / 453.592
+    }
+}
+
+@MainActor
+public final class MantisNavModel: ObservableObject {
+    // Mode + activation
+    @Published public var isActive = false
+    @Published public var chemistryMode = false      // default = drone mode
+    // Drone controls
+    @Published public var joyX: Double = 0           // −1…1
+    @Published public var joyY: Double = 0
+    @Published public var thrust: Double = 0         // 0…1
+    // Chemistry controls
+    @Published public var oxidizer = MantisPropellant()
+    @Published public var fuel = MantisPropellant(psi: 120, density: 0.8)
+    @Published public var oxiFlow: Double = 0        // 0…100 (%)
+    @Published public var fuelFlow: Double = 0
+    @Published public var depressPsi: Double = 0
+    @Published public var depressAtmPsi: Double = 14.7
+    @Published public var isLaunched = false
+    // HUD readouts
+    @Published public var hudForce: Double = 0
+    @Published public var hudLift: Double = 0
+    @Published public var hudVelH: Double = 0
+    @Published public var hudVelV: Double = 0
+
+    // MN.html physics constants — verbatim
+    let baseGravity = 0.00003, drag = 0.98, baseMaxLift = 0.03
+    let thrustPower = 0.01, yawSpeed = 0.1, liftScalar = 0.000001
+
+    private var velocity = SIMD3<Double>(0, 0, 0)
+    private weak var scene: SCNScene?
+    private var timer: Timer?
+
+    public init() {}
+
+    public func activate(in scene: SCNScene) {
+        self.scene = scene
+        buildDrone(in: scene)
+        velocity = .zero
+        isActive = true
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: 1.0/30.0, repeats: true) {
+            [weak self] _ in Task { @MainActor in self?.tick() }
+        }
+    }
+
+    public func deactivate() {
+        isActive = false
+        timer?.invalidate(); timer = nil
+        scene?.rootNode.childNode(withName: "mantis_drone", recursively: false)?
+            .removeFromParentNode()
+        joyX = 0; joyY = 0
+    }
+
+    // Stylized mantis drone — body + 4 rotor pods, banks with the stick
+    private func buildDrone(in scene: SCNScene) {
+        scene.rootNode.childNode(withName: "mantis_drone", recursively: false)?
+            .removeFromParentNode()
+        let root = SCNNode(); root.name = "mantis_drone"
+        let mesh = SCNNode(); mesh.name = "mantis_mesh"
+        let body = SCNNode(geometry: SCNCapsule(capRadius: 0.35, height: 1.6))
+        body.eulerAngles.x = .pi / 2
+        body.geometry?.firstMaterial?.diffuse.contents = UIColor(red: 0.1, green: 0.85, blue: 0.7, alpha: 1)
+        body.geometry?.firstMaterial?.emission.contents = UIColor(red: 0, green: 0.35, blue: 0.3, alpha: 1)
+        mesh.addChildNode(body)
+        for (sx, sz) in [(1.0,1.0),(1.0,-1.0),(-1.0,1.0),(-1.0,-1.0)] {
+            let pod = SCNNode(geometry: SCNSphere(radius: 0.18))
+            pod.position = SCNVector3(sx * 0.9, 0.1, sz * 0.9)
+            pod.geometry?.firstMaterial?.diffuse.contents = UIColor.cyan
+            pod.geometry?.firstMaterial?.emission.contents = UIColor.cyan.withAlphaComponent(0.7)
+            mesh.addChildNode(pod)
+        }
+        root.addChildNode(mesh)
+        root.position = SCNVector3(0, 0.5, 6)
+        scene.rootNode.addChildNode(root)
+    }
+
+    // getPropData → force: potential · density · valveGate · flow%, clamped
+    private func propForce(_ p: MantisPropellant, flowPct: Double) -> Double {
+        let depressTotal = depressPsi + depressAtmPsi
+        var potential = p.totalPressure
+        if depressTotal < p.totalPressure {
+            potential += (p.totalPressure - depressTotal)        // pressure differential
+        }
+        let valveGate = p.valveAngle / 180.0
+        return min(potential * p.density * valveGate * (flowPct / 100.0), p.maxFlow)
+    }
+
+    // The MN.html animate() physics — verbatim integration
+    private func tick() {
+        guard isActive, let scene,
+              let drone = scene.rootNode.childNode(withName: "mantis_drone", recursively: false)
+        else { return }
+
+        var lift = 0.0
+        if chemistryMode {
+            var totalForce = 0.0
+            if isLaunched {                                       // LAUNCH gates the burn
+                totalForce = propForce(oxidizer, flowPct: oxiFlow)
+                          + propForce(fuel,     flowPct: fuelFlow)
+            }
+            lift = totalForce * liftScalar
+            let modelWeightLbs = max(oxidizer.totalWeightLbs + fuel.totalWeightLbs, 0.001)
+            velocity.y -= baseGravity * modelWeightLbs            // appliedGravity
+            hudForce = totalForce
+        } else {
+            lift = thrust * baseMaxLift
+            velocity.y -= baseGravity * 2.2
+            hudForce = thrust * 100
+        }
+        hudLift = lift
+        velocity.y += lift
+
+        // yaw: q = qY(−joy.x · yawSpeed) · q
+        let qYaw = simd_quatf(angle: Float(-joyX * yawSpeed), axis: SIMD3<Float>(0, 1, 0))
+        drone.simdOrientation = simd_normalize(qYaw * drone.simdOrientation)
+
+        // thrustVector = (0,0,−1)·q · (joy.y · thrustPower)
+        let fwd = drone.simdOrientation.act(SIMD3<Float>(0, 0, -1))
+        let tv = SIMD3<Double>(Double(fwd.x), Double(fwd.y), Double(fwd.z)) * (joyY * thrustPower)
+        velocity += tv
+        velocity *= drag
+
+        var p = SIMD3<Double>(Double(drone.simdPosition.x),
+                              Double(drone.simdPosition.y),
+                              Double(drone.simdPosition.z)) + velocity
+        if p.y < 0.5 { p.y = 0.5; velocity.y = 0 }                // floor clamp
+        drone.simdPosition = SIMD3<Float>(Float(p.x), Float(p.y), Float(p.z))
+
+        // visual bank: rz = −joy.x·0.5, rx = −joy.y·0.3
+        if let mesh = drone.childNode(withName: "mantis_mesh", recursively: false) {
+            mesh.eulerAngles.z = Float(-joyX * 0.5)
+            mesh.eulerAngles.x = Float(-joyY * 0.3)
+        }
+        hudVelH = sqrt(velocity.x * velocity.x + velocity.z * velocity.z)
+        hudVelV = velocity.y
+    }
+}
+
+// MARK: — HUD OVERLAY (bottom-centered, semi-transparent — web parity)
+struct MantisHUDOverlay: View {
+    @ObservedObject var model: MantisNavModel
+    @EnvironmentObject var themeVM: ArcThemeViewModel
+
+    var body: some View {
+        VStack(spacing: 8) {
+            // Mode toggle — settings retained on switch
+            HStack(spacing: 6) {
+                modePill("DRONE", active: !model.chemistryMode) { model.chemistryMode = false }
+                modePill("CHEMISTRY", active: model.chemistryMode) { model.chemistryMode = true }
+                Spacer()
+                Text(String(format: "H:%.2f V:%.2f", model.hudVelH, model.hudVelV))
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.6))
+                Button { model.deactivate() } label: {
+                    Image(systemName: "xmark").font(.system(size: 10, weight: .bold))
+                        .foregroundColor(.white.opacity(0.6))
+                        .frame(width: 24, height: 24)
+                        .background(Color.white.opacity(0.1)).clipShape(Circle())
+                }
+            }
+
+            if model.chemistryMode {
+                HStack(alignment: .bottom, spacing: 18) {
+                    chemThrottle("OXIDIZER", value: $model.oxiFlow, color: .cyan)
+                    VStack(spacing: 6) {
+                        Text(String(format: "Force: %.0f", model.hudForce))
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(themeVM.accent)
+                        Text(String(format: "Lift: %.4f", model.hudLift))
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.5))
+                        Button { model.isLaunched.toggle() } label: {
+                            Text(model.isLaunched ? "ABORT" : "LAUNCH")
+                                .font(.custom("Orbitron-Bold", size: 13))
+                                .foregroundColor(model.isLaunched ? .white : .black)
+                                .frame(width: 110, height: 46)
+                                .background(model.isLaunched ? Color.red : Color.green)
+                                .clipShape(Capsule())
+                                .shadow(color: (model.isLaunched ? Color.red : .green).opacity(0.7), radius: 9)
+                        }
+                    }
+                    chemThrottle("FUEL", value: $model.fuelFlow, color: .orange)
+                }
+            } else {
+                HStack(alignment: .bottom, spacing: 26) {
+                    MantisThumbStick(joyX: $model.joyX, joyY: $model.joyY, accent: themeVM.accent)
+                    VStack(spacing: 4) {
+                        Text(String(format: "Altitude: %.0f%%", model.thrust * 100))
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.55))
+                        droneThrottle
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .background(Color(red: 0.02, green: 0.05, blue: 0.09).opacity(0.62))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16)
+            .stroke(themeVM.accent.opacity(0.25), lineWidth: 0.8))
+        .padding(.horizontal, 14).padding(.bottom, 10)
+        .frame(maxWidth: 430)
+    }
+
+    private func modePill(_ t: String, active: Bool, _ a: @escaping () -> Void) -> some View {
+        Button(action: a) {
+            Text(t).font(.system(size: 9, weight: .bold, design: .monospaced))
+                .foregroundColor(active ? .black : .white.opacity(0.55))
+                .padding(.horizontal, 10).padding(.vertical, 5)
+                .background(active ? themeVM.accent : Color.white.opacity(0.07))
+                .clipShape(Capsule())
+        }
+    }
+
+    private var droneThrottle: some View {
+        VStack(spacing: 3) {
+            Slider(value: $model.thrust, in: 0...1).tint(themeVM.accent)
+                .frame(width: 150)
+            Text("THRUST").font(.system(size: 8, design: .monospaced))
+                .foregroundColor(.white.opacity(0.4)).tracking(2)
+        }
+    }
+
+    private func chemThrottle(_ label: String, value: Binding<Double>, color: Color) -> some View {
+        VStack(spacing: 4) {
+            Text(String(format: "%.0f%%", value.wrappedValue))
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .foregroundColor(color)
+            Slider(value: value, in: 0...100).tint(color)
+                .frame(width: 110)
+                .rotationEffect(.degrees(-90))
+                .frame(width: 44, height: 116)
+            Text(label).font(.system(size: 8, design: .monospaced))
+                .foregroundColor(color.opacity(0.7)).tracking(1.5)
+        }
+    }
+}
+
+// Thumbstick — drag in a 92pt base, normalized −1…1, springs back (web parity)
+struct MantisThumbStick: View {
+    @Binding var joyX: Double
+    @Binding var joyY: Double
+    let accent: Color
+    @State private var offset = CGSize.zero
+    private let r: CGFloat = 46
+
+    var body: some View {
+        ZStack {
+            Circle().stroke(accent.opacity(0.4), lineWidth: 1.5)
+                .background(Circle().fill(Color.white.opacity(0.05)))
+                .frame(width: r * 2, height: r * 2)
+            Circle().fill(accent.opacity(0.85))
+                .frame(width: 38, height: 38)
+                .shadow(color: accent.opacity(0.7), radius: 6)
+                .offset(offset)
+        }
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { v in
+                    let d = min(sqrt(v.translation.width * v.translation.width
+                                   + v.translation.height * v.translation.height), r)
+                    let a = atan2(v.translation.height, v.translation.width)
+                    offset = CGSize(width: cos(a) * d, height: sin(a) * d)
+                    joyX = Double(offset.width / r)
+                    joyY = Double(-offset.height / r)   // up = forward, like the web
+                }
+                .onEnded { _ in
+                    withAnimation(.spring(response: 0.2, dampingFraction: 0.7)) { offset = .zero }
+                    joyX = 0; joyY = 0
+                }
+        )
+    }
+}
+
+// MARK: — SETTINGS SHEET (chemistry propellant configuration)
+struct MantisSettingsSheet: View {
+    @EnvironmentObject var labVM: ArcLabViewModel
+    @EnvironmentObject var themeVM: ArcThemeViewModel
+    @Environment(\.dismiss) var dismiss
+
+    var body: some View {
+        ZStack {
+            Color(red: 0.024, green: 0.039, blue: 0.063).ignoresSafeArea()
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 12) {
+                    HStack {
+                        Text("MANTIS NAVIGATION")
+                            .font(.custom("Orbitron-Bold", size: 13))
+                            .foregroundColor(themeVM.accent).tracking(2)
+                        Spacer()
+                        Button { dismiss() } label: {
+                            Image(systemName: "xmark").font(.system(size: 11, weight: .bold))
+                                .foregroundColor(.white.opacity(0.5))
+                                .frame(width: 28, height: 28)
+                                .background(Color.white.opacity(0.07))
+                                .clipShape(RoundedRectangle(cornerRadius: 7))
+                        }
+                    }.padding(.top, 16)
+
+                    propCard("OXIDIZER", p: Binding(
+                        get: { labVM.mantis.oxidizer }, set: { labVM.mantis.oxidizer = $0 }))
+                    propCard("FUEL", p: Binding(
+                        get: { labVM.mantis.fuel }, set: { labVM.mantis.fuel = $0 }))
+
+                    // Depressurization differential
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("DEPRESSURIZATION")
+                            .font(.system(size: 9, weight: .bold, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.45)).tracking(2)
+                        numRow("Chamber psi", v: Binding(
+                            get: { labVM.mantis.depressPsi }, set: { labVM.mantis.depressPsi = $0 }))
+                        numRow("Atm psi", v: Binding(
+                            get: { labVM.mantis.depressAtmPsi }, set: { labVM.mantis.depressAtmPsi = $0 }))
+                    }
+                    .padding(12).background(Color.white.opacity(0.03))
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+
+                    Button {
+                        labVM.mantis.activate(in: labVM.scene)
+                        dismiss()
+                    } label: {
+                        Text("ACTIVATE MANTIS NAVIGATION")
+                            .font(.custom("Orbitron-Bold", size: 12))
+                            .foregroundColor(.black)
+                            .frame(maxWidth: .infinity).padding(.vertical, 13)
+                            .background(themeVM.accent).clipShape(Capsule())
+                            .shadow(color: themeVM.accent.opacity(0.6), radius: 8)
+                    }
+                    Spacer().frame(height: 26)
+                }.padding(.horizontal, 16)
+            }
+        }
+        .preferredColorScheme(.dark)
+    }
+
+    @ViewBuilder
+    private func propCard(_ title: String, p: Binding<MantisPropellant>) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack {
+                Text(title)
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .foregroundColor(themeVM.accent).tracking(2)
+                Spacer()
+                Text(String(format: "Vol %.2f · P %.1f · Wt %.4f lbs",
+                            p.wrappedValue.volume, p.wrappedValue.totalPressure,
+                            p.wrappedValue.totalWeightLbs))
+                    .font(.system(size: 8, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.4))
+            }
+            numRow("psi", v: p.psi); numRow("Atm psi", v: p.atmPsi)
+            HStack(spacing: 8) {
+                numRow("X", v: p.dimX); numRow("Y", v: p.dimY); numRow("Z", v: p.dimZ)
+            }
+            numRow("Mass parts", v: p.massParts)
+            numRow("Wt/part g", v: p.weightPerPartG)
+            numRow("Density", v: p.density)
+            numRow("Valve °(0–180)", v: p.valveAngle)
+            numRow("Max flow", v: p.maxFlow)
+        }
+        .padding(12).background(Color.white.opacity(0.03))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+
+    @ViewBuilder
+    private func numRow(_ label: String, v: Binding<Double>) -> some View {
+        HStack {
+            Text(label).font(.system(size: 10, design: .monospaced))
+                .foregroundColor(.white.opacity(0.65))
+            Spacer()
+            TextField("", value: v, format: .number)
+                .keyboardType(.decimalPad)
+                .multilineTextAlignment(.trailing)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(themeVM.accent)
+                .frame(width: 72)
+                .padding(.vertical, 3).padding(.horizontal, 6)
+                .background(Color.white.opacity(0.05))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+        }
+    }
+}
