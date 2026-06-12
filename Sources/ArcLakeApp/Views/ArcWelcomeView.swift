@@ -41,9 +41,18 @@ struct ArcWelcomeView: View {
                                    value: pulseAnim)
                     Circle().fill(themeVM.accent.opacity(0.06)).frame(width: 140, height: 140)
                     Circle().stroke(themeVM.accent.opacity(0.4), lineWidth: 1.5).frame(width: 140, height: 140)
-                    Text("AL")
-                        .font(.custom("Orbitron-Bold", size: 36))
-                        .foregroundColor(themeVM.accent)
+                    // Arc Lake logo — Autumn + hummingbird (bundle asset)
+                    if let logo = UIImage(named: "ArcLakeLogo") {
+                        Image(uiImage: logo)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 134, height: 134)
+                            .clipShape(Circle())
+                    } else {
+                        Text("AL")
+                            .font(.custom("Orbitron-Bold", size: 36))
+                            .foregroundColor(themeVM.accent)
+                    }
                 }
                 .onAppear { pulseAnim = true }
 
@@ -387,5 +396,6 @@ struct ArcSafariView: UIViewControllerRepresentable {
     }
     func updateUIViewController(_ vc: SFSafariViewController, context: Context) {}
 }
+
 
 
