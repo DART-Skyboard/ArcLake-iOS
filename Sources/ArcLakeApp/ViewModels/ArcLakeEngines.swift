@@ -555,11 +555,11 @@ extension ArcLabViewModel {
         for el in selectedElements {
             guard let n = atomNode(for: el.id) else { continue }
             bodies.append(Body(id: el.id, pos: n.simdPosition,
-                blueprint: Float(el.neutrons),                 // neutron = mass blueprint
+                blueprint: Float(max(el.neutrons, 1)),         // neutron blueprint (≥1: H interacts)
                 bridge: Float(protonBridge(el.id).factor)))    // proton state passage
         }
 
-        let G: Float = 0.012 * (envG / 9.8)   // env gravity scales the coupling
+        let G: Float = 0.05 * (envG / 9.8)    // env gravity scales the coupling (visible)
         for i in bodies.indices {
             guard let node = atomNode(for: bodies[i].id) else { continue }
             var vel = atomVelocities[bodies[i].id] ?? .zero
@@ -583,7 +583,13 @@ extension ArcLabViewModel {
 
             // ── environment ──
             vel += wind * dt * 30
-            vel *= 0.985                                   // damping (viscosity)
+            // gravity settles atoms toward the grid floor (preset-scaled);
+            // Zero-G preset → no settle, Jupiter → fast settle
+            vel.y -= envG * 0.00045
+            // env velocity (m/s) = global flow along the wind direction
+            vel += windDirection.vector * Float(physics.velocity) * 0.0008
+            // viscosity → damping: 1 cP = 0.985 baseline, thicker = heavier damping
+            vel *= Float(min(0.995, max(0.90, 1.0 - 0.015 * physics.viscosity)))
             // soft boundary — fold back inside the grid extent
             let limit: Float = Float(gridDivisions) * 0.75 + 6
             var p = bodies[i].pos + vel
@@ -591,6 +597,8 @@ extension ArcLabViewModel {
                 p[k] = p[k].sign == .minus ? -limit : limit
                 vel[k] *= -0.5
             }
+            // grid floor — atoms rest on the plane instead of sinking
+            if p.y < 0.6 { p.y = 0.6; if vel.y < 0 { vel.y = 0 } }
             p += SIMD3<Float>(Float.random(in: -jitter...jitter),
                               Float.random(in: -jitter...jitter),
                               Float.random(in: -jitter...jitter))
