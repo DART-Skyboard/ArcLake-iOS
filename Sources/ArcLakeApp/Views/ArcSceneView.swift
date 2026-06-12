@@ -364,7 +364,11 @@ struct ArcARView: UIViewRepresentable {
         pan2.maximumNumberOfTouches = 2
         let pinch = UIPinchGestureRecognizer(target: c, action: #selector(Coordinator.handlePinch(_:)))
         let tap   = UITapGestureRecognizer(target: c, action: #selector(Coordinator.handleTap(_:)))
-        [rot, pan2, pinch, tap].forEach { v.addGestureRecognizer($0) }
+        let dtap  = UITapGestureRecognizer(target: c, action: #selector(Coordinator.handleDoubleTap(_:)))
+        dtap.numberOfTapsRequired = 2
+        tap.require(toFail: dtap)
+        [rot, pan2, pinch, tap, dtap].forEach { v.addGestureRecognizer($0) }
+        c.applyTurntable()   // start at the scene-mode default view
         return v
     }
 
@@ -378,11 +382,23 @@ struct ArcARView: UIViewRepresentable {
         private var lastPt: CGPoint = .zero
         private var panLast: CGPoint = .zero
 
-        // EXACT scene-mode turntable, applied to the AR holder:
-        //   qYaw around world-Y, qPitch around the DEVICE CAMERA's right
-        //   axis — q = qYaw · qPitch · q, same 0.006 speed, horizon level.
+        // ── EXACT Arc Edge Vector turntable state — same as the scene
+        //    Coordinator. camQ is the virtual orbit quaternion; in AR the
+        //    real camera is fixed, so the holder wears camQ.inverse —
+        //    identical visual result, identical math, NO trackball.
+        private var camQ: simd_quatf = simd_normalize(
+            simd_quatf(angle:  0.52, axis: SIMD3<Float>(0,1,0)) *
+            simd_quatf(angle: -0.38, axis: SIMD3<Float>(1,0,0)))
+
+        func applyTurntable() {
+            holder?.simdOrientation = camQ.inverse
+        }
+
+        // 1-finger orbit — verbatim scene-mode formula:
+        //   right = camQ·x̂ ;  camQ = normalize(qYaw(-dx·0.006, ŷ) ·
+        //   qPitch(-dy·0.006, right) · camQ) — horizon always level.
         @objc func handleRotate(_ g: UIPanGestureRecognizer) {
-            guard let h = holder, let v = arView else { return }
+            guard let v = arView else { return }
             let pt = g.translation(in: v)
             if g.state == .began { lastPt = pt; return }
             guard g.state == .changed else { return }
@@ -390,17 +406,15 @@ struct ArcARView: UIViewRepresentable {
             let dy = Float(pt.y - lastPt.y)
             lastPt = pt
             let spd: Float = 0.006
-            // Camera-right in world space — pitch feels screen-relative
-            let camRight: SIMD3<Float> = v.pointOfView.map {
-                simd_normalize($0.simdWorldRight)
-            } ?? SIMD3<Float>(1, 0, 0)
-            let qYaw   = simd_quatf(angle:  dx * spd, axis: SIMD3<Float>(0, 1, 0))
-            let qPitch = simd_quatf(angle:  dy * spd, axis: camRight)
-            h.simdOrientation = simd_normalize(qYaw * qPitch * h.simdOrientation)
+            let right  = camQ.act(SIMD3<Float>(1, 0, 0))
+            let qYaw   = simd_quatf(angle: -dx * spd, axis: SIMD3<Float>(0, 1, 0))
+            let qPitch = simd_quatf(angle: -dy * spd, axis: right)
+            camQ = simd_normalize(qYaw * qPitch * camQ)
+            applyTurntable()
         }
 
-        // 2-finger pan — moves the holder in the camera plane, same as
-        // scene mode's pan (right·dx − up·dy, distance-scaled)
+        // 2-finger pan — scene-mode formula, distance-scaled (r·0.0028);
+        // content follows the fingers exactly like the 3D scene.
         @objc func handlePan(_ g: UIPanGestureRecognizer) {
             guard let h = holder, let v = arView,
                   let pov = v.pointOfView else { return }
@@ -414,7 +428,15 @@ struct ArcARView: UIViewRepresentable {
             let spd = dist * 0.0028
             let right = simd_normalize(pov.simdWorldRight)
             let up    = simd_normalize(pov.simdWorldUp)
-            h.simdPosition -= (right * dx - up * dy) * spd
+            h.simdPosition += (right * dx - up * dy) * spd
+        }
+
+        // Double-tap — reset to the scene-mode default view, like the scene
+        @objc func handleDoubleTap(_ g: UITapGestureRecognizer) {
+            camQ = simd_normalize(
+                simd_quatf(angle:  0.52, axis: SIMD3<Float>(0,1,0)) *
+                simd_quatf(angle: -0.38, axis: SIMD3<Float>(1,0,0)))
+            applyTurntable()
         }
 
         // Pinch — grow the lab from palm-size toward room-size
