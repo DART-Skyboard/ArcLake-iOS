@@ -65,6 +65,15 @@ public struct DARTRootView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.leading, 6)
 
+                            // Mantis Navigation HUD — bottom-centered over the
+                            // 3D viewport, semi-transparent, web parity
+                            if labVM.mantis.isActive {
+                                VStack {
+                                    Spacer()
+                                    MantisHUDOverlay(model: labVM.mantis)
+                                }
+                            }
+
                             // CFD badge
                             if labVM.isCFDActive {
                                 VStack {
