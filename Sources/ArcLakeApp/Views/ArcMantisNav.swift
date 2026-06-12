@@ -48,7 +48,27 @@ public final class MantisNavModel: ObservableObject {
     @Published public var fuelFlow: Double = 0
     @Published public var isLaunched = false
     // Vehicle: default drone or any imported 3D asset
-    @Published public var vehicleAsset: String? = nil   // node-name prefix match
+    @Published public var vehicleAsset: String? = nil {  // node-name prefix match
+        didSet { applyAssetVisibility() }
+    }
+    // Hide every other imported asset while flying the active one —
+    // toggle off to bring them all back into the scene
+    @Published public var hideOtherAssets = false {
+        didSet { applyAssetVisibility() }
+    }
+
+    public func applyAssetVisibility() {
+        guard let scene = scene ?? labVM?.scene else { return }
+        for n in scene.rootNode.childNodes {
+            guard let nm = n.name else { continue }
+            let isImport = nm.hasPrefix("imported_") || nm.hasPrefix("glb_import_")
+            let isDrone  = nm == "mantis_drone"
+            guard isImport || isDrone else { continue }
+            let isActiveVehicle = (vehicleAsset == nil && isDrone)
+                || (vehicleAsset != nil && nm == vehicleAsset)
+            n.isHidden = hideOtherAssets && !isActiveVehicle
+        }
+    }
     // Camera modes — MN.html parity (follow = behind+above, asset faces away)
     public enum CamMode: String, CaseIterable {
         case orbit = "Orbit", follow = "Follow", fpv = "FPV",
@@ -114,6 +134,7 @@ public final class MantisNavModel: ObservableObject {
 
     public func deactivate() {
         isActive = false
+        hideOtherAssets = false   // didSet unhides all assets
         timer?.invalidate(); timer = nil
         scene?.rootNode.childNode(withName: "mantis_drone", recursively: false)?
             .removeFromParentNode()
@@ -576,6 +597,17 @@ struct MantisSettingsSheet: View {
                         Text("Import GLB/USDZ assets from the toolbar, then pick one here — or fly the built-in drone.")
                             .font(.system(size: 8, design: .monospaced))
                             .foregroundColor(.white.opacity(0.35))
+                        Toggle(isOn: $model.hideOtherAssets) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Hide other assets")
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundColor(.white.opacity(0.85))
+                                Text("Only the active vehicle stays in the scene — toggle back anytime")
+                                    .font(.system(size: 8, design: .monospaced))
+                                    .foregroundColor(.white.opacity(0.35))
+                            }
+                        }
+                        .tint(themeVM.accent)
                     }
                     .padding(12).background(Color.white.opacity(0.03))
                     .clipShape(RoundedRectangle(cornerRadius: 12))
