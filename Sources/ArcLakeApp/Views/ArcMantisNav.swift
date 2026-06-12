@@ -171,9 +171,36 @@ public final class MantisNavModel: ObservableObject {
         }
         return scene.rootNode.childNode(withName: "mantis_drone", recursively: false)
     }
+    // Built-in flight assets bundled with the app (resource name → label)
+    public static let builtInAssets: [(label: String, resource: String)] = [
+        ("Arrow (built-in)", "ArrowOptimized"),
+    ]
+    /// Ensures a built-in GLB is loaded into the scene; returns its node name.
+    @discardableResult
+    public func loadBuiltInAsset(_ resource: String) -> String? {
+        guard let scene = scene ?? labVM?.scene else { return nil }
+        let nodeName = "glb_import_\(resource)"
+        if scene.rootNode.childNode(withName: nodeName, recursively: false) != nil {
+            return nodeName
+        }
+        guard let url = Bundle.main.url(forResource: resource, withExtension: "glb"),
+              let node = ArcGLBImporter().importGLB(url: url) else { return nil }
+        node.name = nodeName
+        // normalize to a flyable size
+        let (minB, maxB) = node.boundingBox
+        let ext = max(maxB.x - minB.x, maxB.y - minB.y, maxB.z - minB.z)
+        if ext > 0.01 {
+            let s = 3.0 / ext
+            node.scale = SCNVector3(s, s, s)
+        }
+        node.position = SCNVector3(0, 0.5, 6)
+        scene.rootNode.addChildNode(node)
+        return nodeName
+    }
+
     // Imported asset names available for assignment
     public func importedAssets() -> [String] {
-        guard let scene = scene else { return [] }
+        guard let scene = scene ?? labVM?.scene else { return [] }
         return scene.rootNode.childNodes.compactMap { n in
             guard let nm = n.name,
                   nm.hasPrefix("imported_") || nm.hasPrefix("glb_import_") else { return nil }
@@ -522,6 +549,13 @@ struct MantisSettingsSheet: View {
                             .foregroundColor(themeVM.accent).tracking(2)
                         Menu {
                             Button("Default Drone") { model.vehicleAsset = nil }
+                            ForEach(MantisNavModel.builtInAssets, id: \.resource) { b in
+                                Button(b.label) {
+                                    if let n = model.loadBuiltInAsset(b.resource) {
+                                        model.vehicleAsset = n
+                                    }
+                                }
+                            }
                             ForEach(model.importedAssets(), id: \.self) { a in
                                 Button(a) { model.vehicleAsset = a }
                             }
@@ -583,6 +617,7 @@ struct MantisSettingsSheet: View {
             }
         }
         .preferredColorScheme(.dark)
+        .onAppear { model.labVM = labVM }   // scene access for asset menus
     }
 
     // Bounds-safe accessors keyed by set id — survives deletion mid-render
@@ -617,6 +652,11 @@ struct MantisSettingsSheet: View {
                 Menu {
                     Button("Default Drone") {
                         if let k = setIndex(sid) { model.propSets[k].assetName = nil } }
+                    ForEach(MantisNavModel.builtInAssets, id: \.resource) { b in
+                        Button(b.label) {
+                            if let n = model.loadBuiltInAsset(b.resource),
+                               let k = setIndex(sid) { model.propSets[k].assetName = n } }
+                    }
                     ForEach(model.importedAssets(), id: \.self) { a in
                         Button(a) {
                             if let k = setIndex(sid) { model.propSets[k].assetName = a } }
