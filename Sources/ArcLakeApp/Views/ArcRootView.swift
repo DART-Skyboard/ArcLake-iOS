@@ -734,9 +734,11 @@ struct ArcProfileSheet: View {
                     }.padding(.horizontal, 16).padding(.vertical, 12)
                     Divider().background(Color.white.opacity(0.08))
                     HStack {
-                        Text("Build").font(.system(size: 13, design: .monospaced)).foregroundColor(.white.opacity(0.4))
+                        Text("App Version").font(.system(size: 13, design: .monospaced)).foregroundColor(.white.opacity(0.4))
                         Spacer()
-                        Text("1.0.7 (26)").font(.system(size: 13, design: .monospaced)).foregroundColor(.white.opacity(0.3))
+                        // Same live source as the header — always in sync
+                        Text("v" + (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.5.0"))
+                            .font(.system(size: 13, design: .monospaced)).foregroundColor(.white.opacity(0.3))
                     }.padding(.horizontal, 16).padding(.vertical, 12)
                 }
                 .background(Color.white.opacity(0.04)).cornerRadius(12).padding(.horizontal, 20)
@@ -746,7 +748,7 @@ struct ArcProfileSheet: View {
                         Image(systemName:"heart.fill").font(.system(size:14)).foregroundColor(.pink)
                         VStack(alignment:.leading, spacing:1) {
                             Text("Support ArcLake").font(.custom("Exo2-SemiBold", size:13)).foregroundColor(.white)
-                            Text("$4.99/month · Help keep development active")
+                            Text("$2.99/month · Help keep development active")
                                 .font(.system(size:9, design:.monospaced)).foregroundColor(.white.opacity(0.35))
                         }
                         Spacer()
