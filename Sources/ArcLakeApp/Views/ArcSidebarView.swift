@@ -55,8 +55,9 @@ struct DARTMoleculePanel: View {
                             }
                         }
                         DARTActionTile(label: "Mantis\nNav", icon: "paperplane.fill",
-                                       color: Color(red: 0.1, green: 0.85, blue: 0.7)) {
-                            showMantisSettings = true
+                                       color: Color(red: 0.35, green: 0.78, blue: 1.0)) {
+                            labVM.openMantisTab()      // dedicated tab + live flight
+                            showMantisSettings = true  // settings apply instantly
                         }
                         DARTActionTile(label: "Node\nEditor", icon: "circle.grid.cross",
                                        color: .orange) {
