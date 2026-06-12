@@ -68,7 +68,7 @@ struct DARTMoleculePanel: View {
                         }
                     }
                 }
-                .sheet(isPresented: $showMantisSettings) { MantisSettingsSheet() }
+                .sheet(isPresented: $showMantisSettings) { MantisSettingsSheet(model: labVM.mantis) }
             }
             .padding(10)
         }
