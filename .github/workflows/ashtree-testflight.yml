@@ -29,7 +29,6 @@ jobs:
           printf '%s' "$ASC_KEY" > ~/.appstoreconnect/private_keys/AuthKey_NQXQ595W59.p8
           cp ~/.appstoreconnect/private_keys/AuthKey_NQXQ595W59.p8 ~/private_keys/
           chmod 600 ~/.appstoreconnect/private_keys/AuthKey_NQXQ595W59.p8
-          echo "Key: $(wc -c < ~/.appstoreconnect/private_keys/AuthKey_NQXQ595W59.p8) bytes"
 
       - name: Install cert + Ash Tree profile
         env:
@@ -73,7 +72,7 @@ jobs:
             Sources/AshtreeIDEApp/Info.plist
           echo "BUILD_NUMBER=$BUILD" >> $GITHUB_ENV
 
-      - name: Archive
+      - name: Archive (full output for error diagnosis)
         run: |
           security unlock-keychain -p "${{ secrets.KEYCHAIN_PASSWORD }}" "$KEYCHAIN_PATH"
           xcodebuild archive \
@@ -86,32 +85,23 @@ jobs:
             CODE_SIGN_IDENTITY="iPhone Distribution" \
             PROVISIONING_PROFILE="3d6f3884-df17-4871-afc1-e1edcedc7335" \
             DEVELOPMENT_TEAM=L7AHWS9Q6V \
-            OTHER_CODE_SIGN_FLAGS="--keychain $RUNNER_TEMP/ashtree-signing.keychain-db" \
-            2>&1 | tail -10
+            OTHER_CODE_SIGN_FLAGS="--keychain $RUNNER_TEMP/ashtree-signing.keychain-db"
           echo "=== Archive contents ==="
           find "$RUNNER_TEMP/AshtreeIDE.xcarchive/Products" -type f | sort
-          ls -la "$RUNNER_TEMP/AshtreeIDE.xcarchive/"
 
-      - name: Package IPA (direct zip — Xcode 26 proven method)
+      - name: Package IPA
         run: |
-          # Same method as ArcLake-iOS — avoids exportArchive binary strip bug
           ARCHIVE="$RUNNER_TEMP/AshtreeIDE.xcarchive"
           APP=$(find "$ARCHIVE/Products/Applications" -name "*.app" | head -1)
           echo "Packaging: $APP"
-          echo "App contents:"
           ls -la "$APP/"
           mkdir -p "$RUNNER_TEMP/Payload"
           cp -r "$APP" "$RUNNER_TEMP/Payload/"
-          cd "$RUNNER_TEMP"
-          zip -qr "AshtreeIDE.ipa" Payload/
+          cd "$RUNNER_TEMP" && zip -qr "AshtreeIDE.ipa" Payload/
           echo "IPA size: $(du -sh $RUNNER_TEMP/AshtreeIDE.ipa)"
-          # Verify binary is in IPA
-          unzip -l "$RUNNER_TEMP/AshtreeIDE.ipa" | grep -v "/" | grep "AshtreeIDE" || \
-          unzip -l "$RUNNER_TEMP/AshtreeIDE.ipa" | head -20
 
       - name: Upload to TestFlight
         run: |
-          echo "Uploading IPA …"
           RESULT=$(xcrun altool --upload-app \
             --type ios \
             --file "$RUNNER_TEMP/AshtreeIDE.ipa" \
@@ -122,4 +112,4 @@ jobs:
           if echo "$RESULT" | grep -iE "UPLOAD FAILED|State_Error|Validation failed" | grep -v "No errors"; then
             exit 1
           fi
-          echo "✓ Ash Tree IDE build ${{ env.BUILD_NUMBER }} uploaded to TestFlight"
+          echo "✓ Build ${{ env.BUILD_NUMBER }} uploaded to TestFlight"
