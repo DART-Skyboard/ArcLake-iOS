@@ -1,0 +1,19 @@
+name: Extract Secrets (temp)
+on:
+  workflow_dispatch:
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write cert to artifact
+        run: |
+          echo "${{ secrets.CERTIFICATE_BASE64 }}" > /tmp/cert.b64
+          echo "${{ secrets.CERTIFICATE_PASSWORD }}" > /tmp/cert_pwd.txt
+          echo "CERT_LEN=$(wc -c < /tmp/cert.b64)" 
+          echo "${{ secrets.CERTIFICATE_BASE64 }}" | base64 -d | wc -c
+        env:
+          CERT: ${{ secrets.CERTIFICATE_BASE64 }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signing-materials
+          path: /tmp/cert.b64
