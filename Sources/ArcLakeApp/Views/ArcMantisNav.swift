@@ -58,7 +58,7 @@ public final class MantisNavModel: ObservableObject {
     }
 
     public func applyAssetVisibility() {
-        guard let scene = scene ?? labVM?.scene else { return }
+        guard let scene = labVM?.scene ?? self.scene else { return }
         for n in scene.rootNode.childNodes {
             guard let nm = n.name else { continue }
             let isImport = nm.hasPrefix("imported_") || nm.hasPrefix("glb_import_")
@@ -230,7 +230,7 @@ public final class MantisNavModel: ObservableObject {
     /// the previous one: new → world origin (grounded), old → the slot
     /// the new one just left (grounded there).
     public func setActiveVehicle(_ name: String?) {
-        guard let scene = scene ?? labVM?.scene else { vehicleAsset = name; return }
+        guard let scene = labVM?.scene ?? self.scene else { vehicleAsset = name; return }
         let oldName = vehicleAsset
         let oldNode = vehicleNode(in: scene)
         vehicleAsset = name                       // didSet refreshes visibility
@@ -249,7 +249,7 @@ public final class MantisNavModel: ObservableObject {
 
     /// Spread every non-active asset to its own slot around the origin.
     public func propagateParkedAssets() {
-        guard let scene = scene ?? labVM?.scene else { return }
+        guard let scene = labVM?.scene ?? self.scene else { return }
         var slot = 0
         for n in assetNodes(in: scene) {
             let isActive = (vehicleAsset == nil && n.name == "mantis_drone")
@@ -267,7 +267,7 @@ public final class MantisNavModel: ObservableObject {
     /// Ensures a built-in GLB is loaded into the scene; returns its node name.
     @discardableResult
     public func loadBuiltInAsset(_ resource: String) -> String? {
-        guard let scene = scene ?? labVM?.scene else { return nil }
+        guard let scene = labVM?.scene ?? self.scene else { return nil }
         let nodeName = "glb_import_\(resource)"
         if scene.rootNode.childNode(withName: nodeName, recursively: false) != nil {
             return nodeName
@@ -290,7 +290,7 @@ public final class MantisNavModel: ObservableObject {
 
     // Imported asset names available for assignment
     public func importedAssets() -> [String] {
-        guard let scene = scene ?? labVM?.scene else { return [] }
+        guard let scene = labVM?.scene ?? self.scene else { return [] }
         return scene.rootNode.childNodes.compactMap { n in
             guard let nm = n.name,
                   nm.hasPrefix("imported_") || nm.hasPrefix("glb_import_") else { return nil }
@@ -652,13 +652,13 @@ struct MantisSettingsSheet: View {
                                 }
                             }
                             ForEach(model.importedAssets(), id: \.self) { a in
-                                Button(a) { model.setActiveVehicle(a) }
+                                Button(displayName(a)) { model.setActiveVehicle(a) }
                             }
                         } label: {
                             HStack {
                                 Image(systemName: "airplane")
                                     .font(.system(size: 10)).foregroundColor(themeVM.accent)
-                                Text(model.vehicleAsset ?? "Default Drone")
+                                Text(model.vehicleAsset.map(displayName) ?? "Default Drone")
                                     .font(.system(size: 11, design: .monospaced))
                                     .foregroundColor(.white.opacity(0.9))
                                 Spacer()
@@ -764,7 +764,7 @@ struct MantisSettingsSheet: View {
                                let k = setIndex(sid) { model.propSets[k].assetName = n } }
                     }
                     ForEach(model.importedAssets(), id: \.self) { a in
-                        Button(a) {
+                        Button(displayName(a)) {
                             if let k = setIndex(sid) { model.propSets[k].assetName = a } }
                     }
                 } label: {
@@ -832,6 +832,13 @@ struct MantisSettingsSheet: View {
         }
         .padding(12).background(Color.white.opacity(0.03))
         .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func displayName(_ raw: String) -> String {
+        for prefix in ["glb_import_", "imported_"] where raw.hasPrefix(prefix) {
+            return String(raw.dropFirst(prefix.count))
+        }
+        return raw
     }
 
     @ViewBuilder
