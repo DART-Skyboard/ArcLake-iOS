@@ -83,6 +83,10 @@ public struct ArcSceneView: UIViewRepresentable {
     }
 
     public func updateUIView(_ v: SCNView, context: Context) {
+        // Apply render quality from the render system
+        let rvm = ArcRenderViewModel.shared
+        v.antialiasingMode = rvm.msaaMode(rvm.msaaLevel)
+        rvm.applyCamera(v)
         let c = context.coordinator
         guard let cam = c.camNode else { return }
 
@@ -781,3 +785,4 @@ import UniformTypeIdentifiers
 extension SIMD4 where Scalar == Float {
     var xyz: SIMD3<Float> { SIMD3(x,y,z) }
 }
+
