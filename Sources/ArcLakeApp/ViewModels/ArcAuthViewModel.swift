@@ -444,19 +444,19 @@ extension ArcAuthViewModel:
     ASAuthorizationControllerPresentationContextProviding {
 
     public func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
-        // Must run on main thread — always true since ArcAuthViewModel is @MainActor
-        // Walk all window scenes to find the one with a key window
-        for scene in UIApplication.shared.connectedScenes {
-            guard let ws = scene as? UIWindowScene else { continue }
-            for window in ws.windows where window.isKeyWindow { return window }
-        }
-        // Fallback: any visible window
-        for scene in UIApplication.shared.connectedScenes {
-            guard let ws = scene as? UIWindowScene else { continue }
-            for window in ws.windows where !window.isHidden { return window }
-        }
-        // Should never reach here in a normal app lifecycle
-        return UIApplication.shared.windows.first ?? UIWindow()
+        // iOS 15+: windowScene.keyWindow is the correct API.
+        // UIApplication.shared.windows is deprecated and returns [] on iOS 16+,
+        // which caused the crash after Face ID completed.
+        let scene = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive }
+        if let window = scene?.keyWindow { return window }
+        // Fallback for edge cases (e.g. background launch)
+        if let window = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .flatMap({ $0.windows })
+            .first(where: { !$0.isHidden && $0.alpha > 0 }) { return window }
+        return UIWindow()
     }
 
     public func authorizationController(
@@ -564,6 +564,7 @@ struct KeychainHelper {
         SecItemDelete(q as CFDictionary)
     }
 }
+
 
 
 
