@@ -524,6 +524,8 @@ struct DARTBottomPanel: View {
                 case .arc:      DARTArcPanel()
                 case .env:      DARTEnvPanel()
                 case .log:      DARTLogPanel()
+                case .imports:  ArcImportManagerView()
+                case .render:   ArcRenderPanel()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -906,6 +908,7 @@ struct ArcMusicControls: View {
         }
     }
 }
+
 
 
 
