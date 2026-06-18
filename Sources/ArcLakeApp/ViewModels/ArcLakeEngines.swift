@@ -644,10 +644,10 @@ extension ArcLabViewModel {
         mantis.applyEnv(mantis.envPreset)
         if !mantis.isActive { mantis.activate(in: scene) }
         // Pre-fetch remote assets in background so they're available immediately
-        let mantisRef = mantis
-        Task.detached(priority: .background) {
+        // Pre-fetch remote assets — cachedRemoteURL does the disk IO
+        Task(priority: .background) {
             for ra in MantisNavModel.remoteAssets {
-                _ = mantisRef.cachedRemoteURL(resource: ra.resource, remoteURL: ra.url)
+                _ = self.mantis.cachedRemoteURL(resource: ra.resource, remoteURL: ra.url)
             }
         }
     }
