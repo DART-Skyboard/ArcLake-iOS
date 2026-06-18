@@ -24,7 +24,8 @@ public struct ArcSceneView: UIViewRepresentable {
         v.autoenablesDefaultLighting = false
         v.backgroundColor = UIColor(red:0.013, green:0.027, blue:0.065, alpha:1)
         v.antialiasingMode = .multisampling4X
-        v.rendersContinuously  = true
+        v.rendersContinuously      = false  // on-demand — renders only on scene change
+        v.preferredFramesPerSecond = 60    // cap at 60fps (ProMotion safe)
         v.preferredFramesPerSecond = 60
         v.scene = labVM.scene
 
@@ -95,15 +96,27 @@ public struct ArcSceneView: UIViewRepresentable {
         // no SwiftUI diff required, toggles/sliders are felt immediately.
         if let cam = v.scene?.rootNode.childNode(withName: "arcCamera", recursively: false)?
                 .camera ?? v.pointOfView?.camera {
-            // Post-process — when postProcessEnabled is OFF, zero everything out
+            // ── Post-process ────────────────────────────────────────────
             let pp = rvm.postProcessEnabled
+            // HDR always on — required for SSAO to work even when bloom is 0
+            cam.wantsHDR            = true
             cam.bloomIntensity      = pp ? rvm.bloomIntensity : 0
             cam.bloomThreshold      = rvm.bloomThreshold
-            cam.bloomBlurRadius     = pp ? 5.0 : 0
-            cam.motionBlurIntensity = pp ? rvm.motionBlur : 0
-            cam.wantsHDR            = pp && (rvm.ssrEnabled || rvm.ssgiEnabled)
+            cam.bloomBlurRadius     = pp ? 4.0 : 0
+            cam.motionBlurIntensity = pp && rvm.motionBlur > 0.01 ? rvm.motionBlur : 0
             cam.exposureOffset      = pp ? rvm.exposureOffset : 0
-            // When bloom is explicitly 0 the grid won't glow beyond its material emission
+            // ── Screen-space Ambient Occlusion (iOS 13+, SceneKit native) ───
+            // This is real contact shadows between surfaces — much more visible
+            // than the shadow-sample hack. Works at any polygon count.
+            if pp && rvm.aoEnabled {
+                cam.screenSpaceAmbientOcclusionIntensity       = Double(rvm.aoStrength) * 2.2
+                cam.screenSpaceAmbientOcclusionRadius          = Double(rvm.aoSize) * 0.06
+                cam.screenSpaceAmbientOcclusionBias            = 0.02
+                cam.screenSpaceAmbientOcclusionDepthThreshold  = 0.15
+                cam.screenSpaceAmbientOcclusionNormalThreshold = 0.25
+            } else {
+                cam.screenSpaceAmbientOcclusionIntensity = 0
+            }
         }
         let c = context.coordinator
         guard let cam = c.camNode else { return }
@@ -803,4 +816,5 @@ import UniformTypeIdentifiers
 extension SIMD4 where Scalar == Float {
     var xyz: SIMD3<Float> { SIMD3(x,y,z) }
 }
+
 
