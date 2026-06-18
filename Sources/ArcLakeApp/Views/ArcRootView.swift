@@ -112,6 +112,24 @@ public struct DARTRootView: View {
                 // AtomInfoCard is now in ArcOverlays — same layer as all panels
             }
         }
+        // Global file importer — presented from root so it always works
+        .fileImporter(
+            isPresented: $labVM.showGlobalImporter,
+            allowedContentTypes: [
+                .init(filenameExtension: "glb") ?? .data,
+                .init(filenameExtension: "gltf") ?? .data,
+                .init(filenameExtension: "usdz") ?? .data],
+            allowsMultipleSelection: false
+        ) { result in
+            guard case .success(let urls) = result, let url = urls.first else { return }
+            let accessing = url.startAccessingSecurityScopedResource()
+            defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+            Task {
+                if let node = ArcGLBImporter().importGLB(url: url) {
+                    await MainActor.run { labVM.importAssetNode(node) }
+                }
+            }
+        }
         .preferredColorScheme(.dark)
         .sheet(isPresented: $showProfile) { ArcProfileSheet() }
 
@@ -551,7 +569,8 @@ struct DARTTabSelector: View {
     ]
 
     var body: some View {
-        HStack(spacing: 0) {
+        ScrollView(.horizontal, showsIndicators: false) {
+         HStack(spacing: 0) {
             ForEach(tabs, id: \.0) { tab, label, icon in
                 Button {
                     withAnimation(.easeInOut(duration: 0.15)) { labVM.activeTab = tab }
@@ -578,7 +597,8 @@ struct DARTTabSelector: View {
                     )
                 }
             }
-        }
+         }  // HStack
+        }   // ScrollView
         .background(Color.black.opacity(0.5))
         .overlay(Rectangle().frame(height: 0.5)
             .foregroundColor(Color.white.opacity(0.08)), alignment: .bottom)
