@@ -405,6 +405,8 @@ struct AshCanvasDrawer: View {
     @State private var nodes:      [AshNode] = []
     @State private var links:      [AshLink] = []
     @State private var pendingLink: UUID? = nil       // glowing source in link mode
+    @State private var dragIdx:    Int?    = nil      // index of node being dragged
+    @State private var dragOffset: CGSize  = .zero   // finger-to-center offset
     @State private var selectedIds: Set<UUID> = []    // multi-selected nodes
     @State private var selectedLinkIds: Set<UUID> = []
 
@@ -498,20 +500,36 @@ struct AshCanvasDrawer: View {
                               canvasSize: geo.size,
                               sockPositions: sockPositions)
                 }
-                // Drag handler — only moves nodes in select mode
+                // Smooth drag — offset-anchored so node never jumps.
+                // dragIdx + dragOffset are computed once on gesture start
+                // and held for the duration, giving silky continuous motion.
                 .gesture(
-                    DragGesture(minimumDistance: 6)
+                    DragGesture(minimumDistance: 1)
                         .onChanged { val in
                             guard !linkMode, activeTool == nil else { return }
-                            let hit = nodes.firstIndex { n in
-                                !n.isSocket &&
-                                abs(n.position.x - val.startLocation.x) < nodeSize &&
-                                abs(n.position.y - val.startLocation.y) < nodeSize
+                            if dragIdx == nil {
+                                // First event: find the touched node and cache
+                                // the offset from finger to node center.
+                                if let idx = nodes.firstIndex(where: { n in
+                                    !n.isSocket &&
+                                    abs(n.position.x - val.startLocation.x) < nodeSize + 4 &&
+                                    abs(n.position.y - val.startLocation.y) < nodeSize + 4
+                                }) {
+                                    dragIdx = idx
+                                    dragOffset = CGSize(
+                                        width:  nodes[idx].position.x - val.startLocation.x,
+                                        height: nodes[idx].position.y - val.startLocation.y)
+                                }
                             }
-                            if let idx = hit {
-                                nodes[idx].position = val.location
+                            if let idx = dragIdx {
+                                // Every subsequent event: apply stored offset so
+                                // finger stays exactly over the grab point.
+                                nodes[idx].position = CGPoint(
+                                    x: val.location.x + dragOffset.width,
+                                    y: val.location.y + dragOffset.height)
                             }
                         }
+                        .onEnded { _ in dragIdx = nil; dragOffset = .zero }
                 )
             }
             .frame(height: 220)   // taller canvas
