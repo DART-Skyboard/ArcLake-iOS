@@ -200,9 +200,12 @@ public final class MantisNavModel: ObservableObject {
     }
     // The vehicle node — default drone or selected imported asset
     func vehicleNode(in scene: SCNScene) -> SCNNode? {
-        if let name = vehicleAsset,
-           let n = scene.rootNode.childNodes.first(where: { $0.name?.contains(name) == true }) {
-            return n
+        if let name = vehicleAsset {
+            // Match by full node name OR by the display name (filename without prefix)
+            if let n = scene.rootNode.childNodes.first(where: { n in
+                guard let nm = n.name else { return false }
+                return nm == name || nm.contains(name) || name.contains(nm)
+            }) { return n }
         }
         return scene.rootNode.childNode(withName: "mantis_drone", recursively: false)
     }
@@ -301,11 +304,22 @@ public final class MantisNavModel: ObservableObject {
     }
 
     // Imported asset names available for assignment
-    public func importedAssets() -> [String] {
-        guard let scene = labVM?.scene ?? self.scene else { return [] }
-        return scene.rootNode.childNodes.compactMap { n in
+    /// All imported 3-D asset node names — de-duplicated by base display name.
+    /// Accepts an explicit scene so this works before labVM weak ref is set.
+    public func importedAssets(from passedScene: SCNScene? = nil) -> [String] {
+        let sc = passedScene ?? self.scene ?? labVM?.scene
+        guard let sc else { return [] }
+        let builtInNames = Set(Self.builtInAssets.map { "glb_import_\($0.resource)" })
+        var seen = Set<String>()
+        return sc.rootNode.childNodes.compactMap { n -> String? in
             guard let nm = n.name,
                   nm.hasPrefix("imported_") || nm.hasPrefix("glb_import_") else { return nil }
+            guard !builtInNames.contains(nm) else { return nil }
+            var display = nm
+            for p in ["glb_import_", "imported_"] where nm.hasPrefix(p) {
+                display = String(nm.dropFirst(p.count)); break
+            }
+            guard seen.insert(display).inserted else { return nil }
             return nm
         }
     }
@@ -664,7 +678,7 @@ struct MantisSettingsSheet: View {
                                     }
                                 }
                             }
-                            ForEach(model.importedAssets(), id: \.self) { a in
+                            ForEach(model.importedAssets(from: labVM.scene), id: \.self) { a in
                                 Button(displayName(a)) { model.setActiveVehicle(a) }
                             }
                         } label: {
@@ -776,7 +790,7 @@ struct MantisSettingsSheet: View {
                             if let n = model.loadBuiltInAsset(b.resource),
                                let k = setIndex(sid) { model.propSets[k].assetName = n } }
                     }
-                    ForEach(model.importedAssets(), id: \.self) { a in
+                    ForEach(model.importedAssets(from: labVM.scene), id: \.self) { a in
                         Button(displayName(a)) {
                             if let k = setIndex(sid) { model.propSets[k].assetName = a } }
                     }
@@ -872,4 +886,5 @@ struct MantisSettingsSheet: View {
         }
     }
 }
+
 
