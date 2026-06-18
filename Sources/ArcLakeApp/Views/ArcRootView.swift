@@ -14,7 +14,8 @@ public struct DARTRootView: View {
     @State private var showAppleAccountSheet = false
     @State private var showSupportSheet = false
     @State private var showAR       = false
-    @State private var showImporter = false
+    @State private var showImporter     = false
+    @State private var showGlobalImport = false
     @State private var showFeedback = false
     @State private var selectedTab: DARTTab = .scene
     @State private var sidebarCollapsed = false
@@ -112,23 +113,11 @@ public struct DARTRootView: View {
                 // AtomInfoCard is now in ArcOverlays — same layer as all panels
             }
         }
-        // Global file importer — presented from root so it always works
-        .fileImporter(
-            isPresented: $labVM.showGlobalImporter,
-            allowedContentTypes: [
-                .init(filenameExtension: "glb") ?? .data,
-                .init(filenameExtension: "gltf") ?? .data,
-                .init(filenameExtension: "usdz") ?? .data],
-            allowsMultipleSelection: false
-        ) { result in
-            guard case .success(let urls) = result, let url = urls.first else { return }
-            let accessing = url.startAccessingSecurityScopedResource()
-            defer { if accessing { url.stopAccessingSecurityScopedResource() } }
-            Task {
-                if let node = ArcGLBImporter().importGLB(url: url) {
-                    await MainActor.run { labVM.importAssetNode(node) }
-                }
-            }
+        // Global importer sheet — same ArcAssetImporter the header uses,
+        // triggered by labVM.showGlobalImporter from the sidebar Import tab.
+        // This avoids the EnvironmentObject Binding propagation issue with .fileImporter.
+        .onChange(of: labVM.showGlobalImporter) { val in
+            if val { showGlobalImport = true; labVM.showGlobalImporter = false }
         }
         .preferredColorScheme(.dark)
         .sheet(isPresented: $showProfile) { ArcProfileSheet() }
@@ -162,6 +151,12 @@ public struct DARTRootView: View {
             ArcAssetImporter { node in
                 labVM.importAssetNode(node)
                 showImporter = false
+            }
+        }
+        .sheet(isPresented: $showGlobalImport) {
+            ArcAssetImporter { node in
+                labVM.importAssetNode(node)
+                showGlobalImport = false
             }
         }
     }
