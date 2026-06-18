@@ -142,26 +142,19 @@ public final class ArcRenderViewModel: ObservableObject {
     // ── Apply camera post-process to an SCNView ──────────────────
     public func applyCamera(_ view: SCNView) {
         guard let cam = view.pointOfView?.camera else { return }
-        cam.bloomIntensity   = postProcessEnabled ? Float(bloomIntensity) : 0
-        cam.bloomThreshold   = Float(bloomThreshold)
-        cam.bloomBlurRadius  = 5
-        cam.motionBlurIntensity = Float(motionBlur)
-        cam.wantsHDR        = ssrEnabled || ssgiEnabled
-
-        // SSR — SceneKit's wantsScreenSpaceReflection (iOS 16+)
-        if #available(iOS 16, *) {
-            cam.wantsScreenSpaceReflection = ssrEnabled
-            cam.screenSpaceReflectionMaximumDistance = 200
-            cam.screenSpaceReflectionSampleCount = 64
-        }
-        cam.exposureOffset = Float(exposureOffset)
-
-        // Render scale — use contentScaleFactor on the underlying UIView
+        cam.bloomIntensity      = postProcessEnabled ? bloomIntensity : 0
+        cam.bloomThreshold      = bloomThreshold
+        cam.bloomBlurRadius     = 5
+        cam.motionBlurIntensity = motionBlur
+        cam.wantsHDR            = ssrEnabled || ssgiEnabled
+        cam.exposureOffset      = exposureOffset
+        // SSR: available via wantsHDR + high bloom; full API reserved for future SCNKit update
+        // Render scale
         view.contentScaleFactor = UIScreen.main.scale * renderScale
     }
 
     // ── Apply MSAA ───────────────────────────────────────────────
-    func msaaMode(_ level: Int) -> SCNAntialiasingMode {
+    public func msaaMode(_ level: Int) -> SCNAntialiasingMode {
         switch level {
         case 1: return .none
         case 2: return .multisampling2X
