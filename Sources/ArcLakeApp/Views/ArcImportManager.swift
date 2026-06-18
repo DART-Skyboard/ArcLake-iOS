@@ -9,8 +9,7 @@ import SceneKit
 struct ArcImportManagerView: View {
     @EnvironmentObject var labVM: ArcLabViewModel
     @EnvironmentObject var themeVM: ArcThemeViewModel
-    @State private var showFilePicker = false
-    @State private var refreshID = UUID()   // force list refresh after delete
+    @State private var refreshID = UUID()
 
     private var selNode: String? { labVM.selectedImportedNode }
 
@@ -39,7 +38,11 @@ struct ArcImportManagerView: View {
                     .font(.custom("Orbitron-Bold", size: 11))
                     .foregroundColor(themeVM.accent).tracking(2)
                 Spacer()
-                Button { showFilePicker = true } label: {
+                Button {
+                    // Trigger the global file picker in ArcRootView
+                    // (fileImporter must be on the top-level view to present reliably)
+                    labVM.showGlobalImporter = true
+                } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "plus").font(.system(size: 10, weight: .bold))
                         Text("Add").font(.system(size: 10, weight: .semibold, design: .monospaced))
@@ -90,26 +93,7 @@ struct ArcImportManagerView: View {
                 .id(refreshID)
             }
         }
-        .fileImporter(
-            isPresented: $showFilePicker,
-            allowedContentTypes: [
-                .init(filenameExtension: "glb") ?? .data,
-                .init(filenameExtension: "gltf") ?? .data,
-                .init(filenameExtension: "usdz") ?? .data],
-            allowsMultipleSelection: false
-        ) { result in
-            guard case .success(let urls) = result, let url = urls.first else { return }
-            let accessing = url.startAccessingSecurityScopedResource()
-            defer { if accessing { url.stopAccessingSecurityScopedResource() } }
-            Task {
-                if let node = ArcGLBImporter().importGLB(url: url) {
-                    await MainActor.run {
-                        labVM.importAssetNode(node)
-                        refreshID = UUID()
-                    }
-                }
-            }
-        }
+
     }
 
     @ViewBuilder
