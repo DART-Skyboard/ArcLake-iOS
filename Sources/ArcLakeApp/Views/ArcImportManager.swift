@@ -10,6 +10,7 @@ struct ArcImportManagerView: View {
     @EnvironmentObject var labVM: ArcLabViewModel
     @EnvironmentObject var themeVM: ArcThemeViewModel
     @State private var showFilePicker = false
+    private var selNode: String? { labVM.selectedImportedNode }
 
     private func importedNames() -> [String] {
         labVM.scene.rootNode.childNodes.compactMap { n in
@@ -101,7 +102,7 @@ struct ArcImportManagerView: View {
 
     @ViewBuilder
     private func assetRow(nodeName: String) -> some View {
-        let isSelected = labVM.selectedImportedNode == nodeName
+        let isSelected = selNode == nodeName
         HStack(spacing: 8) {
             Image(systemName: "cube.fill")
                 .font(.system(size: 10)).foregroundColor(themeVM.accent.opacity(0.8))
@@ -137,9 +138,10 @@ struct ArcImportManagerView: View {
 struct ArcGizmoOverlay: View {
     @EnvironmentObject var labVM: ArcLabViewModel
     @EnvironmentObject var themeVM: ArcThemeViewModel
+    private var selNode: String? { labVM.selectedImportedNode }
 
     var body: some View {
-        if let name = labVM.selectedImportedNode,
+        if let name = selNode,
            let node = labVM.scene.rootNode.childNode(withName: name, recursively: false) {
             VStack {
                 Spacer()
