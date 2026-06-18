@@ -395,6 +395,16 @@ public final class MantisNavModel: ObservableObject {
                 }
             }
         }
+        // Include remote assets cached on disk (downloaded but not yet in a scene)
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        for ra in Self.remoteAssets {
+            let nodeName = "glb_import_\(ra.resource)"
+            guard !results.contains(nodeName) else { continue }
+            let localPath = docs.appendingPathComponent("\(ra.resource).glb").path
+            guard FileManager.default.fileExists(atPath: localPath) else { continue }
+            var display = ra.resource
+            if seen.insert(display).inserted { results.append(nodeName) }
+        }
         return results
     }
     // IDLE — drone: thrust = (g·2.2)/maxLift (MN.html line 1414), env-scaled.
