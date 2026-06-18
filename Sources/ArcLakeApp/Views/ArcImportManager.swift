@@ -2,14 +2,16 @@ import SwiftUI
 import SceneKit
 
 // ═══════════════════════════════════════════════════════════════════
-// ArcImportManager — imported asset list with swipe-to-clear,
-// gizmo translate/scale, and file picker for new imports.
+// ArcImportManager — asset list in a proper List so swipe-to-delete
+// works natively (ScrollView doesn't support .swipeActions).
 // ═══════════════════════════════════════════════════════════════════
 
 struct ArcImportManagerView: View {
     @EnvironmentObject var labVM: ArcLabViewModel
     @EnvironmentObject var themeVM: ArcThemeViewModel
     @State private var showFilePicker = false
+    @State private var refreshID = UUID()   // force list refresh after delete
+
     private var selNode: String? { labVM.selectedImportedNode }
 
     private func importedNames() -> [String] {
@@ -26,14 +28,10 @@ struct ArcImportManagerView: View {
         }
         return raw
     }
-    private func tabName() -> String {
-        let i = labVM.activeTabIndex
-        return i < labVM.sceneTabs_data.count ? labVM.sceneTabs_data[i] : "Scene"
-    }
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header
+            // ── Header ──────────────────────────────────────────────
             HStack {
                 Image(systemName: "square.and.arrow.down")
                     .font(.system(size: 11)).foregroundColor(themeVM.accent)
@@ -44,7 +42,7 @@ struct ArcImportManagerView: View {
                 Button { showFilePicker = true } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "plus").font(.system(size: 10, weight: .bold))
-                        Text("Import").font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        Text("Add").font(.system(size: 10, weight: .semibold, design: .monospaced))
                     }
                     .foregroundColor(.black)
                     .padding(.horizontal, 12).padding(.vertical, 6)
@@ -62,25 +60,34 @@ struct ArcImportManagerView: View {
                     Text("No imported assets")
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundColor(.white.opacity(0.3))
-                    Text("Import GLB or USDZ from the button above")
+                    Text("Tap Add to import a GLB or USDZ file")
                         .font(.system(size: 9, design: .monospaced))
                         .foregroundColor(.white.opacity(0.2))
                         .multilineTextAlignment(.center)
-                }.frame(maxWidth: .infinity).padding(32)
+                }
+                .frame(maxWidth: .infinity).padding(32)
             } else {
-                ScrollView(showsIndicators: false) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(spacing: 6) {
+                // ── List — required for .swipeActions to work ───────
+                List {
+                    Section {
+                        ForEach(assets, id: \.self) { nm in
+                            assetRow(nm)
+                                .listRowBackground(Color(red: 0.06, green: 0.09, blue: 0.14))
+                                .listRowInsets(EdgeInsets(top: 2, leading: 10, bottom: 2, trailing: 10))
+                        }
+                    } header: {
+                        HStack(spacing: 5) {
                             Circle().fill(themeVM.accent).frame(width: 6, height: 6)
-                            Text(tabName().uppercased())
+                            Text("SCENE")
                                 .font(.system(size: 8, weight: .bold, design: .monospaced))
                                 .foregroundColor(.white.opacity(0.45)).tracking(1.5)
                         }
-                        ForEach(assets, id: \.self) { nm in
-                            assetRow(nodeName: nm)
-                        }
-                    }.padding(12)
+                    }
                 }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+                .background(Color.clear)
+                .id(refreshID)
             }
         }
         .fileImporter(
@@ -96,34 +103,38 @@ struct ArcImportManagerView: View {
             defer { if accessing { url.stopAccessingSecurityScopedResource() } }
             Task {
                 if let node = ArcGLBImporter().importGLB(url: url) {
-                    await MainActor.run { labVM.importAssetNode(node) }
+                    await MainActor.run {
+                        labVM.importAssetNode(node)
+                        refreshID = UUID()
+                    }
                 }
             }
         }
     }
 
     @ViewBuilder
-    private func assetRow(nodeName: String) -> some View {
+    private func assetRow(_ nodeName: String) -> some View {
         let isSelected = selNode == nodeName
         HStack(spacing: 8) {
             Image(systemName: "cube.fill")
                 .font(.system(size: 10)).foregroundColor(themeVM.accent.opacity(0.8))
             Text(displayName(nodeName))
                 .font(.system(size: 11, design: .monospaced))
-                .foregroundColor(.white.opacity(0.85)).lineLimit(1)
+                .foregroundColor(.white.opacity(0.9)).lineLimit(1)
             Spacer()
+            // Gizmo selector — 4-arrow move icon
             Button {
                 labVM.selectedImportedNode = isSelected ? nil : nodeName
             } label: {
-                Image(systemName: "arrow.up.and.down.and.arrow.left.and.right").font(.system(size: 11))
-                    .foregroundColor(isSelected ? themeVM.accent : .white.opacity(0.4))
+                Image(systemName: "arrow.up.and.down.and.arrow.left.and.right")
+                    .font(.system(size: 11))
+                    .foregroundColor(isSelected ? themeVM.accent : .white.opacity(0.35))
+                    .frame(width: 30, height: 30)
             }
+            .buttonStyle(.plain)
         }
-        .padding(.vertical, 8).padding(.horizontal, 10)
-        .background(Color.white.opacity(0.04))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8)
-            .stroke(isSelected ? themeVM.accent.opacity(0.5) : Color.clear, lineWidth: 1))
+        .contentShape(Rectangle())
+        // ── Swipe left → Remove from scene ──────────────────────────
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             Button(role: .destructive) {
                 labVM.scene.rootNode.childNode(withName: nodeName, recursively: false)?
@@ -131,12 +142,15 @@ struct ArcImportManagerView: View {
                 if labVM.selectedImportedNode == nodeName {
                     labVM.selectedImportedNode = nil
                 }
-            } label: { Label("Remove", systemImage: "trash") }
+                refreshID = UUID()
+            } label: {
+                Label("Remove", systemImage: "trash")
+            }
         }
     }
 }
 
-// MARK: — Translate Gizmo Overlay
+// MARK: — Gizmo Overlay
 struct ArcGizmoOverlay: View {
     @EnvironmentObject var labVM: ArcLabViewModel
     @EnvironmentObject var themeVM: ArcThemeViewModel
@@ -159,12 +173,12 @@ struct ArcGizmoOverlay: View {
     @ViewBuilder
     private func gizmoPad(node: SCNNode) -> some View {
         VStack(spacing: 4) {
-            Text("GIZMO")
+            Text("MOVE")
                 .font(.system(size: 7, weight: .bold, design: .monospaced))
                 .foregroundColor(.white.opacity(0.4)).tracking(2)
             HStack(spacing: 4) {
-                axisBtn("+X", .red)  { node.simdPosition.x += 0.5 }
-                axisBtn("−X", .red)  { node.simdPosition.x -= 0.5 }
+                axisBtn("+X", .red)   { node.simdPosition.x += 0.5 }
+                axisBtn("−X", .red)   { node.simdPosition.x -= 0.5 }
             }
             HStack(spacing: 4) {
                 axisBtn("Y↑", .green) { node.simdPosition.y += 0.5 }
@@ -178,11 +192,11 @@ struct ArcGizmoOverlay: View {
             HStack(spacing: 4) {
                 axisBtn("+S", themeVM.accent) {
                     let s = node.scale
-                    node.scale = SCNVector3(s.x*1.1, s.y*1.1, s.z*1.1)
+                    node.scale = SCNVector3(s.x * 1.1, s.y * 1.1, s.z * 1.1)
                 }
                 axisBtn("−S", themeVM.accent) {
                     let s = node.scale
-                    node.scale = SCNVector3(s.x*0.9, s.y*0.9, s.z*0.9)
+                    node.scale = SCNVector3(s.x * 0.9, s.y * 0.9, s.z * 0.9)
                 }
             }
             Button { labVM.selectedImportedNode = nil } label: {
@@ -195,7 +209,7 @@ struct ArcGizmoOverlay: View {
             }
         }
         .padding(8)
-        .background(Color(red: 0.03, green: 0.06, blue: 0.12).opacity(0.88))
+        .background(Color(red: 0.03, green: 0.06, blue: 0.12).opacity(0.9))
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12)
             .stroke(themeVM.accent.opacity(0.3), lineWidth: 0.8))
