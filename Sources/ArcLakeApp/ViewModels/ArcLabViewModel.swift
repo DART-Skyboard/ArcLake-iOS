@@ -33,6 +33,7 @@ public final class ArcLabViewModel: ObservableObject {
     @Published public var arcMeasureMode: ArcMeasureMode = .distance
     public let mantis = MantisNavModel()   // Mantis Navigation engine
     public var atomVelocities: [Int: SIMD3<Float>] = [:]
+    @Published public var selectedImportedNode: String? = nil
 
     // ── Math engine state (SET 1–4 cards) ───────────────────────────
     @Published public var mathSets: [ArcMathSet] =
