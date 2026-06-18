@@ -849,6 +849,8 @@ public enum ArcTab: String, CaseIterable {
         case .arc:      return "circle.and.line.horizontal"
         case .env:      return "cloud.fill"
         case .log:      return "list.bullet"
+        case .imports:  return "square.and.arrow.down"
+        case .render:   return "scope"
         }
     }
 }
