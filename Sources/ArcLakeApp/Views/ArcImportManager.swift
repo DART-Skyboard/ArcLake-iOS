@@ -38,7 +38,8 @@ struct ArcImportManagerView: View {
             }
             if !all.isEmpty {
                 result.append((labVM.activeTabIndex,
-                               labVM.sceneTabs_data[safe: labVM.activeTabIndex] ?? "Scene",
+                               (labVM.activeTabIndex < labVM.sceneTabs_data.count
+                    ? labVM.sceneTabs_data[labVM.activeTabIndex] : "Scene"),
                                all))
             }
         }
@@ -141,9 +142,13 @@ struct ArcImportManagerView: View {
                 .font(.system(size: 11, design: .monospaced)).foregroundColor(.white.opacity(0.85))
                 .lineLimit(1)
             Spacer()
-            // Gizmo select — highlights the node so the translate gizmo appears
+            // Gizmo select — tap to show the translate gizmo
             Button {
-                labVM.selectedImportedNode = nodeName
+                if labVM.selectedImportedNode == nodeName {
+                    labVM.selectedImportedNode = nil
+                } else {
+                    labVM.selectedImportedNode = nodeName
+                }
             } label: {
                 Image(systemName: "move.3d")
                     .font(.system(size: 12))
