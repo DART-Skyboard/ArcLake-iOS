@@ -253,13 +253,16 @@ struct ArcRenderPanel: View {
             sliderRow("Motion Blur", value: $vm.motionBlur, range: 0...1)
         }
         .padding(12).background(Color.white.opacity(0.03)).clipShape(RoundedRectangle(cornerRadius: 12))
-        .onChange(of: vm.ssrEnabled) { _ in rebuildCam() }
-        .onChange(of: vm.bloomIntensity) { _ in rebuildCam() }
-        .onChange(of: vm.exposureOffset) { _ in rebuildCam() }
-    }
-
-    private func rebuildCam() {
-        vm.applyLights(to: labVM.scene)
+        .onChange(of: vm.ssrEnabled) { _ in vm.applyNow() }
+        .onChange(of: vm.ssgiEnabled) { _ in vm.applyNow() }
+        .onChange(of: vm.postProcessEnabled) { _ in vm.applyNow() }
+        .onChange(of: vm.bloomIntensity) { _ in vm.applyNow() }
+        .onChange(of: vm.bloomThreshold) { _ in vm.applyNow() }
+        .onChange(of: vm.exposureOffset) { _ in vm.applyNow() }
+        .onChange(of: vm.motionBlur) { _ in vm.applyNow() }
+        .onChange(of: vm.renderScale) { _ in vm.applyNow() }
+        .onChange(of: vm.msaaLevel) { _ in vm.applyNow() }
+        .onChange(of: vm.aoEnabled) { _ in vm.applyNow() }
     }
 
     private var lightsSection: some View {
