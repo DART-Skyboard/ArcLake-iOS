@@ -643,6 +643,13 @@ extension ArcLabViewModel {
         mantis.labVM = self
         mantis.applyEnv(mantis.envPreset)
         if !mantis.isActive { mantis.activate(in: scene) }
+        // Pre-fetch remote assets in background so they're available immediately
+        let mantisRef = mantis
+        Task.detached(priority: .background) {
+            for ra in MantisNavModel.remoteAssets {
+                _ = mantisRef.cachedRemoteURL(resource: ra.resource, remoteURL: ra.url)
+            }
+        }
     }
 
     // ── ENV PRESETS — applied to active tab like the web app ────────
@@ -656,3 +663,4 @@ extension ArcLabViewModel {
         rebuildArcMeasures()
     }
 }
+
