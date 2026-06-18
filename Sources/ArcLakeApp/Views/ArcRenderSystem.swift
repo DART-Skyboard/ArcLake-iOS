@@ -161,6 +161,17 @@ public final class ArcRenderViewModel: ObservableObject {
         default: return .multisampling4X
         }
     }
+
+    // ── Live apply ref — set by the 3D scene view on creation ────
+    public weak var sceneView: SCNView? = nil
+
+    /// Push all current settings to the live SCNView immediately.
+    /// Called by every slider onChange in ArcRenderPanel.
+    public func applyNow() {
+        guard let v = sceneView else { return }
+        applyCamera(v)
+        if let scene = v.scene { applyLights(to: scene) }
+    }
 }
 
 // MARK: — Render Panel UI
