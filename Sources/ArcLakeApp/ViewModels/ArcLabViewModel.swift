@@ -34,6 +34,7 @@ public final class ArcLabViewModel: ObservableObject {
     public let mantis = MantisNavModel()   // Mantis Navigation engine
     public var atomVelocities: [Int: SIMD3<Float>] = [:]
     @Published public var selectedImportedNode: String? = nil
+    @Published public var showGlobalImporter = false    // from Imports tab
 
     // ── Math engine state (SET 1–4 cards) ───────────────────────────
     @Published public var mathSets: [ArcMathSet] =
