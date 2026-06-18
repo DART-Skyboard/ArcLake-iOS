@@ -462,6 +462,12 @@ public final class ArcLabViewModel: ObservableObject {
         node.removeFromParentNode()
         scene.rootNode.addChildNode(node)
         log("Imported asset: \(node.name ?? "model")")
+        // Ensure the live SCNView is attached to this scene — it may not be
+        // yet on first launch (before any Mantis Nav call triggers makeUIView).
+        // Setting scene = scene re-triggers the view's scene assignment.
+        if let sv = ArcRenderViewModel.shared.sceneView, sv.scene !== scene {
+            sv.scene = scene
+        }
     }
 
     /// All SCNScene instances across every tab — used by Mantis Navigation
