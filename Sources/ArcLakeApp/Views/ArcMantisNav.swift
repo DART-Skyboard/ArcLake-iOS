@@ -201,11 +201,25 @@ public final class MantisNavModel: ObservableObject {
     // The vehicle node — default drone or selected imported asset
     func vehicleNode(in scene: SCNScene) -> SCNNode? {
         if let name = vehicleAsset {
-            // Match by full node name OR by the display name (filename without prefix)
+            // Search the current scene first
             if let n = scene.rootNode.childNodes.first(where: { n in
                 guard let nm = n.name else { return false }
                 return nm == name || nm.contains(name) || name.contains(nm)
             }) { return n }
+            // Not in current scene — search all other tab scenes
+            if let lv = labVM {
+                for tabScene in lv.allTabScenes() where tabScene !== scene {
+                    if let n = tabScene.rootNode.childNodes.first(where: { n in
+                        guard let nm = n.name else { return false }
+                        return nm == name || nm.contains(name) || name.contains(nm)
+                    }) {
+                        // Move node into the active Mantis scene so the tick can drive it
+                        n.removeFromParentNode()
+                        scene.rootNode.addChildNode(n)
+                        return n
+                    }
+                }
+            }
         }
         return scene.rootNode.childNode(withName: "mantis_drone", recursively: false)
     }
@@ -304,24 +318,39 @@ public final class MantisNavModel: ObservableObject {
     }
 
     // Imported asset names available for assignment
-    /// All imported 3-D asset node names — de-duplicated by base display name.
-    /// Accepts an explicit scene so this works before labVM weak ref is set.
+    /// All imported 3-D asset node names across EVERY scene tab — de-duplicated
+    /// by display name. Each tab owns its own SCNScene, so we walk all tab
+    /// scenes. Falls back to the explicitly passed scene when labVM is nil.
     public func importedAssets(from passedScene: SCNScene? = nil) -> [String] {
-        let sc = passedScene ?? self.scene ?? labVM?.scene
-        guard let sc else { return [] }
         let builtInNames = Set(Self.builtInAssets.map { "glb_import_\($0.resource)" })
-        var seen = Set<String>()
-        return sc.rootNode.childNodes.compactMap { n -> String? in
-            guard let nm = n.name,
-                  nm.hasPrefix("imported_") || nm.hasPrefix("glb_import_") else { return nil }
-            guard !builtInNames.contains(nm) else { return nil }
-            var display = nm
-            for p in ["glb_import_", "imported_"] where nm.hasPrefix(p) {
-                display = String(nm.dropFirst(p.count)); break
-            }
-            guard seen.insert(display).inserted else { return nil }
-            return nm
+        var seen = Set<String>()   // de-dupe key = display name without prefix
+        var results: [String] = []
+
+        // Collect all scenes to search: every tab's scene + the passed/current scene
+        var scenes: [SCNScene] = []
+        if let lv = labVM {
+            // Walk all tab states via reflection-safe accessor on the VM
+            scenes = lv.allTabScenes()
         }
+        if let ps = passedScene ?? self.scene, !scenes.contains(where: { $0 === ps }) {
+            scenes.append(ps)
+        }
+
+        for sc in scenes {
+            for n in sc.rootNode.childNodes {
+                guard let nm = n.name,
+                      nm.hasPrefix("imported_") || nm.hasPrefix("glb_import_"),
+                      !builtInNames.contains(nm) else { continue }
+                var display = nm
+                for p in ["glb_import_", "imported_"] where nm.hasPrefix(p) {
+                    display = String(nm.dropFirst(p.count)); break
+                }
+                if seen.insert(display).inserted {
+                    results.append(nm)
+                }
+            }
+        }
+        return results
     }
     // IDLE — drone: thrust = (g·2.2)/maxLift (MN.html line 1414), env-scaled.
     // Chemistry: solve flow% so totalForce·liftScalar == appliedGravity (hover).
