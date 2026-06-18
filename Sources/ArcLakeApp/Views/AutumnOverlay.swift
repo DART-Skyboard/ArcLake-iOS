@@ -519,21 +519,23 @@ struct AshCanvasDrawer: View {
                         ashSocketView(label: sock.0, color: sock.1, shell: sock.2, pos: pos)
                     }
 
-                    // Background tap — place node OR deselect
+                    // Background tap — place node OR deselect.
+                    // Use .local coordinate space so taps land in canvas space,
+                    // not in the outer GeometryReader's full-screen space.
                     Color.clear.contentShape(Rectangle())
                         .onTapGesture { loc in
                             if let tool = activeTool, !linkMode {
                                 let color = tools.first{$0.0==tool}?.2 ?? .white
                                 nodes.append(AshNode(position: loc, tool: tool, color: color))
                             } else if !linkMode {
-                                // Select mode background tap = deselect all
                                 selectedIds.removeAll()
                                 selectedLinkIds.removeAll()
                             }
                         }
                 }
+                .coordinateSpace(name: "ashCanvas")
             }
-            .frame(height: 148)
+            .frame(height: 220)   // taller canvas — more room for nodes
 
             // ── Footer ───────────────────────────────────────────
             HStack(spacing: 8) {
@@ -617,6 +619,7 @@ struct AshCanvasDrawer: View {
                     }
             )
             .onTapGesture { handleNodeTap(node.id) }
+            .zIndex(1)   // above the background tap layer
     }
 
     @ViewBuilder
@@ -783,4 +786,5 @@ struct AutumnTyping: View {
         .onReceive(timer) { _ in phase=(phase+1)%3 }
     }
 }
+
 
