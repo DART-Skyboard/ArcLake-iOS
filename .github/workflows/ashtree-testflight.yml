@@ -113,3 +113,101 @@ jobs:
             exit 1
           fi
           echo "✓ Build ${{ env.BUILD_NUMBER }} uploaded to TestFlight"
+
+      - name: Submit to App Store Review
+        run: |
+          pip install PyJWT cryptography --quiet --break-system-packages 2>/dev/null || true
+
+          python3 << 'PYEOF'
+import jwt, time, urllib.request, json, sys
+
+# Generate ASC JWT token
+KEY_ID   = "NQXQ595W59"
+ISSUER   = "${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}"
+APP_ID   = "6780086515"
+KEY_PATH = os.path.expanduser("~/.appstoreconnect/private_keys/AuthKey_NQXQ595W59.p8")
+
+with open(KEY_PATH, "r") as f:
+    private_key = f.read()
+
+def make_token():
+    payload = {
+        "iss": ISSUER,
+        "exp": int(time.time()) + 1200,
+        "aud": "appstoreconnect-v1"
+    }
+    return jwt.encode(payload, private_key, algorithm="ES256",
+                      headers={"kid": KEY_ID, "typ": "JWT"})
+
+def asc(path, method="GET", body=None):
+    token = make_token()
+    req = urllib.request.Request(
+        f"https://api.appstoreconnect.apple.com/v1{path}",
+        data=json.dumps(body).encode() if body else None,
+        method=method,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json"
+        }
+    )
+    try:
+        with urllib.request.urlopen(req) as r:
+            return json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode()
+        print(f"ASC {method} {path} → {e.code}: {body}")
+        return None
+
+import os
+
+# Wait for the build to finish processing (up to 15 min)
+print("Waiting for build to process in App Store Connect...")
+build_id = None
+for attempt in range(30):
+    time.sleep(30)
+    # Get app store versions for this app
+    builds = asc(f"/builds?filter[app]={APP_ID}&filter[processingState]=VALID&limit=5&sort=-uploadedDate")
+    if builds and builds.get("data"):
+        build_id = builds["data"][0]["id"]
+        print(f"✓ Build processed: {build_id}")
+        break
+    print(f"  [{(attempt+1)*30}s] Still processing...")
+
+if not build_id:
+    print("Build not yet processed — skipping submit (can submit manually in App Store Connect)")
+    sys.exit(0)
+
+# Get the current app store version in READY_FOR_SUBMISSION or PREPARE_FOR_SUBMISSION state
+versions = asc(f"/apps/{APP_ID}/appStoreVersions?filter[platform]=IOS&limit=5")
+version_id = None
+if versions and versions.get("data"):
+    for v in versions["data"]:
+        state = v["attributes"]["appStoreState"]
+        if state in ["READY_FOR_SUBMISSION", "PREPARE_FOR_SUBMISSION", "DEVELOPER_REJECTED", "REJECTED"]:
+            version_id = v["id"]
+            print(f"✓ Found version {v['attributes']['versionString']} in state {state}")
+            break
+
+if not version_id:
+    print("No version found ready for submission.")
+    print("Go to App Store Connect → Ash Tree IDE → select version → Submit for Review")
+    sys.exit(0)
+
+# Attach the new build to the version
+print(f"Attaching build {build_id} to version {version_id}...")
+result = asc(f"/appStoreVersions/{version_id}/relationships/build", method="PATCH",
+             body={"data": {"type": "builds", "id": build_id}})
+print(f"Build attached: {result is not None}")
+
+# Submit for review
+print("Submitting for review...")
+submit = asc("/appStoreVersionSubmissions", method="POST",
+             body={"data": {"type": "appStoreVersionSubmissions",
+                            "relationships": {"appStoreVersion": {"data": {"type": "appStoreVersions", "id": version_id}}}}})
+if submit and submit.get("data"):
+    print("✓ SUBMITTED FOR REVIEW SUCCESSFULLY")
+    print(f"  Submission ID: {submit['data']['id']}")
+else:
+    print("Submit response:", submit)
+    print("Check App Store Connect manually to confirm submission.")
+PYEOF
