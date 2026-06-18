@@ -145,7 +145,6 @@ public final class MantisNavModel: ObservableObject {
             .removeFromParentNode()
         joyX = 0; joyY = 0
         velocity = .zero
-        atomVelocities = [:]
         // Restore the scene camera to the standard orbital position
         // so other scenes/tabs are immediately usable after X is tapped.
         if let cam = (scene ?? labVM?.scene)?
