@@ -33,10 +33,13 @@ public struct ArcSceneView: UIViewRepresentable {
         cam.fieldOfView      = 60          // LOCKED — dolly moves camera not lens
         cam.zFar             = 500_000
         cam.zNear            = 0.001
-        cam.bloomIntensity   = 0.8
-        cam.bloomThreshold   = 0.65
-        cam.bloomBlurRadius  = 5.0
-        cam.motionBlurIntensity = 0.2
+        // Sync with render system defaults on creation
+        let rvm0 = ArcRenderViewModel.shared
+        cam.bloomIntensity      = rvm0.bloomIntensity
+        cam.bloomThreshold      = rvm0.bloomThreshold
+        cam.bloomBlurRadius     = 5.0
+        cam.motionBlurIntensity = rvm0.motionBlur
+        cam.wantsHDR            = rvm0.ssrEnabled
 
         let camNode = SCNNode()
         camNode.camera = cam
@@ -49,6 +52,7 @@ public struct ArcSceneView: UIViewRepresentable {
         c.camNode   = camNode
         c.lastScene = labVM.scene
         c.resetView()                       // set initial position
+        ArcRenderViewModel.shared.sceneView = v   // render panel gets live target
 
         // ── Gestures ─────────────────────────────────────────────
         // 1-finger orbit
@@ -83,10 +87,24 @@ public struct ArcSceneView: UIViewRepresentable {
     }
 
     public func updateUIView(_ v: SCNView, context: Context) {
-        // Apply render quality from the render system
+        // ── Render system: apply live to the camera node + view ──────
         let rvm = ArcRenderViewModel.shared
         v.antialiasingMode = rvm.msaaMode(rvm.msaaLevel)
-        rvm.applyCamera(v)
+        v.contentScaleFactor = UIScreen.main.scale * rvm.renderScale
+        // Find the camera node and update it directly — this is instant,
+        // no SwiftUI diff required, toggles/sliders are felt immediately.
+        if let cam = v.scene?.rootNode.childNode(withName: "arcCamera", recursively: false)?
+                .camera ?? v.pointOfView?.camera {
+            // Post-process — when postProcessEnabled is OFF, zero everything out
+            let pp = rvm.postProcessEnabled
+            cam.bloomIntensity      = pp ? rvm.bloomIntensity : 0
+            cam.bloomThreshold      = rvm.bloomThreshold
+            cam.bloomBlurRadius     = pp ? 5.0 : 0
+            cam.motionBlurIntensity = pp ? rvm.motionBlur : 0
+            cam.wantsHDR            = pp && (rvm.ssrEnabled || rvm.ssgiEnabled)
+            cam.exposureOffset      = pp ? rvm.exposureOffset : 0
+            // When bloom is explicitly 0 the grid won't glow beyond its material emission
+        }
         let c = context.coordinator
         guard let cam = c.camNode else { return }
 
