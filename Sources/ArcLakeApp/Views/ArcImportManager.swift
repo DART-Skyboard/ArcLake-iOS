@@ -56,33 +56,38 @@ struct ArcImportManagerView: View {
             .background(Color.white.opacity(0.04))
 
             let assets = importedNames()
-            if assets.isEmpty {
+            let builtInResources = MantisNavModel.builtInAssets.map { $0.resource }
+            let builtInMissing = builtInResources.filter { r in
+                labVM.scene.rootNode.childNode(withName: "glb_import_\(r)",
+                                               recursively: false) == nil
+            }
+
+            if assets.isEmpty && builtInMissing.count == builtInResources.count {
+                // Nothing loaded at all
                 VStack(spacing: 8) {
                     Image(systemName: "cube").font(.system(size: 28))
                         .foregroundColor(.white.opacity(0.2))
                     Text("No imported assets")
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundColor(.white.opacity(0.3))
-                    Text("Tap Add to import a GLB or USDZ file")
+                    Text("Tap Add or restore a default below")
                         .font(.system(size: 9, design: .monospaced))
                         .foregroundColor(.white.opacity(0.2))
                         .multilineTextAlignment(.center)
-                }
-                .frame(maxWidth: .infinity).padding(32)
-            } else {
-                // ── List — required for .swipeActions to work ───────
+                }.frame(maxWidth: .infinity).padding(32)
+            } else if !assets.isEmpty {
                 List {
                     Section {
                         ForEach(assets, id: \.self) { nm in
                             assetRow(nm)
-                                .listRowBackground(Color(red: 0.06, green: 0.09, blue: 0.14))
-                                .listRowInsets(EdgeInsets(top: 2, leading: 10, bottom: 2, trailing: 10))
+                                .listRowBackground(Color(red:0.06,green:0.09,blue:0.14))
+                                .listRowInsets(EdgeInsets(top:2,leading:10,bottom:2,trailing:10))
                         }
                     } header: {
                         HStack(spacing: 5) {
-                            Circle().fill(themeVM.accent).frame(width: 6, height: 6)
+                            Circle().fill(themeVM.accent).frame(width:6,height:6)
                             Text("SCENE")
-                                .font(.system(size: 8, weight: .bold, design: .monospaced))
+                                .font(.system(size:8,weight:.bold,design:.monospaced))
                                 .foregroundColor(.white.opacity(0.45)).tracking(1.5)
                         }
                     }
@@ -92,8 +97,69 @@ struct ArcImportManagerView: View {
                 .background(Color.clear)
                 .id(refreshID)
             }
-        }
 
+            // ── Restore defaults — appears when a built-in was removed ──────
+            if !builtInMissing.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("DEFAULT ASSETS")
+                        .font(.system(size:8,weight:.bold,design:.monospaced))
+                        .foregroundColor(.white.opacity(0.4)).tracking(2)
+                        .padding(.horizontal,12).padding(.top,10)
+                    // Built-in (bundled) missing assets
+                    ForEach(builtInMissing, id: \.self) { resource in
+                        let label = MantisNavModel.builtInAssets
+                            .first { $0.resource == resource }?.label ?? resource
+                        Button {
+                            _ = labVM.mantis.loadBuiltInAsset(resource)
+                            refreshID = UUID()
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: "arrow.counterclockwise")
+                                    .font(.system(size:10)).foregroundColor(themeVM.accent)
+                                Text("Restore \(label)")
+                                    .font(.system(size:11,design:.monospaced))
+                                    .foregroundColor(themeVM.accent)
+                                Spacer()
+                            }
+                            .padding(.horizontal,12).padding(.vertical,8)
+                            .background(themeVM.accent.opacity(0.08))
+                            .clipShape(RoundedRectangle(cornerRadius:8))
+                            .padding(.horizontal,12)
+                        }
+                    }
+                    // Remote (cached) assets — Autumn etc.
+                    ForEach(MantisNavModel.remoteAssets, id: \.resource) { ra in
+                        let missing = labVM.scene.rootNode
+                            .childNode(withName: "glb_import_\(ra.resource)", recursively: false) == nil
+                        if missing {
+                            Button {
+                                Task.detached(priority: .userInitiated) {
+                                    let n = labVM.mantis.loadRemoteAsset(
+                                        resource: ra.resource, remoteURL: ra.url)
+                                    await MainActor.run { if n != nil { refreshID = UUID() } }
+                                }
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "arrow.down.circle")
+                                        .font(.system(size:10)).foregroundColor(.orange)
+                                    Text("Download \(ra.label)")
+                                        .font(.system(size:11,design:.monospaced))
+                                        .foregroundColor(.orange)
+                                    Spacer()
+                                    Text("~74 MB").font(.system(size:8,design:.monospaced))
+                                        .foregroundColor(.white.opacity(0.35))
+                                }
+                                .padding(.horizontal,12).padding(.vertical,8)
+                                .background(Color.orange.opacity(0.08))
+                                .clipShape(RoundedRectangle(cornerRadius:8))
+                                .padding(.horizontal,12)
+                            }
+                        }
+                    }
+                    .padding(.bottom,8)
+                }
+            }
+        }
     }
 
     @ViewBuilder
@@ -210,3 +276,4 @@ struct ArcGizmoOverlay: View {
         }
     }
 }
+
