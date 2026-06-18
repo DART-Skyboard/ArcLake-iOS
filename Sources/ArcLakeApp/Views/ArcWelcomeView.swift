@@ -352,9 +352,17 @@ struct ArcGitHubDeviceFlowSheet: View {
                             .foregroundColor(.white.opacity(0.5))
                             .multilineTextAlignment(.center).padding(.horizontal, 24)
                         Button {
-                            Task { await authVM.startGitHubAuth() }
+                            // If a valid token already exists, resume the session
+                            // silently — never show the device-flow QR again.
+                            if authVM.hasStoredGitHub {
+                                authVM.resumeStoredGitHubSession()
+                            } else {
+                                Task { await authVM.startGitHubAuth() }
+                            }
                         } label: {
-                            Text("Start GitHub Authorization")
+                            Text(authVM.hasStoredGitHub
+                                 ? "Continue as \(authVM.storedGitHubUser)"
+                                 : "Start GitHub Authorization")
                                 .font(.custom("Exo2-SemiBold", size: 15))
                                 .foregroundColor(.black)
                                 .frame(maxWidth: .infinity).frame(height: 52)
