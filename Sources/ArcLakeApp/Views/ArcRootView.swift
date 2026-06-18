@@ -546,6 +546,8 @@ struct DARTTabSelector: View {
         (.arc,      "Arc",     "circle.and.line.horizontal"),
         (.env,      "Env",     "cloud.fill"),
         (.log,      "Log",     "list.bullet"),
+        (.imports,  "Imports", "square.and.arrow.down"),
+        (.render,   "Render",  "scope"),
     ]
 
     var body: some View {
