@@ -129,7 +129,11 @@ public final class MantisNavModel: ObservableObject {
         isActive = true
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 1.0/30.0, repeats: true) {
-            [weak self] _ in Task { @MainActor in self?.tick() }
+            [weak self] _ in
+            // Physics math on a background queue; only @Published writes hit main
+            Task.detached(priority: .userInitiated) {
+                await self?.tick()
+            }
         }
     }
 
@@ -140,6 +144,15 @@ public final class MantisNavModel: ObservableObject {
         scene?.rootNode.childNode(withName: "mantis_drone", recursively: false)?
             .removeFromParentNode()
         joyX = 0; joyY = 0
+        velocity = .zero
+        atomVelocities = [:]
+        // Restore the scene camera to the standard orbital position
+        // so other scenes/tabs are immediately usable after X is tapped.
+        if let cam = (scene ?? labVM?.scene)?
+                .rootNode.childNode(withName: "arcCamera", recursively: false) {
+            cam.look(at: SCNVector3(0, 0, 0), up: SCNVector3(0, 1, 0),
+                     localFront: SCNVector3(0, 0, -1))
+        }
     }
 
     // Stylized mantis drone — body + 4 rotor pods, banks with the stick
@@ -316,7 +329,7 @@ public final class MantisNavModel: ObservableObject {
     }
 
     // The MN.html animate() physics — verbatim integration
-    private func tick() {
+    @MainActor private func tick() {
         guard isActive, let scene,
               let drone = vehicleNode(in: scene)
         else { return }
@@ -376,10 +389,10 @@ public final class MantisNavModel: ObservableObject {
             hudVelV = velocity.y
         }
 
-        // ── Camera modes — attach to the vehicle but ABIDE BY THE SCENE:
-        //    horizon always level (world-up), offsets from the drone's YAW
-        //    ONLY (never its pitch/roll), exactly like the turntable feel.
-        if cameraMode != .orbit,
+        // ── Camera modes — only update when on the Mantis tab itself.
+        //    Running camera mutations while on other tabs blocked their render loops.
+        let isOnMantisTab = labVM.map { $0.mantisTabIndex == $0.activeTabIndex } ?? false
+        if cameraMode != .orbit, isOnMantisTab,
            let cam = scene.rootNode.childNode(withName: "arcCamera", recursively: false) {
             let dp = drone.simdPosition
             // Yaw-only frame: project drone forward onto the ground plane
@@ -389,12 +402,13 @@ public final class MantisNavModel: ObservableObject {
             flatFwd = simd_normalize(flatFwd)
             let flatRight = simd_normalize(simd_cross(flatFwd, SIMD3<Float>(0, 1, 0)))
 
+            // Instant camera placement — lerp was causing main-thread stalls
             func levelLook(from target: SIMD3<Float>, snap: Bool = false) {
-                cam.simdPosition = snap ? target
-                    : simd_mix(cam.simdPosition, target, SIMD3(repeating: 0.1))
+                _ = snap  // snap unused — always instant now
+                cam.simdPosition = target
                 cam.look(at: SCNVector3(dp.x, dp.y, dp.z),
                          up: SCNVector3(0, 1, 0),
-                         localFront: SCNVector3(0, 0, -1))   // world-up: zero roll
+                         localFront: SCNVector3(0, 0, -1))
             }
             switch cameraMode {
             case .fpv:
@@ -859,3 +873,4 @@ struct MantisSettingsSheet: View {
         }
     }
 }
+
