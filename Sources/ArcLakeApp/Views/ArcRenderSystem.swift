@@ -64,9 +64,9 @@ public final class ArcRenderViewModel: ObservableObject {
     // Post-process toggles
     @Published public var ssrEnabled = true        // screen-space reflections
     @Published public var ssgiEnabled = true       // global illumination approx
-    @Published public var aoEnabled = true         // ambient occlusion
-    @Published public var aoStrength: CGFloat = 0.95
-    @Published public var aoSize: CGFloat = 1.1
+    @Published public var aoEnabled = true
+    @Published public var aoStrength: CGFloat = 1.5   // SSAO needs higher values
+    @Published public var aoSize: CGFloat = 1.4       // larger radius = more contact shadow
     @Published public var postProcessEnabled = true
 
     // Render quality
@@ -96,7 +96,7 @@ public final class ArcRenderViewModel: ObservableObject {
             scnLight.intensity = light.intensity
             scnLight.castsShadow = light.castsShadow
             scnLight.shadowRadius = light.shadowRadius
-            scnLight.shadowMode = aoEnabled ? .deferred : .forward
+            scnLight.shadowMode = .forward   // SSAO on camera handles contact darkening
 
             if light.type == .spot {
                 scnLight.spotInnerAngle = light.coneAngle * Double(1 - light.softness)
@@ -104,10 +104,10 @@ public final class ArcRenderViewModel: ObservableObject {
             }
 
             // SSGI/AO — SceneKit deferred shadow with high sampling
-            if aoEnabled && light.castsShadow {
-                scnLight.shadowSampleCount = 16
-                scnLight.shadowRadius = aoSize * 5
-                scnLight.shadowColor = UIColor.black.withAlphaComponent(aoStrength)
+            if light.castsShadow {
+                scnLight.shadowSampleCount = 8
+                scnLight.shadowRadius = 3
+                scnLight.shadowColor = UIColor.black.withAlphaComponent(0.45)
             }
 
             let node = SCNNode()
@@ -368,3 +368,4 @@ struct ArcRenderPanel: View {
         }
     }
 }
+
