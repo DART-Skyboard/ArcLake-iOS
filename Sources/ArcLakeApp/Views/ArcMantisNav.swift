@@ -225,7 +225,13 @@ public final class MantisNavModel: ObservableObject {
     }
     // Built-in flight assets bundled with the app (resource name → label)
     public static let builtInAssets: [(label: String, resource: String)] = [
-        ("Arrow (built-in)", "ArrowOptimized"),
+        ("Arrow (built-in)",        "ArrowOptimized"),
+        ("Hornet Logo (built-in)",  "HornetLogo"),
+    ]
+    // Remote assets: downloaded once and cached to Documents/
+    public static let remoteAssets: [(label: String, resource: String, url: String)] = [
+        ("Autumn (optimized)", "Autumn_Optimized",
+         "https://github.com/DART-Skyboard/ArcLake-iOS/releases/download/v1.5.1-assets/Autumn_Optimized.glb"),
     ]
     // ── Spawn placement — nozzles flush on the grid, origin for the
     //    active vehicle, parked slots for everyone else ────────────────
@@ -291,6 +297,45 @@ public final class MantisNavModel: ObservableObject {
                 n.position = SCNVector3(s.x, groundedY(n), s.y)
             }
         }
+    }
+
+    // ── Remote asset loader — download once, cache to Documents/ ────
+    /// Returns the cached file URL if present, or downloads then caches.
+    public func cachedRemoteURL(resource: String, remoteURL: String) -> URL? {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let local = docs.appendingPathComponent("\(resource).glb")
+        if FileManager.default.fileExists(atPath: local.path) { return local }
+        guard let url = URL(string: remoteURL) else { return nil }
+        do {
+            let data = try Data(contentsOf: url)   // blocking — called from a Task
+            try data.write(to: local)
+            return local
+        } catch {
+            print("[Mantis] Remote asset download failed: \(error)")
+            return nil
+        }
+    }
+
+    /// Load a remote-backed asset into the scene (downloads if not cached).
+    /// Call from a background Task to avoid blocking the main thread.
+    public func loadRemoteAsset(resource: String, remoteURL: String) -> String? {
+        let sc = labVM?.scene ?? self.scene
+        guard let sc else { return nil }
+        let nodeName = "glb_import_\(resource)"
+        if sc.rootNode.childNode(withName: nodeName, recursively: false) != nil {
+            return nodeName
+        }
+        guard let localURL = cachedRemoteURL(resource: resource, remoteURL: remoteURL),
+              let node = ArcGLBImporter().importGLB(url: localURL) else { return nil }
+        node.name = nodeName
+        let ext = max(node.boundingBox.max.x - node.boundingBox.min.x,
+                      max(node.boundingBox.max.y - node.boundingBox.min.y,
+                          node.boundingBox.max.z - node.boundingBox.min.z))
+        if ext > 0.01 { let s = Float(3.0 / ext); node.scale = SCNVector3(s,s,s) }
+        let slot = parkSlot(max(assetNodes(in: sc).count, 0))
+        node.position = SCNVector3(slot.x, groundedY(node), slot.y)
+        sc.rootNode.addChildNode(node)
+        return nodeName
     }
 
     /// Ensures a built-in GLB is loaded into the scene; returns its node name.
@@ -704,6 +749,15 @@ struct MantisSettingsSheet: View {
                                 Button(b.label) {
                                     if let n = model.loadBuiltInAsset(b.resource) {
                                         model.setActiveVehicle(n)
+                                    }
+                                }
+                            }
+                            ForEach(MantisNavModel.remoteAssets, id: \.resource) { ra in
+                                Button(ra.label + " (download)") {
+                                    Task.detached(priority: .userInitiated) {
+                                        let n = model.loadRemoteAsset(
+                                            resource: ra.resource, remoteURL: ra.url)
+                                        if let n { await MainActor.run { model.setActiveVehicle(n) } }
                                     }
                                 }
                             }
