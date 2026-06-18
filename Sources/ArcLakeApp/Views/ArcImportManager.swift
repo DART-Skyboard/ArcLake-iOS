@@ -42,11 +42,13 @@ struct ArcImportManagerView: View {
                     .foregroundColor(themeVM.accent).tracking(2)
                 Spacer()
                 Button { showFilePicker = true } label: {
-                    Label("Import", systemImage: "plus")
-                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                        .foregroundColor(.black)
-                        .padding(.horizontal, 10).padding(.vertical, 5)
-                        .background(themeVM.accent).clipShape(Capsule())
+                    HStack(spacing: 4) {
+                        Image(systemName: "plus").font(.system(size: 10, weight: .bold))
+                        Text("Import").font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    }
+                    .foregroundColor(.black)
+                    .padding(.horizontal, 12).padding(.vertical, 6)
+                    .background(themeVM.accent).clipShape(Capsule())
                 }
             }
             .padding(.horizontal, 12).padding(.vertical, 10)
@@ -113,7 +115,7 @@ struct ArcImportManagerView: View {
             Button {
                 labVM.selectedImportedNode = isSelected ? nil : nodeName
             } label: {
-                Image(systemName: "move.3d").font(.system(size: 12))
+                Image(systemName: "arrow.up.and.down.and.arrow.left.and.right").font(.system(size: 11))
                     .foregroundColor(isSelected ? themeVM.accent : .white.opacity(0.4))
             }
         }
