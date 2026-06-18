@@ -195,6 +195,23 @@ struct ArcRenderPanel: View {
         }
     }
 
+    @ViewBuilder private var msaaPills: some View {
+        let levels = [(1,"Off"),(2,"2× AA"),(4,"4× AA")]
+        ForEach(levels, id: \.0) { level, label in
+            let isOn = vm.msaaLevel == level
+            Button {
+                vm.msaaLevel = level
+            } label: {
+                Text(label)
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .foregroundColor(isOn ? .black : .white.opacity(0.6))
+                    .padding(.horizontal, 10).padding(.vertical, 5)
+                    .background(isOn ? themeVM.accent : Color.white.opacity(0.07))
+                    .clipShape(Capsule())
+            }
+        }
+    }
+
     private var qualitySection: some View {
         VStack(alignment: .leading, spacing: 10) {
             sectionLabel("QUALITY")
@@ -211,16 +228,7 @@ struct ArcRenderPanel: View {
                     // will be applied on next updateUIView cycle
                 }
             HStack(spacing: 6) {
-                ForEach([1, 2, 4], id: \.self) { n in
-                    Button { vm.msaaLevel = n } label: {
-                        Text(n == 1 ? "Off" : "\(n)× AA")
-                            .font(.system(size: 9, weight: .bold, design: .monospaced))
-                            .foregroundColor(vm.msaaLevel == n ? .black : .white.opacity(0.6))
-                            .padding(.horizontal, 10).padding(.vertical, 5)
-                            .background(vm.msaaLevel == n ? themeVM.accent : Color.white.opacity(0.07))
-                            .clipShape(Capsule())
-                    }
-                }
+                msaaPills
             }
         }
         .padding(12).background(Color.white.opacity(0.03)).clipShape(RoundedRectangle(cornerRadius: 12))
