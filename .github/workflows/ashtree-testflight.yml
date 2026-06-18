@@ -114,11 +114,3 @@ jobs:
           fi
           echo "✓ Build ${{ env.BUILD_NUMBER }} uploaded to TestFlight"
 
-      - name: Submit to App Store Review
-        env:
-          ASC_ISSUER: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
-        run: |
-          pip install PyJWT cryptography --quiet --break-system-packages 2>/dev/null || true
-          pip show PyJWT 2>&1 | head -2
-          # Run submit script from AshtreeIDE repo (checked out in prior step)
-          python3 $GITHUB_WORKSPACE/AshtreeIDE-iOS/scripts/asc_submit.py
