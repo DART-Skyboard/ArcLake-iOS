@@ -464,6 +464,12 @@ public final class ArcLabViewModel: ObservableObject {
         log("Imported asset: \(node.name ?? "model")")
     }
 
+    /// All SCNScene instances across every tab — used by Mantis Navigation
+    /// to discover imported assets regardless of which tab is currently active.
+    public func allTabScenes() -> [SCNScene] {
+        tabStates.map { $0.scene }
+    }
+
     public func clearElements() {
         selectedElements.removeAll()
         atomNodes.values.forEach { $0.removeFromParentNode() }
@@ -862,6 +868,7 @@ private extension Array {
         indices.contains(index) ? self[index] : nil
     }
 }
+
 
 
 
