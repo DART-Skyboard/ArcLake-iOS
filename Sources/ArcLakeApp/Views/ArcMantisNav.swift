@@ -472,7 +472,7 @@ public final class MantisNavModel: ObservableObject {
         // For all other modes: drone's local −Z forward as before.
         let droneLocalFwd = drone.simdOrientation.act(SIMD3<Float>(0, 0, -1))
         let thrustFwd: SIMD3<Float>
-        if cameraMode == .orbit || cameraMode == .follow,
+        if cameraMode == .orbit,
            let cam = scene.rootNode.childNode(withName: "arcCamera", recursively: false) {
             // Camera→drone vector projected flat = the "into-scene" direction from cam POV
             let camToDrone = drone.simdPosition - cam.simdPosition
@@ -540,17 +540,14 @@ public final class MantisNavModel: ObservableObject {
             case .back:  levelLook(from: dp - flatFwd * 15 + SIMD3<Float>(0, 2, 0))
             case .left:  levelLook(from: dp - flatRight * 15 + SIMD3<Float>(0, 2, 0))
             case .right: levelLook(from: dp + flatRight * 15 + SIMD3<Float>(0, 2, 0))
-            case .follow, .orbit:
-                // Camera stays behind+above the drone's VELOCITY direction, not its
-                // facing direction. This means even when the drone faces the camera,
-                // the camera stays behind where it's going — no jarring flip.
-                var velFlat = SIMD3<Float>(Float(velocity.x), 0, Float(velocity.z))
-                let velLen = simd_length(velFlat)
-                // If moving, use velocity direction for camera; else use last flatFwd
-                let camBehind = velLen > 0.0005
-                    ? -simd_normalize(velFlat)
-                    : -flatFwd
-                levelLook(from: dp + camBehind * 10 + SIMD3<Float>(0, 4, 0))
+            case .follow:
+                // Follow: camera stays behind the drone's FACING direction — unchanged
+                levelLook(from: dp - flatFwd * 10 + SIMD3<Float>(0, 4, 0))
+            case .orbit:
+                // Orbit: camera stays fixed in world space; drone flies under it.
+                // Camera position does NOT track the drone's facing — it stays where
+                // it is and just looks at the drone. The thrust flip handles movement.
+                levelLook(from: dp + SIMD3<Float>(0, 8, 0) - flatFwd * 2)
             }
         }
     }
