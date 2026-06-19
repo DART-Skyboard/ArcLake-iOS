@@ -100,11 +100,12 @@ public struct ArcSceneView: UIViewRepresentable {
             let pp = rvm.postProcessEnabled
             // HDR always on — required for SSAO to work even when bloom is 0
             cam.wantsHDR            = true
-            cam.bloomIntensity      = pp ? rvm.bloomIntensity : 0
-            cam.bloomThreshold      = rvm.bloomThreshold
-            cam.bloomBlurRadius     = pp ? 4.0 : 0
-            cam.motionBlurIntensity = pp && rvm.motionBlur > 0.01 ? rvm.motionBlur : 0
-            cam.exposureOffset      = pp ? rvm.exposureOffset : 0
+            // Clamp bloom/exposure to prevent reflective/additive material flicker
+            cam.bloomIntensity      = pp ? min(rvm.bloomIntensity, 1.5) : 0
+            cam.bloomThreshold      = max(rvm.bloomThreshold, 0.75)
+            cam.bloomBlurRadius     = pp && rvm.bloomIntensity > 0.05 ? 4.0 : 0
+            cam.motionBlurIntensity = pp && rvm.motionBlur > 0.01 ? min(rvm.motionBlur, 0.5) : 0
+            cam.exposureOffset      = pp ? max(rvm.exposureOffset, -1.5) : 0
             // ── Screen-space Ambient Occlusion (iOS 13+, SceneKit native) ───
             // This is real contact shadows between surfaces — much more visible
             // than the shadow-sample hack. Works at any polygon count.
