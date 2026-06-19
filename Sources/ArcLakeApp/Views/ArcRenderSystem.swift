@@ -17,7 +17,7 @@ public enum ArcBlendMode: String, CaseIterable, Identifiable {
     case opaque = "Opaque", subsurface = "Subsurface", blending = "Blending",
          additive = "Additive", refraction = "Refraction"
     public var id: String { rawValue }
-    var scnBlend: SCNMaterial.TransparencyMode {
+    var scnBlend: SCNTransparencyMode {
         switch self {
         case .blending, .refraction: return .aOne
         case .additive: return .rgbZero
@@ -239,10 +239,10 @@ final class ArcMaterialInspector: ObservableObject {
             mat.isDoubleSided       = entry.doubleSided
             mat.transparency        = entry.opacity
             switch entry.blendMode {
-            case .opaque:     mat.transparencyMode = .aOne; mat.writesToDepthBuffer = true
-            case .blending:   mat.transparencyMode = .aOne; mat.writesToDepthBuffer = false
-            case .additive:   mat.transparencyMode = .rgbZero; mat.writesToDepthBuffer = false
-            case .refraction: mat.transparencyMode = .aOne
+            case .opaque:     mat.transparencyMode = .default; mat.writesToDepthBuffer = true
+            case .blending:   mat.transparencyMode = .default; mat.writesToDepthBuffer = false
+            case .additive:   mat.transparencyMode = .default; mat.writesToDepthBuffer = false
+            case .refraction: mat.transparencyMode = .default
             case .subsurface: // approximate with low roughness + slight translucency
                 mat.roughness.contents = max(entry.roughness * 0.6, 0.1)
             }
