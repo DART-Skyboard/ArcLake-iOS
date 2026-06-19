@@ -463,9 +463,29 @@ public final class MantisNavModel: ObservableObject {
         let qYaw = simd_quatf(angle: Float(-joyX * yawSpeed), axis: SIMD3<Float>(0, 1, 0))
         drone.simdOrientation = simd_normalize(qYaw * drone.simdOrientation)
 
-        // thrustVector = (0,0,−1)·q · (joy.y · thrustPower)
-        let fwd = drone.simdOrientation.act(SIMD3<Float>(0, 0, -1))
-        let tv = SIMD3<Double>(Double(fwd.x), Double(fwd.y), Double(fwd.z)) * (joyY * thrustPower)
+        // ── Thrust direction ─────────────────────────────────────────
+        // In Orbit mode: "forward" = camera look direction (drone-relative forward
+        // from the camera's perspective), so the stick always pushes away from camera
+        // regardless of which way the drone is yawed. When the drone faces the camera
+        // (180° yaw), using its local −Z would drive it toward the camera — wrong.
+        //
+        // For all other modes: drone's local −Z forward as before.
+        let droneLocalFwd = drone.simdOrientation.act(SIMD3<Float>(0, 0, -1))
+        let thrustFwd: SIMD3<Float>
+        if cameraMode == .orbit || cameraMode == .follow,
+           let cam = scene.rootNode.childNode(withName: "arcCamera", recursively: false) {
+            // Camera→drone vector projected flat = the "into-scene" direction from cam POV
+            let camToDrone = drone.simdPosition - cam.simdPosition
+            var flat = SIMD3<Float>(camToDrone.x, 0, camToDrone.z)
+            if simd_length(flat) < 0.01 { flat = droneLocalFwd }
+            thrustFwd = simd_normalize(flat)
+            // Dot product: if drone is facing >90° away from thrustFwd, it's facing cam.
+            // We don't invert in that case — thrustFwd is already camera-relative,
+            // so it's always correct regardless of drone facing.
+        } else {
+            thrustFwd = droneLocalFwd
+        }
+        let tv = SIMD3<Double>(Double(thrustFwd.x), 0, Double(thrustFwd.z)) * (joyY * thrustPower)
         velocity += tv
         velocity *= drag
 
@@ -521,8 +541,16 @@ public final class MantisNavModel: ObservableObject {
             case .left:  levelLook(from: dp - flatRight * 15 + SIMD3<Float>(0, 2, 0))
             case .right: levelLook(from: dp + flatRight * 15 + SIMD3<Float>(0, 2, 0))
             case .follow, .orbit:
-                // semi-birdseye behind+above off the YAW heading — never rolls
-                levelLook(from: dp - flatFwd * 10 + SIMD3<Float>(0, 4, 0))
+                // Camera stays behind+above the drone's VELOCITY direction, not its
+                // facing direction. This means even when the drone faces the camera,
+                // the camera stays behind where it's going — no jarring flip.
+                var velFlat = SIMD3<Float>(Float(velocity.x), 0, Float(velocity.z))
+                let velLen = simd_length(velFlat)
+                // If moving, use velocity direction for camera; else use last flatFwd
+                let camBehind = velLen > 0.0005
+                    ? -simd_normalize(velFlat)
+                    : -flatFwd
+                levelLook(from: dp + camBehind * 10 + SIMD3<Float>(0, 4, 0))
             }
         }
     }
@@ -979,5 +1007,6 @@ struct MantisSettingsSheet: View {
         }
     }
 }
+
 
 
