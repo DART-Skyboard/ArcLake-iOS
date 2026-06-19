@@ -230,8 +230,8 @@ public final class MantisNavModel: ObservableObject {
     ]
     // Remote assets: downloaded once and cached to Documents/
     public static let remoteAssets: [(label: String, resource: String, url: String)] = [
-        ("Autumn (embedded)", "Autumn_Embed",
-         "https://github.com/DART-Skyboard/ArcLake-iOS/releases/download/v1.5.1-assets/Autumn_Embed.glb"),
+        ("Autumn MN", "AutumnMN",
+         "https://github.com/DART-Skyboard/ArcLake-iOS/releases/download/v1.5.1-assets/AutumnMN.glb"),
     ]
     // ── Spawn placement — nozzles flush on the grid, origin for the
     //    active vehicle, parked slots for everyone else ────────────────
