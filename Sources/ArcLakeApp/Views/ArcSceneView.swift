@@ -105,7 +105,7 @@ public struct ArcSceneView: UIViewRepresentable {
             cam.bloomThreshold      = max(rvm.bloomThreshold, 0.75)
             cam.bloomBlurRadius     = pp && rvm.bloomIntensity > 0.05 ? 4.0 : 0
             cam.motionBlurIntensity = pp && rvm.motionBlur > 0.01 ? min(rvm.motionBlur, 0.5) : 0
-            cam.exposureOffset      = pp ? max(rvm.exposureOffset, -1.5) : 0
+            cam.exposureOffset      = pp ? max(rvm.exposure - 1.0, -1.5) : 0
             // ── Screen-space Ambient Occlusion (iOS 13+, SceneKit native) ───
             // This is real contact shadows between surfaces — much more visible
             // than the shadow-sample hack. Works at any polygon count.
