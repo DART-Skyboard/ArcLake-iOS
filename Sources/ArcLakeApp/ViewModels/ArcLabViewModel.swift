@@ -512,6 +512,8 @@ public final class ArcLabViewModel: ObservableObject {
         if isCFDActive { stopCFD() }
 
         activeTabIndex = index
+        // Keep per-tab environment physics in sync with the active scene tab
+        physics.activeTabIndex = index
 
         // Ensure tab state exists
         while tabStates.count <= index {
