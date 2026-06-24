@@ -95,8 +95,5 @@ public struct CFDTab: Identifiable {
         t.gravity = 0; t.viscosity = 0; return t }
 }
 
-// Safe subscript for arrays
-extension Array {
-    subscript(safe i: Index) -> Element? { i>=0 && i<count ? self[i] : nil }
-}
+
 
