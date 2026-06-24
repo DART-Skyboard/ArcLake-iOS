@@ -38,9 +38,9 @@ struct ArcFluidView: View {
         let syms: [String] = labVM.selectedElements.isEmpty
             ? ["O","H","H"]
             : labVM.selectedElements.map { $0.elementSymbol }
-        let tempF = labVM.physics.envData.temperature
-        let tempK = Float((tempF - 32) * 5/9 + 273.15)
-        let pressurePa = Float(labVM.physics.envData.pressure * 6894.76)
+        let tempF = labVM.physics.temperature   // °F direct on PhysicsState
+        let tempK = Float((tempF - 32.0) * 5.0/9.0 + 273.15)
+        let pressurePa = Float(labVM.physics.pressure * 6894.76)
         eng.start(in: labVM.scene, elementSymbols: syms,
                   envTempK: tempK, envPressurePa: pressurePa)
     }
@@ -136,11 +136,12 @@ struct ArcFluidView: View {
                     // Sync env physics from labVM
                     HStack {
                         mono("Env Temp").frame(maxWidth:.infinity,alignment:.leading)
-                        accent(String(format:"%.0f K", eng.envTempK))
+                        accent(String(format:"%.0f K", eng.envTempK > 0 ? eng.envTempK : 293))
                     }
                     HStack {
                         mono("Env Pressure").frame(maxWidth:.infinity,alignment:.leading)
-                        accent(String(format:"%.1f psi", eng.envPressurePa/6894.76))
+                        accent(String(format:"%.1f psi",
+                               Double(eng.envPressurePa > 0 ? eng.envPressurePa : 101325) / 6894.76))
                     }
                 }
             }
