@@ -14,9 +14,7 @@ struct NodeEditorView: View {
     @State private var nodes:       [EditorNode]       = []
     @State private var connections: [NodeConnection]   = []
     // Per-tab node state — each scene tab keeps its own graph
-    @State private var tabNodes:       [Int: [EditorNode]]     = [:]
-    @State private var tabConnections: [Int: [NodeConnection]] = [:]
-    @State private var tabGroups:      [Int: [NodeGroup]]      = [:]
+    // Tab state is stored on labVM so it survives sheet dismiss/reopen
     @State private var shownTab: Int = -1
     @State private var canvasOffset  = CGSize.zero
     @State private var canvasPanBase = CGSize.zero   // tracks pan start so no drift
@@ -96,14 +94,14 @@ struct NodeEditorView: View {
     // ── Per-tab graph persistence ─────────────────────────────────
     private func saveTab(_ idx: Int) {
         guard idx >= 0 else { return }
-        tabNodes[idx] = nodes
-        tabConnections[idx] = connections
-        tabGroups[idx] = nodeGroups
+        labVM.nodeTabNodes[idx]       = nodes
+        labVM.nodeTabConnections[idx] = connections
+        labVM.nodeTabGroups[idx]      = nodeGroups
     }
     private func loadTab(_ idx: Int) {
-        nodes = tabNodes[idx] ?? []
-        connections = tabConnections[idx] ?? []
-        nodeGroups = tabGroups[idx] ?? []
+        nodes       = (labVM.nodeTabNodes[idx]       as? [EditorNode])     ?? []
+        connections = (labVM.nodeTabConnections[idx] as? [NodeConnection]) ?? []
+        nodeGroups  = (labVM.nodeTabGroups[idx]      as? [NodeGroup])      ?? []
         pendingFrom = nil
         selectedForGroup = []
     }
@@ -655,6 +653,7 @@ struct EditorNodeView: View {
         .onTapGesture { onTap() }
     }
 }
+
 
 
 
