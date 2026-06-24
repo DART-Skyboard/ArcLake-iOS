@@ -18,13 +18,31 @@ public final class PhysicsState: ObservableObject, @unchecked Sendable {
     @Published public var stableForce:    Double = 1.0
     @Published public var isNucleusActive: Bool  = false
 
-    // Per-tab physics (Large Scale CFD)
-    @Published public var tabs: [CFDTab] = (0..<5).map { CFDTab(id: $0) }
+    // Per-scene-tab environment physics (grows with scene tabs)
+    // Index matches labVM.activeTabIndex — auto-synced by ArcCFDView
+    @Published public var tabs: [CFDTab] = (0..<10).map { CFDTab(id: $0) }
     @Published public var activeTabIndex: Int = 0
 
     public var activeTab: CFDTab {
-        get { tabs[activeTabIndex] }
-        set { tabs[activeTabIndex] = newValue }
+        get { tabs[safe: activeTabIndex] ?? CFDTab(id: activeTabIndex) }
+        set {
+            while tabs.count <= activeTabIndex { tabs.append(CFDTab(id: tabs.count)) }
+            tabs[activeTabIndex] = newValue
+        }
+    }
+
+    /// Convenience accessors for the active tab
+    public var temperature: Double {
+        get { activeTab.temperature } set { activeTab.temperature = newValue }
+    }
+    public var gravity: Double {
+        get { activeTab.gravity } set { activeTab.gravity = newValue }
+    }
+    public var pressure: Double {
+        get { activeTab.pressure } set { activeTab.pressure = newValue }
+    }
+    public var viscosity: Double {
+        get { activeTab.viscosity } set { activeTab.viscosity = newValue }
     }
 
     /// Arc Edge influence: base × modified gravity
@@ -48,12 +66,37 @@ public final class PhysicsState: ObservableObject, @unchecked Sendable {
 public struct CFDTab: Identifiable {
     public var id: Int
     public var name: String { "Tab \(id + 1)" }
-    public var temperature:  Double = 72.0
-    public var gravity:      Double = 9.8
-    public var pressure:     Double = 14.7
-    public var velocity:     Double = 0.0
-    public var viscosity:    Double = 1.0
+    // Standard atmosphere defaults
+    public var temperature:  Double = 72.0    // °F
+    public var gravity:      Double = 9.8     // m/s²
+    public var pressure:     Double = 14.7    // psi (sea level)
+    public var velocity:     Double = 0.0     // m/s wind
+    public var viscosity:    Double = 1.0     // cP
+    public var humidity:     Double = 50.0    // %
+    public var altitude:     Double = 0.0     // m ASL
     public var particleCount: Int   = 500
     public var isActive:     Bool   = false
     public var sigmaReadout: Double = 0.0
+
+    // BTU / thermal environment (from radicaldeepscale.com/btu.html)
+    public var ambientTempK: Double  { (temperature - 32) * 5/9 + 273.15 }
+    public var pressurePa:   Double  { pressure * 6894.76 }
+
+    // Preset environments
+    static func earthSea()    -> CFDTab { var t=CFDTab(id:0); return t }
+    static func mars()        -> CFDTab {
+        var t=CFDTab(id:0); t.temperature = -80; t.pressure = 0.087
+        t.gravity = 3.72; t.viscosity = 0.01; return t }
+    static func venus()       -> CFDTab {
+        var t=CFDTab(id:0); t.temperature = 867; t.pressure = 1334
+        t.gravity = 8.87; t.viscosity = 28.5; return t }
+    static func lowEarthOrbit() -> CFDTab {
+        var t=CFDTab(id:0); t.temperature = -450; t.pressure = 0
+        t.gravity = 0; t.viscosity = 0; return t }
 }
+
+// Safe subscript for arrays
+extension Array {
+    subscript(safe i: Index) -> Element? { i>=0 && i<count ? self[i] : nil }
+}
+
