@@ -180,11 +180,16 @@ public final class ArcFluidEngine: ObservableObject {
         kP6   = 315 / (64*PI*h9)
         hCached = h
     }
-    private func sp2(_ d: Float, _ h: Float) -> Float  { d>=h ? 0 : let v=h-d; return v*v*kSp2 }
-    private func sp3(_ d: Float, _ h: Float) -> Float  { d>=h ? 0 : let v=h-d; return v*v*v*kSp3 }
-    private func dsp2(_ d: Float, _ h: Float) -> Float { d>h  ? 0 : -(h-d)*kSp2g }
-    private func dsp3(_ d: Float, _ h: Float) -> Float { d>h  ? 0 : -(h-d)*(h-d)*kSp3g }
-    private func p6(_ d2: Float, _ h: Float) -> Float  { let v=h*h-d2; return v<=0 ? 0 : v*v*v*kP6 }
+    private func sp2(_ d: Float, _ h: Float) -> Float  {
+        guard d < h else { return 0 }; let v = h-d; return v*v*kSp2 }
+    private func sp3(_ d: Float, _ h: Float) -> Float  {
+        guard d < h else { return 0 }; let v = h-d; return v*v*v*kSp3 }
+    private func dsp2(_ d: Float, _ h: Float) -> Float {
+        guard d <= h else { return 0 }; return -(h-d)*kSp2g }
+    private func dsp3(_ d: Float, _ h: Float) -> Float {
+        guard d <= h else { return 0 }; return -(h-d)*(h-d)*kSp3g }
+    private func p6(_ d2: Float, _ h: Float) -> Float  {
+        let v = h*h-d2; guard v > 0 else { return 0 }; return v*v*v*kP6 }
 
     // MARK: — Start / Stop
     public func start(in scene: SCNScene, elementSymbols: [String] = ["O","H","H"]) {
