@@ -159,6 +159,15 @@ public struct DARTRootView: View {
                 showGlobalImport = false
             }
         }
+        // CFD component config — triggered by tapping a mesh node in the scene
+        .sheet(item: Binding(
+            get: { labVM.tappedCFDComponent.map { IdentifiedString(value: $0) } },
+            set: { labVM.tappedCFDComponent = $0?.value }
+        )) { identified in
+            ArcComponentConfigView(nodeName: identified.value)
+                .environmentObject(labVM)
+                .environmentObject(themeVM)
+        }
     }
 }
 
@@ -933,3 +942,10 @@ struct ArcMusicControls: View {
 
 
 
+
+
+// Helper for Binding<Identifiable> from optional String
+struct IdentifiedString: Identifiable {
+    let value: String
+    var id: String { value }
+}
