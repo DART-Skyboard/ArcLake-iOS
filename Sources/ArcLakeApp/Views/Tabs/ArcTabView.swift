@@ -110,6 +110,9 @@ public struct ArcTabView: View {
                 SectionCard(title: "Quantum Socket", icon: "cpu") {
                     QuantumSocketCalc()
                 }
+
+                // ── Arc Edge CFD — component specs & live measurement ──
+                ArcCFDComponentPanel()
             }
             .padding(12)
         }
@@ -180,4 +183,5 @@ struct QuantumSocketCalc: View {
         }
     }
 }
+
 
