@@ -388,9 +388,14 @@ public final class ArcFluidEngine: ObservableObject {
     // MARK: — Scan component specs
     func scanComponentSpecs(_ scene: SCNScene) {
         var specs: [ArcComponentSpec] = []
+        var seenNames = Set<String>()
+        // Enumerate ALL descendants — GLB sub-meshes are nested inside the import root
         scene.rootNode.enumerateChildNodes { node, _ in
             guard let nm = node.name, node.geometry != nil,
-                  !nm.hasPrefix("arc_light_"), nm != "arcFluidCloud" else { return }
+                  !nm.hasPrefix("arc_light_"), nm != "arcFluidCloud",
+                  !nm.hasPrefix("glb_import_"), !nm.hasPrefix("imported_"),
+                  !seenNames.contains(nm) else { return }
+            seenNames.insert(nm)
             var dname = nm
             for p in ["glb_import_","imported_"] where nm.hasPrefix(p) {
                 dname = String(nm.dropFirst(p.count)); break
@@ -854,6 +859,35 @@ public final class ArcFluidEngine: ObservableObject {
                 Double(nearMaxP)/1e6 / max(1, maxAllowedP),
                 (Double(nearMaxT) - 293) / max(1, maxAllowedT - 293))
         }
+    }
+
+    // MARK: — Auto-fill Combustion_flow demo
+    private func autoFillCombustionDemo(scene: SCNScene, envTempK: Float) -> Bool {
+        let hasCombustion = componentSpecs.contains(where: { $0.displayName == "CombustionChamber" })
+        let hasFuel       = componentSpecs.contains(where: { $0.displayName == "Fuel" })
+        guard hasCombustion && hasFuel else { return false }
+        print("[ArcCFD] Combustion_flow demo detected — auto-filling cavities")
+        let lox = ArcPropellant.presets.first(where:{$0.id=="lox"})!
+        let lh2 = ArcPropellant.presets.first(where:{$0.id=="lh2"})!
+        currentOxidizerSymbols = lox.elements
+        currentFuelSymbols     = lh2.elements
+        for spec in componentSpecs {
+            let fillCount: Int; let prop: ArcPropellant; let pressure: Float
+            switch spec.displayName {
+            case "Oxidizer":                        prop=lox; pressure=200; fillCount=min(120,max(20,spec.particleCapacity))
+            case "OxidizerPressure ","OxidizerPressure": prop=lox; pressure=250; fillCount=min(60,max(10,spec.particleCapacity/2))
+            case "OxidizerChannel":                 prop=lox; pressure=180; fillCount=min(40,max(8,spec.particleCapacity/3))
+            case "Fuel":                            prop=lh2; pressure=200; fillCount=min(120,max(20,spec.particleCapacity))
+            case "FuelPressure":                    prop=lh2; pressure=250; fillCount=min(60,max(10,spec.particleCapacity/2))
+            case "FuelChannel":                     prop=lh2; pressure=180; fillCount=min(60,max(12,spec.particleCapacity/3))
+            default: continue
+            }
+            var s = spec; s.pressurePsi = Double(pressure)
+            fillComponentCavity(spec:s, count:fillCount, propellant:prop, scene:scene,
+                                 gravityScale:gravityScale, envTempK:envTempK)
+        }
+        scenePreset = .stream
+        return true
     }
 
     // MARK: — Chemical combustion reaction
