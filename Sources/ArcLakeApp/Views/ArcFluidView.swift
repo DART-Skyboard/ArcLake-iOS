@@ -34,6 +34,17 @@ struct ArcFluidView: View {
         .background(Color(red:0.02,green:0.04,blue:0.09))
     }
 
+    private func launchCFD() {
+        let syms: [String] = labVM.selectedElements.isEmpty
+            ? ["O","H","H"]
+            : labVM.selectedElements.map { $0.elementSymbol }
+        let tempF = labVM.physics.envData.temperature
+        let tempK = Float((tempF - 32) * 5/9 + 273.15)
+        let pressurePa = Float(labVM.physics.envData.pressure * 6894.76)
+        eng.start(in: labVM.scene, elementSymbols: syms,
+                  envTempK: tempK, envPressurePa: pressurePa)
+    }
+
     // MARK: Header
     private var header: some View {
         HStack(spacing:8) {
@@ -151,15 +162,7 @@ struct ArcFluidView: View {
                         .multilineTextAlignment(.center)
                 }
             } else {
-                Button {
-                    let syms = labVM.selectedElements.isEmpty
-                        ? ["O","H","H"]
-                        : labVM.selectedElements.map{$0.elementSymbol}
-                    let tempK = Float((labVM.physics.envData.temperature-32)*5/9+273.15)
-                    let pressurePa = Float(labVM.physics.envData.pressure * 6894.76)
-                    eng.start(in: labVM.scene, elementSymbols: syms,
-                              envTempK: tempK, envPressurePa: pressurePa)
-                } label: {
+                Button { launchCFD() } label: {
                     HStack(spacing:8) {
                         Image(systemName:"water.waves").font(.system(size:14))
                         Text("LAUNCH CFD SIMULATION")
