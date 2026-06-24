@@ -60,6 +60,7 @@ public final class ArcLabViewModel: ObservableObject {
     // Engine extension (separate file) needs atom node access
     public func atomNode(for id: Int) -> SCNNode? { atomNodes[id] }
     @Published public var isNodeEditorVisible = false
+    @Published public var tappedCFDComponent: String? = nil  // triggers component config sheet
 
     // ── Node Editor per-tab persistence ──────────────────────────────
     // These dicts survive sheet dismissal/reopening because they live on the VM.
