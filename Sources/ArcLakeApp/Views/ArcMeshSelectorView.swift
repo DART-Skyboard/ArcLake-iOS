@@ -15,94 +15,73 @@ struct ArcMeshSelectorView: View {
 
     var body: some View {
         NavigationView {
-            VStack(spacing: 0) {
-                // Mode header
-                HStack(spacing: 6) {
-                    ForEach(ArcMeshSelector.PickMode.allCases, id:\.self) { m in
-                        Button { sel.pickMode = m } label: {
-                            Text(m.rawValue)
-                                .font(.system(size:8,weight:.bold,design:.monospaced))
-                                .foregroundColor(sel.pickMode==m ? .black : .white.opacity(0.6))
-                                .padding(.horizontal,9).padding(.vertical,5)
-                                .background(sel.pickMode==m ? themeVM.accent : Color.white.opacity(0.07))
-                                .clipShape(Capsule())
-                        }
-                    }
-                }
-                .padding(10).background(Color(red:0.02,green:0.04,blue:0.09))
-
-                // Mesh list
-                if sel.meshEntries.isEmpty {
-                    Spacer()
-                    VStack(spacing:8) {
-                        Image(systemName:"cube.transparent").font(.system(size:28)).foregroundColor(.white.opacity(0.2))
-                        Text("No 3D models loaded").font(.system(size:11,design:.monospaced)).foregroundColor(.white.opacity(0.3))
-                        Text("Import a GLB file first").font(.system(size:9,design:.monospaced)).foregroundColor(.white.opacity(0.2))
-                    }
-                    Spacer()
-                } else {
-                    List(sel.meshEntries, id:\.nodeName) { entry in
-                        MeshEntryRow(entry: entry)
-                            .environmentObject(sel)
-                            .environmentObject(themeVM)
-                            .listRowBackground(Color(red:0.05,green:0.08,blue:0.13))
-                    }
-                    .listStyle(.plain)
-                    .scrollContentBackground(.hidden)
-                }
-
-                // Zone assignment bar
-                VStack(spacing:6) {
-                    if let picked = sel.pickedPoint {
-                        HStack(spacing:10) {
-                            Button {
-                                ArcFluidEngine.shared.inletZone = picked.worldPos
-                                dismiss()
-                            } label: {
-                                Label("Set Inlet", systemImage:"arrow.right.circle.fill")
-                                    .font(.system(size:10,design:.monospaced))
-                                    .foregroundColor(.black)
-                                    .padding(.horizontal,12).padding(.vertical,8)
-                                    .background(Color.green)
-                                    .clipShape(Capsule())
-                            }
-                            Button {
-                                ArcFluidEngine.shared.outletZone = picked.worldPos
-                                dismiss()
-                            } label: {
-                                Label("Set Outlet", systemImage:"arrow.left.circle.fill")
-                                    .font(.system(size:10,design:.monospaced))
-                                    .foregroundColor(.black)
-                                    .padding(.horizontal,12).padding(.vertical,8)
-                                    .background(Color.orange)
-                                    .clipShape(Capsule())
-                            }
-                        }
-                        Text(String(format:"Selected: (%.1f, %.1f, %.1f)", picked.worldPos.x, picked.worldPos.y, picked.worldPos.z))
-                            .font(.system(size:8,design:.monospaced)).foregroundColor(.white.opacity(0.4))
-                    } else {
-                        Text("Tap a mesh component to select a zone point")
-                            .font(.system(size:9,design:.monospaced)).foregroundColor(.white.opacity(0.35))
-                    }
-                }
-                .padding(12).background(Color(red:0.02,green:0.04,blue:0.09))
-            }
+            VStack(spacing:0) { modeBar; meshList; zoneBar }
             .background(Color(red:0.02,green:0.04,blue:0.09))
             .navigationTitle("Mesh Zone Selector")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement:.navigationBarTrailing) {
-                    Button("Done") { dismiss() }
-                }
+                ToolbarItem(placement:.navigationBarTrailing) { Button("Done"){dismiss()} }
                 ToolbarItem(placement:.navigationBarLeading) {
-                    Button("Scan Scene") {
-                        sel.scanScene(labVM.scene)
-                    }.foregroundColor(themeVM.accent)
+                    Button("Scan"){sel.scanScene(labVM.scene)}.foregroundColor(themeVM.accent)
                 }
             }
         }
         .preferredColorScheme(.dark)
         .onAppear { sel.scanScene(labVM.scene) }
+    }
+
+    private var modeBar: some View {
+        HStack(spacing:6) {
+            ForEach(ArcMeshSelector.PickMode.allCases, id:\.self) { m in
+                Button { sel.pickMode = m } label: {
+                    Text(m.rawValue).font(.system(size:8,weight:.bold,design:.monospaced))
+                        .foregroundColor(sel.pickMode==m ? .black : .white.opacity(0.6))
+                        .padding(.horizontal,9).padding(.vertical,5)
+                        .background(sel.pickMode==m ? themeVM.accent : Color.white.opacity(0.07))
+                        .clipShape(Capsule())
+                }
+            }
+        }.padding(10).background(Color(red:0.02,green:0.04,blue:0.09))
+    }
+
+    @ViewBuilder private var meshList: some View {
+        if sel.meshEntries.isEmpty {
+            Spacer()
+            VStack(spacing:8) {
+                Image(systemName:"cube.transparent").font(.system(size:28)).foregroundColor(.white.opacity(0.2))
+                Text("No 3D models loaded").font(.system(size:11,design:.monospaced)).foregroundColor(.white.opacity(0.3))
+            }
+            Spacer()
+        } else {
+            List(sel.meshEntries, id:\.nodeName) { entry in
+                MeshEntryRow(entry:entry).environmentObject(sel).environmentObject(themeVM)
+                    .listRowBackground(Color(red:0.05,green:0.08,blue:0.13))
+            }.listStyle(.plain).scrollContentBackground(.hidden)
+        }
+    }
+
+    private var zoneBar: some View {
+        VStack(spacing:6) {
+            if let picked = sel.pickedPoint {
+                HStack(spacing:10) {
+                    Button { ArcFluidEngine.shared.inletZone=picked.worldPos; dismiss() } label: {
+                        Label("Set Inlet",systemImage:"arrow.right.circle.fill")
+                            .font(.system(size:10,design:.monospaced)).foregroundColor(.black)
+                            .padding(.horizontal,12).padding(.vertical,8).background(Color.green).clipShape(Capsule())
+                    }
+                    Button { ArcFluidEngine.shared.outletZone=picked.worldPos; dismiss() } label: {
+                        Label("Set Outlet",systemImage:"arrow.left.circle.fill")
+                            .font(.system(size:10,design:.monospaced)).foregroundColor(.black)
+                            .padding(.horizontal,12).padding(.vertical,8).background(Color.orange).clipShape(Capsule())
+                    }
+                }
+                Text(String(format:"(%.1f, %.1f, %.1f)",picked.worldPos.x,picked.worldPos.y,picked.worldPos.z))
+                    .font(.system(size:8,design:.monospaced)).foregroundColor(.white.opacity(0.4))
+            } else {
+                Text("Tap a mesh component to select a zone point")
+                    .font(.system(size:9,design:.monospaced)).foregroundColor(.white.opacity(0.35))
+            }
+        }.padding(12).background(Color(red:0.02,green:0.04,blue:0.09))
     }
 }
 
