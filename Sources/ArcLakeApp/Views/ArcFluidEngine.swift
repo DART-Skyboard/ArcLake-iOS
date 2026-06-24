@@ -418,15 +418,29 @@ public final class ArcFluidEngine: ObservableObject {
                 pts[i].vx = -sin(theta)*orbV; pts[i].vy=0; pts[i].vz=cos(theta)*orbV
             }
         case .stream:
-            // Spawn near scene inlet component if designated
-            let inletSpec = componentSpecs.first(where: { $0.isInlet })
-            let startX: Float = inletSpec != nil ? W * 0.05 : W * 0.05
+            // Cavity flow: spawn at inlet component, direct toward outlet
+            let inletSpec  = componentSpecs.first(where: { $0.isInlet })
+            let outletSpec = componentSpecs.first(where: { $0.isOutlet })
+            // Compute flow direction from inlet→outlet (or default +X)
+            let flowDir: SIMD3<Float>
+            if let iz = self.inletZone, let oz = self.outletZone {
+                let d = oz - iz; let dl = simd_length(d)
+                flowDir = dl > 0.01 ? d/dl : SIMD3<Float>(1,0,0)
+            } else {
+                flowDir = SIMD3<Float>(1, 0, 0)
+            }
+            let baseX = W * 0.05; let baseY = H / 2; let baseZ = D / 2
+            let flowSpeed = Float(inletSpec?.inletFlowRate ?? 1.0) * 15
             for i in 0..<n {
-                pts[i].x=startX+Float.random(in:0...smoothingH*2)
-                pts[i].y=H/2+Float.random(in:-smoothingH...smoothingH)
-                pts[i].z=D/2+Float.random(in:-smoothingH...smoothingH)
-                pts[i].vx=Float(inletSpec?.inletFlowRate ?? 1.0)*12
-                pts[i].vy=0; pts[i].vz=0
+                let scatter = smoothingH * 1.2
+                pts[i].x = baseX + Float.random(in:0...scatter)
+                pts[i].y = baseY + Float.random(in:-scatter*0.4...scatter*0.4)
+                pts[i].z = baseZ + Float.random(in:-scatter*0.4...scatter*0.4)
+                pts[i].vx = flowDir.x * flowSpeed + Float.random(in:-2...2)
+                pts[i].vy = flowDir.y * flowSpeed + Float.random(in:-1...1)
+                pts[i].vz = flowDir.z * flowSpeed + Float.random(in:-1...1)
+                // Start hot — they cool as they travel
+                pts[i].tempK = envTempK + Float.random(in:200...800)
             }
         }
     }
@@ -613,17 +627,33 @@ public final class ArcFluidEngine: ObservableObject {
                 // Mesh collision
                 resolveTriangleCollision(i)
 
-                // Inlet re-inject (Stream mode: respawn at inlet when reaching outlet)
-                if scenePreset == .stream, let inSpec = inletSpec {
-                    if pts[i].x > W*0.9 {  // reached outlet end
-                        pts[i].x = W*0.05+Float.random(in:0...smoothingH)
-                        pts[i].y = H/2+Float.random(in:-smoothingH*0.5...smoothingH*0.5)
-                        pts[i].z = D/2+Float.random(in:-smoothingH*0.5...smoothingH*0.5)
-                        pts[i].vx = Float(inSpec.inletFlowRate)*12
-                        pts[i].vy = 0; pts[i].vz = 0
+                // Cavity flow re-inject
+                if scenePreset == .stream {
+                    let atOutlet: Bool
+                    if let oz = outletZone {
+                        let dx=pts[i].x*SCALE-oz.x, dy=pts[i].y*SCALE-oz.y, dz=pts[i].z*SCALE-oz.z
+                        atOutlet = dx*dx+dy*dy+dz*dz < (outletRadius*SCALE)*(outletRadius*SCALE)*4
+                    } else {
+                        atOutlet = pts[i].x > W*0.88
+                    }
+                    if atOutlet {
+                        let inSpec = componentSpecs.first(where:{$0.isInlet})
+                        let scatter = smoothingH * 1.2
+                        pts[i].x = W*0.05+Float.random(in:0...scatter)
+                        pts[i].y = H/2+Float.random(in:-scatter*0.4...scatter*0.4)
+                        pts[i].z = D/2+Float.random(in:-scatter*0.4...scatter*0.4)
+                        let spd = Float(inSpec?.inletFlowRate ?? 1.0)*15
+                        pts[i].vx=spd; pts[i].vy=Float.random(in:-1...1); pts[i].vz=Float.random(in:-1...1)
+                        // Reheat at re-injection
+                        pts[i].tempK = envTempK + Float.random(in:300...900)
                         outCount += 1
                     }
-                    inCount += pts[i].x < W*0.15 ? 1 : 0
+                    if let iz = inletZone {
+                        let dx=pts[i].x*SCALE-iz.x, dy=pts[i].y*SCALE-iz.y, dz=pts[i].z*SCALE-iz.z
+                        if dx*dx+dy*dy+dz*dz < (inletRadius*SCALE)*(inletRadius*SCALE)*4 { inCount += 1 }
+                    } else {
+                        inCount += pts[i].x < W*0.15 ? 1 : 0
+                    }
                 }
             }
 
@@ -765,7 +795,12 @@ public final class ArcFluidEngine: ObservableObject {
             bytesPerComponent:4, dataOffset:0, dataStride:16)
         let indices=(0..<n).map{UInt32($0)}
         let elem=SCNGeometryElement(indices:indices, primitiveType:.point)
-        elem.pointSize=4; elem.minimumPointScreenSpaceRadius=1; elem.maximumPointScreenSpaceRadius=10
+        // Larger, velocity-based point sizes for teardrop appearance
+        let avgSpd = pts.isEmpty ? 0 : pts.map({$0.spd}).reduce(0,+)/Float(pts.count)
+        let dynSize = Float(min(12, max(3, 3 + avgSpd * 0.2)))
+        elem.pointSize = CGFloat(dynSize)
+        elem.minimumPointScreenSpaceRadius = 1.5
+        elem.maximumPointScreenSpaceRadius = CGFloat(dynSize * 2.5)
         let geo=SCNGeometry(sources:[posSource,colSource], elements:[elem])
         let mat=SCNMaterial(); mat.lightingModel = .constant
         geo.firstMaterial=mat
