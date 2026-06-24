@@ -314,8 +314,8 @@ struct ArcFluidView: View {
 extension ArcLabViewModel {
     /// Collect element symbols from all atom groups in the current scene tab
     func currentElementSymbols() -> [String] {
-        let elems = tabStates[safe: activeTabIndex]?.elements ?? []
-        if elems.isEmpty { return ["O","H","H"] }
-        return elems.map { $0.elementSymbol }
+        // selectedElements reflects the current tab's atoms (@Published public)
+        if selectedElements.isEmpty { return ["O","H","H"] }
+        return selectedElements.map { $0.elementSymbol }
     }
 }
