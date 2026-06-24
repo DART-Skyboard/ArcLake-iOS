@@ -232,6 +232,8 @@ public final class MantisNavModel: ObservableObject {
     public static let remoteAssets: [(label: String, resource: String, url: String)] = [
         ("Autumn MN", "AutumnMN",
          "https://github.com/DART-Skyboard/ArcLake-iOS/releases/download/v1.5.1-assets/AutumnMN.glb"),
+        ("Combustion Flow (demo)", "Combustion_flow",
+         "https://github.com/DART-Skyboard/ArcLake-iOS/releases/download/v1.5.1-assets/Combustion_flow.glb"),
     ]
     // ── Spawn placement — nozzles flush on the grid, origin for the
     //    active vehicle, parked slots for everyone else ────────────────
@@ -1004,6 +1006,7 @@ struct MantisSettingsSheet: View {
         }
     }
 }
+
 
 
 
