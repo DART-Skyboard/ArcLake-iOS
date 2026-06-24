@@ -255,7 +255,10 @@ public struct ArcTabView: View {
 
 struct QuantumSocketCalc: View {
     @EnvironmentObject var themeVM: ArcThemeViewModel
-    @State private var b:Double=1,p:Double=1,a:Double=1,r:Double=1
+    @State private var b:Double=1
+    @State private var p:Double=1
+    @State private var a:Double=1
+    @State private var r:Double=1
     var result: Double { ArcEdgeMath.quantumSocket(b:b,p:p,a:a,r:r) }
     var body: some View {
         VStack(spacing:5) {
