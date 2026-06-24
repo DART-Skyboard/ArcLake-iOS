@@ -132,7 +132,7 @@ public struct ArcTabView: View {
                     HStack {
                         monoLabel("Σ Arc Edge")
                         Spacer()
-                        accentLabel(String(format:"%.4f", labVM.physics.tabs[safe:labVM.activeTabIndex]?.sigmaReadout ?? 0))
+                        accentLabel(String(format:"%.4f", labVM.physics.activeTab.sigmaReadout))
                     }
                 }
             }
