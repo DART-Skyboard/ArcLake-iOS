@@ -28,8 +28,35 @@ struct ArcImportManagerView: View {
         return raw
     }
 
+    @State private var importTab: ImportTab = .scene
+    enum ImportTab { case scene, assets }
+
     var body: some View {
         VStack(spacing: 0) {
+            // Tab: Scene Outliner | Assets
+            HStack(spacing: 0) {
+                Button { importTab = .scene } label: {
+                    Text("Scene").font(.system(size:9,weight:.bold,design:.monospaced))
+                        .foregroundColor(importTab == .scene ? .black : .white.opacity(0.5))
+                        .frame(maxWidth:.infinity).padding(.vertical,7)
+                        .background(importTab == .scene ? themeVM.accent : Color.clear)
+                }
+                Button { importTab = .assets } label: {
+                    Text("Assets").font(.system(size:9,weight:.bold,design:.monospaced))
+                        .foregroundColor(importTab == .assets ? .black : .white.opacity(0.5))
+                        .frame(maxWidth:.infinity).padding(.vertical,7)
+                        .background(importTab == .assets ? themeVM.accent : Color.clear)
+                }
+            }
+            .background(Color.white.opacity(0.05))
+            .clipShape(RoundedRectangle(cornerRadius:8))
+            .padding(.horizontal,10).padding(.vertical,6)
+
+            if importTab == .scene {
+                ArcSceneOutliner()
+                    .environmentObject(labVM)
+                    .environmentObject(themeVM)
+            } else {
             // ── Header ──────────────────────────────────────────────
             HStack {
                 Image(systemName: "square.and.arrow.down")
@@ -214,6 +241,7 @@ struct ArcImportManagerView: View {
                 refreshID = UUID()
             } label: {
                 Label("Remove", systemImage: "trash")
+            }
             }
         }
     }
