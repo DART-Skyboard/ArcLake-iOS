@@ -313,7 +313,7 @@ public final class ArcFluidEngine: ObservableObject {
     }
 
     // MARK: — Scan component specs
-    private func scanComponentSpecs(_ scene: SCNScene) {
+    func scanComponentSpecs(_ scene: SCNScene) {
         var specs: [ArcComponentSpec] = []
         scene.rootNode.enumerateChildNodes { node, _ in
             guard let nm = node.name, node.geometry != nil,
