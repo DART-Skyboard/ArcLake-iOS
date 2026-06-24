@@ -224,13 +224,53 @@ struct ArcCFDComponentPanel: View {
                         }
                     }
 
-                    // Volumetric capacity (cavity spec)
-                    HStack {
-                        Text("Vol Capacity m³").font(.system(size: 9, design: .monospaced)).foregroundColor(.white.opacity(0.5))
-                        Slider(value: spec.alloy.densityKgM3, in: 0.0001...10).tint(themeVM.accent)
-                        Text(String(format: "%.4f", spec.wrappedValue.alloy.densityKgM3 / 7800))
-                            .font(.system(size: 8, design: .monospaced)).foregroundColor(themeVM.accent)
-                            .frame(width: 40, alignment: .trailing)
+                            // Cavity fill level + pressure
+                    VStack(spacing: 4) {
+                        HStack {
+                            Text("Fill Level").font(.system(size: 9, design: .monospaced))
+                                .foregroundColor(.white.opacity(0.5))
+                            GeometryReader { g in
+                                ZStack(alignment: .leading) {
+                                    RoundedRectangle(cornerRadius:2).fill(Color.white.opacity(0.07)).frame(height:6)
+                                    let fillColor: Color = spec.wrappedValue.isCombustionChamber ? .orange :
+                                        spec.wrappedValue.fluidType == .some(.fuel) ? .blue : .red
+                                    RoundedRectangle(cornerRadius:2).fill(fillColor)
+                                        .frame(width:g.size.width*CGFloat(min(1,spec.wrappedValue.fillLevel)), height:6)
+                                }
+                            }.frame(height:6)
+                            Text(String(format:"%.0f%%", spec.wrappedValue.fillLevel*100))
+                                .font(.system(size:8,design:.monospaced)).foregroundColor(themeVM.accent)
+                                .frame(width:32,alignment:.trailing)
+                        }
+                        HStack {
+                            Text("Pressure").font(.system(size: 9, design: .monospaced))
+                                .foregroundColor(.white.opacity(0.5))
+                            Slider(value: spec.pressurePsi, in: 0...500).tint(.orange)
+                            Text(String(format:"%.0f psi", spec.wrappedValue.pressurePsi))
+                                .font(.system(size:8,design:.monospaced)).foregroundColor(.orange)
+                                .frame(width:52,alignment:.trailing)
+                        }
+                        HStack {
+                            Text("Capacity").font(.system(size: 9, design: .monospaced))
+                                .foregroundColor(.white.opacity(0.5))
+                            Spacer()
+                            Text("\(spec.wrappedValue.particleCapacity) particles · \(String(format:"%.3f m³", spec.wrappedValue.volumeM3))")
+                                .font(.system(size:8,design:.monospaced)).foregroundColor(themeVM.accent)
+                        }
+                        if spec.wrappedValue.isCombustionChamber {
+                            HStack(spacing:4) {
+                                Image(systemName:"flame.fill").font(.system(size:9)).foregroundColor(.orange)
+                                Text("COMBUSTION CHAMBER").font(.system(size:8,weight:.bold,design:.monospaced))
+                                    .foregroundColor(.orange)
+                            }
+                        }
+                        if let ft = spec.wrappedValue.fluidType {
+                            HStack(spacing:4) {
+                                Circle().fill(ft == .fuel ? Color.blue : Color.red).frame(width:6,height:6)
+                                Text("\(ft.rawValue.uppercased()) TANK").font(.system(size:8,weight:.bold,design:.monospaced))
+                                    .foregroundColor(ft == .fuel ? .blue : .red)
+                            }
+                        }
                     }
 
                     // Alloy preset pills
