@@ -275,7 +275,7 @@ public struct ArcSceneView: UIViewRepresentable {
                             ArcFluidEngine.shared.componentSpecs.contains(where: { $0.nodeName == nm })) {
                             // Found a CFD component — notify ViewModel
                             DispatchQueue.main.async {
-                                self.labVM?.tappedCFDComponent = nm
+                                self.labVM.tappedCFDComponent = nm
                             }
                             return
                         }
