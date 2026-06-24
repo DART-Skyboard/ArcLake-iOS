@@ -593,6 +593,8 @@ public final class ArcGLBImporter {
                 let geo = SCNGeometry(sources: sources, elements: [element])
                 geo.materials = [buildMaterial(prim["material"] as? Int)]
                 let primNode = SCNNode(geometry: geo)
+                // Preserve mesh name so CFD scanner and material editor can identify components
+                primNode.name = (meshesJ[mi]["name"] as? String) ?? node.name
 
                 // ── Nomad sculpt LAYERS — morph targets, additive ──────
                 if let targets = prim["targets"] as? [[String: Any]], !targets.isEmpty {
@@ -724,3 +726,4 @@ public final class ArcGLBImporter {
         return root.childNodes.isEmpty ? nil : root
     }
 }
+
