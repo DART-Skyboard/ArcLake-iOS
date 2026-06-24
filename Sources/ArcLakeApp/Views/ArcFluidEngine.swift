@@ -907,6 +907,70 @@ public final class ArcFluidEngine: ObservableObject {
     public var currentFuelSymbols:     [String] = ["H","H","C"]
     public var currentOxidizerSymbols: [String] = ["O","O"]
 
+    // MARK: — Fill cavity with propellant particles
+    public func fillComponentCavity(spec: ArcComponentSpec, count: Int,
+                                     propellant: ArcPropellant,
+                                     scene: SCNScene, gravityScale: Float,
+                                     envTempK: Float) {
+        guard count > 0 else { return }
+        // Ensure engine is started
+        if !isRunning {
+            self.scene = scene
+            self.envTempK = envTempK
+            self.gravityScale = gravityScale
+            isRunning = true
+            buildCloudNode(scene)
+            // Start tick loop
+            simTask = Task.detached(priority: .userInitiated) { [weak self] in
+                while !Task.isCancelled {
+                    await self?.stepSPH()
+                    try? await Task.sleep(nanoseconds: 16_666_667)
+                }
+            }
+        }
+        let syms = propellant.id == "custom" ? propellant.elements : propellant.elements
+        let col3 = syms.isEmpty ? SIMD3<Float>(0.7,0.7,1) : colorFor(syms[0])
+        // Convert bounding box from scene units to SPH domain
+        let offX = W*SCALE/2; let offY = H*SCALE/2-22; let offZ = D*SCALE/2
+        // spec.boundingMin/Max are in scene world units
+        let bmin = spec.boundingMin / SCALE
+        let bmax = spec.boundingMax / SCALE
+        // Convert to SPH domain coords
+        let dmin = SIMD3<Float>(
+            (bmin.x + offX),
+            (bmin.y + offY),
+            (bmin.z + offZ))
+        let dmax = SIMD3<Float>(
+            (bmax.x + offX),
+            (bmax.y + offY),
+            (bmax.z + offZ))
+        let range = dmax - dmin
+        let side = Int(ceil(pow(Double(count), 1.0/3.0)))
+        let step = range / Float(max(1, side))
+        var added = 0
+        outer: for zi in 0..<side { for yi in 0..<side { for xi in 0..<side {
+            guard added < count else { break outer }
+            let ai = added % max(1, syms.count)
+            let c3 = syms.isEmpty ? col3 : colorFor(syms[ai])
+            var p = ArcParticle(
+                x: dmin.x + Float(xi)*step.x + step.x*0.5 + Float.random(in:-step.x*0.2...step.x*0.2),
+                y: dmin.y + Float(yi)*step.y + step.y*0.5 + Float.random(in:-step.y*0.2...step.y*0.2),
+                z: dmin.z + Float(zi)*step.z + step.z*0.5 + Float.random(in:-step.z*0.2...step.z*0.2),
+                vx:0, vy:0, vz:0, px:0, py:0, pz:0,
+                dens:0, nDens:0, press:0, nPress:0,
+                r:c3.x, g:c3.y, b:c3.z)
+            p.tempK = envTempK
+            // Pressure-driven initial velocity based on flow direction
+            let flowVel = ArcCombustionFlow.flowVelocity(
+                pressurePsi: Float(spec.pressurePsi),
+                densityKgM3: Float(propellant.densityKgM3))
+            // Gravity-assisted: downward initial velocity scaled by pressure
+            p.vy = -min(flowVel * 0.1, 5.0)
+            pts.append(p); added += 1
+        }}}
+        print("[ArcCFD] Filled \(spec.displayName) with \(added) particles")
+    }
+
     // MARK: — SceneKit point cloud
     private func buildCloudNode(_ scene: SCNScene) {
         cloudNode?.removeFromParentNode()
