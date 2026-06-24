@@ -853,7 +853,7 @@ public final class ArcLabViewModel: ObservableObject {
 public enum ArcTab: String, CaseIterable {
     case molecule="Molecule", physics="Physics", math="Math"
     case arc="Arc", env="Env", log="Log"
-    case imports="Imports", render="Render"
+    case imports="Imports", render="Render", fluid="Fluid"
     var icon: String {
         switch self {
         case .molecule: return "atom"
@@ -864,6 +864,7 @@ public enum ArcTab: String, CaseIterable {
         case .log:      return "list.bullet"
         case .imports:  return "square.and.arrow.down"
         case .render:   return "scope"
+        case .fluid:    return "water.waves"
         }
     }
 }
