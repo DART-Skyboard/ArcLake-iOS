@@ -73,6 +73,61 @@ public struct ArcAlloySpec: Identifiable {
     static let presets: [ArcAlloySpec] = [.steel, .titanium, .aluminum, .inconel, .copper, .carbon]
 }
 
+// MARK: — Combustion flow graph (pre-wired for Combustion_flow.glb)
+public struct ArcCombustionFlow {
+    // Component roles baked from the GLB mesh analysis
+    public static let componentRoles: [String: ComponentRole] = [
+        "Oxidizer":          .tank(fluid: .oxidizer),
+        "OxidizerPressure ": .pressureChamber(tank: "Oxidizer"),
+        "OxidizerChannel":   .channel(from: "Oxidizer",   to: "CombustionChamber"),
+        "Fuel":              .tank(fluid: .fuel),
+        "FuelPressure":      .pressureChamber(tank: "Fuel"),
+        "FuelChannel":       .channel(from: "Fuel",       to: "CombustionChamber"),
+        "CombustionChamber": .combustionChamber,
+    ]
+
+    public enum ComponentRole {
+        case tank(fluid: FluidType)
+        case pressureChamber(tank: String)
+        case channel(from: String, to: String)
+        case combustionChamber
+    }
+
+    public enum FluidType: String {
+        case fuel = "Fuel", oxidizer = "Oxidizer"
+        var defaultColor: SIMD3<Float> {
+            switch self { case .fuel: return [0.2, 0.6, 1.0]; case .oxidizer: return [1.0, 0.4, 0.1] }
+        }
+        var reactionTemp: Float { switch self { case .fuel: return 800; case .oxidizer: return 600 } }
+    }
+
+    // Volumetric capacity: particle count = volume (m³) × density (particles/m³)
+    public static func particleCapacity(boundingBox bb: (SIMD3<Float>, SIMD3<Float>),
+                                        density: Float = 30) -> Int {
+        let size = bb.1 - bb.0
+        let vol = abs(size.x * size.y * size.z)
+        return max(10, Int(vol * density))
+    }
+
+    // Flow velocity from pressure (simplified Bernoulli: v = √(2ΔP/ρ))
+    public static func flowVelocity(pressurePsi: Float, densityKgM3: Float) -> Float {
+        let pressurePa = pressurePsi * 6894.76
+        return sqrt(max(0, 2 * pressurePa / max(1, densityKgM3)))
+    }
+
+    // Chemical reaction heat release (J/kg) for fuel-oxidizer contact
+    // Simplified — real values would come from the molecule's bond energies via LEATR
+    public static func reactionHeat(fuel: FluidType, oxidizer: FluidType,
+                                    fuelMoleculeSymbols: [String],
+                                    oxidizerMoleculeSymbols: [String]) -> Float {
+        // Base heat of combustion (hydrogen: ~120 MJ/kg, methane: ~50 MJ/kg, generic: 20)
+        let baseHeat: Float = fuelMoleculeSymbols.contains("H") ? 40000 :
+                              fuelMoleculeSymbols.contains("C") ? 25000 : 18000
+        let oxFactor: Float = oxidizerMoleculeSymbols.contains("O") ? 1.8 : 1.0
+        return baseHeat * oxFactor
+    }
+}
+
 // MARK: — Component specification (per mesh sub-node)
 public struct ArcComponentSpec: Identifiable {
     public var id = UUID()
@@ -86,6 +141,18 @@ public struct ArcComponentSpec: Identifiable {
     public var currentPressureMPa: Double = 0 // computed
     public var stressLevel: Double = 0        // 0-1 normalized
     public var thermalLoad: Double = 0        // W/m²
+    // Combustion flow
+    public var fillLevel: Double = 0          // 0-1 fraction full
+    public var particleCapacity: Int = 100    // max particles this cavity holds
+    public var pressurePsi: Double = 100      // operating pressure
+    public var isCombustionChamber = false
+    public var fluidType: ArcCombustionFlow.FluidType? = nil
+    public var boundingMin: SIMD3<Float> = .zero
+    public var boundingMax: SIMD3<Float> = .zero
+    public var volumeM3: Double {
+        let s = boundingMax - boundingMin
+        return Double(abs(s.x * s.y * s.z)) / 1000.0  // scene units → m³ (approx)
+    }
 }
 
 // MARK: — Triangle for mesh collision BVH
@@ -328,12 +395,37 @@ public final class ArcFluidEngine: ObservableObject {
             for p in ["glb_import_","imported_"] where nm.hasPrefix(p) {
                 dname = String(nm.dropFirst(p.count)); break
             }
-            // Keep existing spec if already configured
+            // Get world-space bounding box
+            let bb = node.boundingBox
+            let wt = node.worldTransform
+            let bmin = self.transformPoint(SIMD3(bb.min.x,bb.min.y,bb.min.z), by:wt)
+            let bmax = self.transformPoint(SIMD3(bb.max.x,bb.max.y,bb.max.z), by:wt)
+            var spec: ArcComponentSpec
             if let ex = self.componentSpecs.first(where:{$0.nodeName==nm}) {
-                specs.append(ex)
+                spec = ex
             } else {
-                specs.append(ArcComponentSpec(nodeName: nm, displayName: dname, alloy: .steel))
+                // Auto-detect role from Combustion_flow.glb mesh names
+                let role = ArcCombustionFlow.componentRoles[dname]
+                let alloy: ArcAlloySpec
+                switch role {
+                case .combustionChamber: alloy = .inconel   // high-temp chamber
+                case .channel:          alloy = .titanium   // lightweight channel
+                case .pressureChamber:  alloy = .steel      // pressure vessel
+                case .tank:             alloy = .aluminum   // tank walls
+                case nil:               alloy = .steel
+                }
+                spec = ArcComponentSpec(nodeName: nm, displayName: dname, alloy: alloy)
+                // Set isInlet/isOutlet from role
+                if case .pressureChamber = role { spec.isInlet = true; spec.pressurePsi = 150 }
+                if case .combustionChamber = role { spec.isCombustionChamber = true }
+                if case .tank(let fluid) = role { spec.fluidType = fluid }
             }
+            // Always update bounding box
+            spec.boundingMin = bmin; spec.boundingMax = bmax
+            let sz = bmax - bmin
+            let vol = abs(sz.x*sz.y*sz.z)/1000.0
+            spec.particleCapacity = max(5, Int(vol * 30))  // 30 particles/m³ default
+            specs.append(spec)
         }
         componentSpecs = specs
     }
@@ -657,6 +749,9 @@ public final class ArcFluidEngine: ObservableObject {
                 }
             }
 
+            // Chemical combustion reaction in chamber
+            if scenePreset == .stream { applyCombustionReaction() }
+
             // Update thermal colormap on scene meshes
             if scene != nil { updateThermalColormap(sumT: sumT, maxP: maxP) }
 
@@ -760,6 +855,57 @@ public final class ArcFluidEngine: ObservableObject {
                 (Double(nearMaxT) - 293) / max(1, maxAllowedT - 293))
         }
     }
+
+    // MARK: — Chemical combustion reaction
+    // When fuel and oxidizer particles meet in the combustion chamber zone,
+    // they react: temperature spikes, velocity increases (gas expansion), color shifts red-white.
+    private func applyCombustionReaction() {
+        guard let chamberSpec = componentSpecs.first(where: { $0.isCombustionChamber }) else { return }
+        let cmin = chamberSpec.boundingMin / SCALE
+        let cmax = chamberSpec.boundingMax / SCALE
+        let offX = W*SCALE/2, offY = H*SCALE/2-22, offZ = D*SCALE/2
+
+        // Convert chamber bounds to SPH domain coords
+        let domMin = SIMD3<Float>((cmin.x + offX)/SCALE, (cmin.y + offY)/SCALE, (cmin.z + offZ)/SCALE)
+        let domMax = SIMD3<Float>((cmax.x + offX)/SCALE, (cmax.y + offY)/SCALE, (cmax.z + offZ)/SCALE)
+        let reactionHeat = ArcCombustionFlow.reactionHeat(
+            fuel: .fuel, oxidizer: .oxidizer,
+            fuelMoleculeSymbols: currentFuelSymbols,
+            oxidizerMoleculeSymbols: currentOxidizerSymbols)
+
+        var fuelInChamber   = [Int]()
+        var oxInChamber     = [Int]()
+
+        for i in 0..<pts.count {
+            let inChamber = pts[i].x >= domMin.x && pts[i].x <= domMax.x &&
+                            pts[i].y >= domMin.y && pts[i].y <= domMax.y &&
+                            pts[i].z >= domMin.z && pts[i].z <= domMax.z
+            guard inChamber else { continue }
+            if pts[i].r < 0.5 && pts[i].b > 0.7 { fuelInChamber.append(i) }     // blue=fuel
+            else if pts[i].r > 0.7 && pts[i].b < 0.3 { oxInChamber.append(i) }  // red=oxidizer
+        }
+
+        // When both fuel and oxidizer present in chamber → react
+        guard !fuelInChamber.isEmpty && !oxInChamber.isEmpty else { return }
+        let reacting = min(fuelInChamber.count, oxInChamber.count)
+        for k in 0..<reacting {
+            let fi = fuelInChamber[k]; let oi = oxInChamber[k]
+            // Temperature spike
+            let heatPerParticle = reactionHeat / 100
+            pts[fi].tempK += heatPerParticle; pts[oi].tempK += heatPerParticle
+            // Gas expansion: increase downward velocity (exhaust)
+            let exhaustBoost: Float = min(VMAX * 0.4, heatPerParticle * 0.0002)
+            pts[fi].vy -= exhaustBoost; pts[oi].vy -= exhaustBoost
+            // Color shift → combustion orange-white
+            let t = min(1, heatPerParticle / 2000)
+            pts[fi].r = 1; pts[fi].g = 1-t*0.5; pts[fi].b = 0
+            pts[oi].r = 1; pts[oi].g = 0.6-t*0.4; pts[oi].b = 0
+        }
+    }
+
+    // Molecule symbols for the active fuel/oxidizer — set externally
+    public var currentFuelSymbols:     [String] = ["H","H","C"]
+    public var currentOxidizerSymbols: [String] = ["O","O"]
 
     // MARK: — SceneKit point cloud
     private func buildCloudNode(_ scene: SCNScene) {
