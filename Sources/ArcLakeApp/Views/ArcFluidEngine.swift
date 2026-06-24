@@ -142,6 +142,12 @@ public final class ArcFluidEngine: ObservableObject {
     // Component material specs — one per mesh node in scene
     @Published public var componentSpecs: [ArcComponentSpec] = []
 
+    // Inlet/outlet zone centers (set from ArcMeshSelectorView)
+    public var inletZone:  SIMD3<Float>? = nil
+    public var outletZone: SIMD3<Float>? = nil
+    public var inletRadius:  Float = 40
+    public var outletRadius: Float = 40
+
     // Domain — will be set from scene model bounding box
     var W: Float = 400; var H: Float = 300; var D: Float = 300
     let SCALE: Float = 0.8
