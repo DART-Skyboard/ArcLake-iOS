@@ -539,6 +539,7 @@ struct DARTBottomPanel: View {
                 case .log:      DARTLogPanel()
                 case .imports:  ArcImportManagerView()
                 case .render:   ArcRenderPanel()
+                case .fluid:    ArcFluidView()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -561,6 +562,7 @@ struct DARTTabSelector: View {
         (.log,      "Log",     "list.bullet"),
         (.imports,  "Imports", "square.and.arrow.down"),
         (.render,   "Render",  "scope"),
+        (.fluid,    "Fluid",   "water.waves"),
     ]
 
     var body: some View {
