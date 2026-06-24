@@ -535,7 +535,7 @@ struct DARTBottomPanel: View {
                 case .physics:  DARTPhysicsPanel()
                 case .math:     DARTMathPanel()
                 case .arc:      DARTArcPanel()
-                case .env:      DARTEnvPanel()
+                case .env:      ArcTabView()   // Env is now embedded in Arc tab
                 case .log:      DARTLogPanel()
                 case .imports:  ArcImportManagerView()
                 case .render:   ArcRenderPanel()
@@ -558,7 +558,6 @@ struct DARTTabSelector: View {
         (.physics,  "Physics", "waveform.path"),
         (.math,     "Math",    "function"),
         (.arc,      "Arc",     "circle.and.line.horizontal"),
-        (.env,      "Env",     "cloud.fill"),
         (.log,      "Log",     "list.bullet"),
         (.imports,  "Imports", "square.and.arrow.down"),
         (.render,   "Render",  "scope"),
@@ -927,6 +926,7 @@ struct ArcMusicControls: View {
         }
     }
 }
+
 
 
 
