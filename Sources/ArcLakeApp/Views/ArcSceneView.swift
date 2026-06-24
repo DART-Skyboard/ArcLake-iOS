@@ -254,10 +254,35 @@ public struct ArcSceneView: UIViewRepresentable {
             SCNTransaction.commit()
         }
 
-        // ── Single-tap: FOCUS on atom ────────────────────────────
+        // ── Single-tap: FOCUS on atom  (+ CFD component selection) ─────
         @objc func handleTap(_ g: UITapGestureRecognizer) {
             guard let v = scnView else { return }
             let loc = g.location(in: v)
+
+            // ── CFD mode: tap on imported mesh → open component config ───
+            // Only active when ArcFluidEngine is running
+            if ArcFluidEngine.shared.isRunning || !ArcFluidEngine.shared.componentSpecs.isEmpty {
+                let hits = v.hitTest(loc, options: [
+                    SCNHitTestOption.searchMode: SCNHitTestSearchMode.closest.rawValue as NSNumber,
+                    SCNHitTestOption.ignoreHiddenNodes: true as NSNumber,
+                ])
+                for hit in hits {
+                    var node: SCNNode? = hit.node
+                    // Walk up to find the named imported root node
+                    while let n = node {
+                        if let nm = n.name,
+                           (nm.hasPrefix("glb_import_") || nm.hasPrefix("imported_") ||
+                            ArcFluidEngine.shared.componentSpecs.contains(where: { $0.nodeName == nm })) {
+                            // Found a CFD component — notify ViewModel
+                            DispatchQueue.main.async {
+                                self.labVM?.tappedCFDComponent = nm
+                            }
+                            return
+                        }
+                        node = n.parent
+                    }
+                }
+            }
 
             // Method 1: standard hit test (catches nucleus glow sphere + orbital rings)
             let hits = v.hitTest(loc, options: [
@@ -817,5 +842,6 @@ import UniformTypeIdentifiers
 extension SIMD4 where Scalar == Float {
     var xyz: SIMD3<Float> { SIMD3(x,y,z) }
 }
+
 
 
