@@ -60,6 +60,13 @@ public final class ArcLabViewModel: ObservableObject {
     // Engine extension (separate file) needs atom node access
     public func atomNode(for id: Int) -> SCNNode? { atomNodes[id] }
     @Published public var isNodeEditorVisible = false
+
+    // ── Node Editor per-tab persistence ──────────────────────────────
+    // These dicts survive sheet dismissal/reopening because they live on the VM.
+    // NodeEditorView reads/writes these directly instead of @State.
+    @Published public var nodeTabNodes:       [Int: [Any]] = [:]
+    @Published public var nodeTabConnections: [Int: [Any]] = [:]
+    @Published public var nodeTabGroups:      [Int: [Any]] = [:]
     @Published public var isMantisNavVisible = false
     @Published public var showGrid   = true
     // Arc Edge Vector defaults: XZ floor plane only; XY / YZ toggleable on demand
@@ -875,6 +882,7 @@ private extension Array {
         indices.contains(index) ? self[index] : nil
     }
 }
+
 
 
 
