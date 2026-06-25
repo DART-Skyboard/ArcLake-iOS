@@ -924,38 +924,86 @@ public final class ArcFluidEngine: ObservableObject {
     }
 
     // MARK: — Auto-fill Combustion_flow demo
+    // MARK: — Auto-fill named components from any imported GLB
+    // Works for Combustion_flow.glb AND any user-imported model with named meshes.
+    // Role is inferred from display name via ArcCombustionFlow.componentRoles
+    // plus a broader keyword match covering oxidizer/fuel/chamber/nozzle etc.
+    // Returns true if at least one component was filled.
     private func autoFillCombustionDemo(scene: SCNScene, envTempK: Float) -> Bool {
-        // Ensure component specs are scanned before checking
         if componentSpecs.isEmpty { scanComponentSpecs(scene) }
-        let hasCombustion = componentSpecs.contains(where: { $0.displayName == "CombustionChamber" })
-        let hasFuel       = componentSpecs.contains(where: { $0.displayName == "Fuel" })
-        guard hasCombustion && hasFuel else {
-            print("[ArcCFD] autoFill: no Combustion_flow detected (specs: \(componentSpecs.map{$0.displayName}))")
+        // Require at least 2 named components with non-zero bounding boxes
+        let namedSpecs = componentSpecs.filter {
+            let s = $0.boundingMax - $0.boundingMin
+            return abs(s.x*s.y*s.z) > 0.0001
+        }
+        guard namedSpecs.count >= 1 else {
+            print("[ArcCFD] autoFill: no named geometry components found")
             return false
         }
-        print("[ArcCFD] autoFill: Combustion_flow detected — filling cavities in world space")
-        print("[ArcCFD] Combustion_flow demo detected — auto-filling cavities")
-        let lox = ArcPropellant.presets.first(where:{$0.id=="lox"})!
-        let lh2 = ArcPropellant.presets.first(where:{$0.id=="lh2"})!
+
+        let lox      = ArcPropellant.presets.first(where:{$0.id=="lox"})!
+        let lh2      = ArcPropellant.presets.first(where:{$0.id=="lh2"})!
+        let kerosene = ArcPropellant.presets.first(where:{$0.id=="kerosene"})!
+        let methane  = ArcPropellant.presets.first(where:{$0.id=="methane"})!
+        let n2o4     = ArcPropellant.presets.first(where:{$0.id=="n2o4"})!
+        let h2o2     = ArcPropellant.presets.first(where:{$0.id=="h2o2"})!
+        let defaultProp = lox  // fallback for unrecognized but valid components
+
         currentOxidizerSymbols = lox.elements
         currentFuelSymbols     = lh2.elements
-        for spec in componentSpecs {
-            let fillCount: Int; let prop: ArcPropellant; let pressure: Float
-            switch spec.displayName {
-            case "Oxidizer":                        prop=lox; pressure=200; fillCount=min(120,max(20,spec.particleCapacity))
-            case "OxidizerPressure ","OxidizerPressure": prop=lox; pressure=250; fillCount=min(60,max(10,spec.particleCapacity/2))
-            case "OxidizerChannel":                 prop=lox; pressure=180; fillCount=min(40,max(8,spec.particleCapacity/3))
-            case "Fuel":                            prop=lh2; pressure=200; fillCount=min(120,max(20,spec.particleCapacity))
-            case "FuelPressure":                    prop=lh2; pressure=250; fillCount=min(60,max(10,spec.particleCapacity/2))
-            case "FuelChannel":                     prop=lh2; pressure=180; fillCount=min(60,max(12,spec.particleCapacity/3))
-            default: continue
+        var filledCount = 0
+
+        for spec in namedSpecs {
+            let n = spec.displayName.lowercased()
+            let prop: ArcPropellant
+            let pressure: Float
+            let fillCount: Int
+
+            // ── Role → propellant mapping (covers any naming convention) ──
+            if n.contains("lox") || n.contains("oxygen") || n.contains("ox") && n.contains("idizer") {
+                prop = lox;      pressure = 200; fillCount = min(120, max(20, spec.particleCapacity))
+            } else if n.contains("h2") && !n.contains("h2o") || n.contains("hydrogen") || n.contains("lh2") {
+                prop = lh2;      pressure = 200; fillCount = min(120, max(20, spec.particleCapacity))
+            } else if n.contains("kerosene") || n.contains("rp1") || n.contains("rp-1") {
+                prop = kerosene; pressure = 150; fillCount = min(100, max(15, spec.particleCapacity))
+            } else if n.contains("methane") || n.contains("ch4") || n.contains("lng") {
+                prop = methane;  pressure = 200; fillCount = min(100, max(15, spec.particleCapacity))
+            } else if n.contains("n2o4") || n.contains("nto") {
+                prop = n2o4;     pressure = 200; fillCount = min(80,  max(10, spec.particleCapacity))
+            } else if n.contains("h2o2") || n.contains("peroxide") {
+                prop = h2o2;     pressure = 200; fillCount = min(80,  max(10, spec.particleCapacity))
+            } else if n.contains("fuel") {
+                prop = lh2;      pressure = 180; fillCount = min(120, max(20, spec.particleCapacity))
+            } else if n.contains("oxidizer") || n.contains("oxidant") {
+                prop = lox;      pressure = 180; fillCount = min(120, max(20, spec.particleCapacity))
+            } else if n.contains("combustion") || n.contains("chamber") {
+                // Chamber: receives both — use lox as placeholder coloring (combustion reacts both)
+                prop = lox;      pressure = 300; fillCount = min(60,  max(10, spec.particleCapacity/3))
+            } else if n.contains("nozzle") || n.contains("exhaust") || n.contains("throat") {
+                prop = lox;      pressure = 100; fillCount = min(30,  max(5, spec.particleCapacity/4))
+            } else if n.contains("channel") || n.contains("pipe") || n.contains("duct") || n.contains("tube") {
+                prop = n.contains("fuel") ? lh2 : lox
+                pressure = 160; fillCount = min(50, max(8, spec.particleCapacity/3))
+            } else if n.contains("pressure") || n.contains("tank") || n.contains("vessel") {
+                // Infer from adjacent name: e.g. "OxidizerPressure" → lox, "FuelPressure" → lh2
+                let isOx = n.contains("ox") || n.contains("oxygen")
+                prop = isOx ? lox : lh2
+                pressure = 250; fillCount = min(60, max(8, spec.particleCapacity/2))
+            } else {
+                // Generic named component with valid geometry — fill with default
+                prop = defaultProp; pressure = 100
+                fillCount = min(40, max(5, spec.particleCapacity/4))
             }
+
             var s = spec; s.pressurePsi = Double(pressure)
-            fillComponentCavity(spec:s, count:fillCount, propellant:prop, scene:scene,
-                                 gravityScale:gravityScale, envTempK:envTempK)
+            fillComponentCavity(spec:s, count:fillCount, propellant:prop,
+                                 scene:scene, gravityScale:gravityScale, envTempK:envTempK)
+            filledCount += 1
+            print("[ArcCFD] ✓ Filled \(spec.displayName) with \(prop.name) @ \(pressure) psi (\(fillCount) pts)")
         }
         scenePreset = .stream
-        return true
+        print("[ArcCFD] autoFill: \(filledCount) component cavities filled from world-space bounding volumes")
+        return filledCount > 0
     }
 
     // MARK: — Chemical combustion reaction
