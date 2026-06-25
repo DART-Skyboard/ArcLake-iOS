@@ -203,7 +203,6 @@ public final class ArcWindTunnelEngine: ObservableObject {
                   node.name != "arcFluidCloud",
                   node.name != "windTunnelCloud"
             else { return }
-            node.updateWorldMatrix(true, true)
             let wt = node.worldTransform
             for src in geo.sources(for: .vertex) {
                 let posData = src.data
@@ -428,7 +427,7 @@ public final class ArcWindTunnelEngine: ObservableObject {
                 let speed = min(1, simd_length(p.vel) / max(0.001, preset.freestreamMS * 0.018))
                 c = ArcAeroPhysics.thermalColor(1.0 - speed)
             }
-            colArr += [c.x, c.y, c.z, Double(particleOpacity)]
+            colArr += [c.x, c.y, c.z, Float(particleOpacity)]
         }
 
         let posSrc = SCNGeometrySource(
