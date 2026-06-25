@@ -18,6 +18,17 @@ public final class ArcLabViewModel: ObservableObject {
     @Published public var cfdParticles: [SPHEngine.Particle] = []
     @Published public var alloyComponents: [AlloyComponent] = []
 
+    // ── Quantum particle system (matches web app) ──────────────────────
+    @Published public var quantumAtoms: [ArcAtomData] = []
+    @Published public var isPhysicsSimulating: Bool = false
+    @Published public var recordedFrameCount: Int = 0
+    @Published public var scrubberPosition: Int = 0  // 0...recordedFrameCount-1
+    @Published public var ptsPerElectron: Int = 30 {
+        didSet { ArcQuantumAtomBuilder.ptsPerElectron = ptsPerElectron; rebuildAllAtoms() }
+    }
+    private var displayLink: CADisplayLink?
+    private var physEngine = ArcQuantumPhysics.shared
+
     // ── Particle resolution — pts per component (proton/neutron/electron)
     // Default 30, user-adjustable in Physics tab
     @Published public var ptsPerComponent: Int = 30   // range 1…3000 (web parity)
@@ -616,101 +627,91 @@ public final class ArcLabViewModel: ObservableObject {
 
     // MARK: — Point cloud atom builder
     // Each component (proton/neutron/electron) gets ptsPerComponent particles
+    // ── Quantum atom builder — replaces legacy SCNTorus + sphere animation ──
+    // Matches web app: ψ_nlm CDF orbital clouds, no preset animation,
+    // physics driven by element data (Aufbau, Slater Zeff, shell wave propagation)
     private func buildPointCloudAtom(_ element: ArcElement, at position: SIMD3<Float>) {
-        let root = SCNNode()
-        root.name = "atomZ:\(element.id)"
-        root.position = SCNVector3(position.x, position.y, position.z)
-
-        let pts = ptsPerComponent  // e.g. 30 default
-
-        // ── Nucleus ──────────────────────────────────────────────────
-        // neutrons × pts + protons × pts points packed into nucleus sphere
-        let nucleusR = Float(element.neutrons + element.protons) * 0.018 + 0.22
-        let nucleusR_cg = CGFloat(nucleusR)
-
-        // Proton cloud — pts per proton
-        let totalProtonPts = element.protons * pts
-        let protonPts = fibonacciSphere(n: totalProtonPts, radius: nucleusR * 0.75)
-        buildParticleCloud(parent: root, points: protonPts, ptSize: 0.011,
-            diffuse: UIColor(red:1.0, green:0.42, blue:0.08, alpha:1),
-            emissive: UIColor(red:0.4, green:0.15, blue:0.0, alpha:1))
-
-        // Neutron cloud — pts per neutron
-        let totalNeutronPts = element.neutrons * pts
-        let neutronPts = fibonacciSphere(n: totalNeutronPts, radius: nucleusR * 0.85)
-        buildParticleCloud(parent: root, points: neutronPts, ptSize: 0.013,
-            diffuse: UIColor(red:0.55, green:0.55, blue:0.65, alpha:1),
-            emissive: UIColor(red:0.15, green:0.15, blue:0.25, alpha:1))
-
-        // Nucleus glow
-        let glow = SCNSphere(radius: nucleusR_cg)
-        glow.firstMaterial?.diffuse.contents  = UIColor(red:1.0, green:0.5, blue:0.1, alpha:0.07)
-        glow.firstMaterial?.emission.contents = UIColor(red:1.0, green:0.4, blue:0.0, alpha:0.10)
-        glow.firstMaterial?.isDoubleSided = true
-        glow.firstMaterial?.lightingModel = .constant
-        root.addChildNode(SCNNode(geometry: glow))
-
-        // ── Electron shells ───────────────────────────────────────────
-        // electrons × pts points distributed across orbital shells
-        let catColor = element.category.color
-
-        for (shellIdx, electronCount) in element.electronOrbits.enumerated() {
-            let shellR = Float(shellIdx + 1) * 1.15 + nucleusR + 0.25
-            let shellR_cg = CGFloat(shellR)
-
-            // Orbital ring
-            let torus = SCNTorus(ringRadius: shellR_cg, pipeRadius: 0.007)
-            torus.firstMaterial?.diffuse.contents  = catColor.withAlphaComponent(0.20)
-            torus.firstMaterial?.emission.contents = catColor.withAlphaComponent(0.08)
-            torus.firstMaterial?.lightingModel = .constant
-            let torusNode = SCNNode(geometry: torus)
-            // Each shell tilted differently for 3D look
-            torusNode.eulerAngles = SCNVector3(
-                Float.pi/2 + Float(shellIdx) * 0.28,
-                Float(shellIdx) * 0.52,
-                Float(shellIdx) * 0.18)
-            root.addChildNode(torusNode)
-
-            // Electron point cloud — electronCount × pts points on this shell
-            let totalElectronPts = electronCount * pts
-            let ePts = shellSphere(n: totalElectronPts, radius: shellR)
-            buildParticleCloud(parent: torusNode, points: ePts, ptSize: 0.020,
-                diffuse: catColor, emissive: catColor.withAlphaComponent(0.5))
-
-            // Orbital animation — inner shells faster
-            let period = Double(2.2 + Float(shellIdx) * 0.6)
-            torusNode.runAction(SCNAction.repeatForever(
-                SCNAction.rotateBy(x: 0, y: CGFloat.pi*2, z: 0, duration: period)))
+        // Remove existing atom with this Z if present
+        atomNodes[element.id]?.removeFromParentNode()
+        if let idx = quantumAtoms.firstIndex(where: { $0.elementId == element.id }) {
+            quantumAtoms.remove(at: idx)
         }
 
-        // Invisible hit-sphere covering the whole atom — makes tap reliable
-        // even when particle density is low near the edges
-        let totalR = Float(element.electronOrbits.count) * 1.15 + nucleusR + 1.5
-        let hitGeo = SCNSphere(radius: CGFloat(totalR))
-        hitGeo.firstMaterial?.diffuse.contents  = UIColor.clear
-        hitGeo.firstMaterial?.isDoubleSided = true
-        hitGeo.firstMaterial?.lightingModel = .constant
-        hitGeo.firstMaterial?.writesToDepthBuffer = false
-        hitGeo.firstMaterial?.colorBufferWriteMask = []
-        let hitNode = SCNNode(geometry: hitGeo)
-        hitNode.name = "atomZ_hit:\(element.id)"  // also recognizable if needed
-        root.addChildNode(hitNode)
-
-        // Atom label
-        let text = SCNText(string: element.elementSymbol, extrusionDepth: 0.01)
-        text.font = UIFont.systemFont(ofSize: 0.35, weight: .bold)
-        text.firstMaterial?.diffuse.contents  = UIColor.white
-        text.firstMaterial?.emission.contents = UIColor(red:0.3, green:0.8, blue:1.0, alpha:0.4)
-        text.firstMaterial?.lightingModel = .constant
-        let lbl = SCNNode(geometry: text)
-        let (mn, mx) = text.boundingBox
-        lbl.position = SCNVector3(-(mx.x-mn.x)/2, -(nucleusR + 0.7), 0)
-        lbl.scale = SCNVector3(0.75, 0.75, 0.75)
-        root.addChildNode(lbl)
-
-        scene.rootNode.addChildNode(root)
-        atomNodes[element.id] = root
+        ArcQuantumAtomBuilder.ptsPerElectron = ptsPerElectron
+        let atomData = ArcQuantumAtomBuilder.build(element: element, at: position, scene: scene)
+        quantumAtoms.append(atomData)
+        atomNodes[element.id] = atomData.root
     }
+
+    // Rebuild all currently displayed atoms (called on ptsPerElectron change)
+    private func rebuildAllAtoms() {
+        let els = elements  // snapshot
+        clearElements()
+        for el in els { addElement(el) }
+    }
+
+    // MARK: — Physics simulation (matches web app applyNewPhysics)
+    public func startPhysicsSimulation() {
+        guard !isPhysicsSimulating else { return }
+        isPhysicsSimulating = true
+        physEngine.isSimulating = true
+        physEngine.gravity = Float(physics.activeTab.gravity)
+        physEngine.clearRecording()
+        recordedFrameCount = 0
+        // Seed tiny impulse on each atom (matches web: nucleusVelocity seed)
+        for i in quantumAtoms.indices {
+            let imp: Float = 0.00005
+            quantumAtoms[i].velocity = SIMD3<Float>(
+                Float.random(in: -imp...imp),
+                Float.random(in: -imp*0.5...imp*0.5),
+                Float.random(in: -imp...imp))
+            quantumAtoms[i].devWarmup = 0
+            quantumAtoms[i].isActive = true
+        }
+        // CADisplayLink fires at screen refresh rate (~60fps)
+        displayLink = CADisplayLink(target: self, selector: #selector(physicsDisplayLinkTick))
+        displayLink?.add(to: .main, forMode: .common)
+        log("Physics simulation started — quantum orbital mode")
+    }
+
+    public func stopPhysicsSimulation() {
+        isPhysicsSimulating = false
+        physEngine.isSimulating = false
+        displayLink?.invalidate(); displayLink = nil
+        // Reset atoms to original positions
+        resetAtomPositions()
+        log("Physics simulation stopped — \(physEngine.frames.count) frames recorded")
+        recordedFrameCount = physEngine.frames.count
+    }
+
+    @objc private func physicsDisplayLinkTick() {
+        guard isPhysicsSimulating else { return }
+        physEngine.tick(atoms: &quantumAtoms, dt: 0.016)
+        // Capture frame for scrubber
+        physEngine.captureFrame(atoms: quantumAtoms)
+        DispatchQueue.main.async { [weak self] in
+            self?.recordedFrameCount = self?.physEngine.frames.count ?? 0
+        }
+    }
+
+    private func resetAtomPositions() {
+        for i in quantumAtoms.indices {
+            // Re-position using physicsPosition — same as when added
+            let pos = physicsPosition(for: ElementStore.shared.elements.first(where: { $0.id == quantumAtoms[i].elementId }) ?? elements[min(i, elements.count-1)], index: i)
+            quantumAtoms[i].root.position = SCNVector3(pos.x, pos.y, pos.z)
+            quantumAtoms[i].velocity = .zero
+            quantumAtoms[i].devWarmup = 0
+        }
+    }
+
+    // MARK: — Scrubber playback
+    public func scrubToFrame(_ frameIndex: Int) {
+        physEngine.isScrubbing = true
+        scrubberPosition = max(0, min(frameIndex, physEngine.frames.count - 1))
+        physEngine.applyFrame(scrubberPosition, atoms: &quantumAtoms)
+    }
+
+    public func endScrubbing() { physEngine.isScrubbing = false }
 
     // Create a node of tiny spheres at given positions
     private func buildParticleCloud(parent: SCNNode, points: [SIMD3<Float>],
