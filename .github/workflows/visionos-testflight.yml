@@ -1,0 +1,111 @@
+name: Build & Deploy ArcLake visionOS to TestFlight
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-visionos:
+    name: Build ArcLake visionOS to TestFlight
+    runs-on: macos-15
+    timeout-minutes: 75
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Select Xcode 26.3
+        run: |
+          sudo xcode-select -switch /Applications/Xcode_26.3.app
+          xcodebuild -version
+
+      - name: Install App Store Connect API key
+        env:
+          ASC_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY_CONTENT }}
+        run: |
+          mkdir -p ~/.appstoreconnect/private_keys
+          echo "$ASC_KEY" > ~/.appstoreconnect/private_keys/AuthKey_NQXQ595W59.p8
+          chmod 600 ~/.appstoreconnect/private_keys/AuthKey_NQXQ595W59.p8
+
+      - name: Setup keychain + cert + visionOS provisioning profile
+        env:
+          CERTIFICATE_BASE64:      ${{ secrets.CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD:    ${{ secrets.CERTIFICATE_PASSWORD }}
+          VISION_PROFILE_BASE64:   ${{ secrets.VISION_PROFILE_BASE64 }}
+          KEYCHAIN_PASSWORD:       ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/signing.keychain-db"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          P12_PATH="$RUNNER_TEMP/dist.p12"
+          echo "$CERTIFICATE_BASE64" | base64 --decode > "$P12_PATH"
+          security import "$P12_PATH" -k "$KEYCHAIN_PATH" \
+            -P "$CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security -f pkcs12
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          PP_PATH="$RUNNER_TEMP/arclake_vision.mobileprovision"
+          echo "$VISION_PROFILE_BASE64" | base64 --decode > "$PP_PATH"
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          PP_UUID=$(security cms -D -i "$PP_PATH" 2>/dev/null | \
+            plutil -extract UUID raw - 2>/dev/null || echo "")
+          if [ -n "$PP_UUID" ]; then
+            cp "$PP_PATH" ~/Library/MobileDevice/Provisioning\ Profiles/"$PP_UUID.mobileprovision"
+            echo "VISION_PROFILE_UUID=$PP_UUID" >> $GITHUB_ENV
+          fi
+          echo "visionOS profile UUID: $PP_UUID"
+
+      - name: Install xcodegen 2.42.0
+        run: |
+          brew install xcodegen 2>/dev/null || brew upgrade xcodegen 2>/dev/null || true
+          xcodegen version
+
+      - name: Generate Xcode project (multi-platform)
+        run: xcodegen generate --spec project.yml
+
+      - name: Resolve Swift packages
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -project ArcLake.xcodeproj -scheme ArcLakeVision
+
+      - name: Archive visionOS
+        run: |
+          xcodebuild archive \
+            -project ArcLake.xcodeproj \
+            -scheme ArcLakeVision \
+            -configuration Release \
+            -destination "generic/platform=visionOS" \
+            -archivePath "$RUNNER_TEMP/ArcLakeVision.xcarchive" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            PROVISIONING_PROFILE_SPECIFIER="ArcLakeVisionFlow" \
+            DEVELOPMENT_TEAM=L7AHWS9Q6V \
+            OTHER_CODE_SIGN_FLAGS="--keychain $RUNNER_TEMP/signing.keychain-db"
+          ls -la "$RUNNER_TEMP/ArcLakeVision.xcarchive"
+
+      - name: Package visionOS IPA
+        run: |
+          APP=$(find "$RUNNER_TEMP/ArcLakeVision.xcarchive/Products/Applications" -name "*.app" | head -1)
+          echo "Packaging: $APP"
+          mkdir -p "$RUNNER_TEMP/VisionPayload"
+          cp -r "$APP" "$RUNNER_TEMP/VisionPayload/"
+          cd "$RUNNER_TEMP"
+          zip -qr "ArcLakeVision.ipa" VisionPayload/
+          ls -la "$RUNNER_TEMP/ArcLakeVision.ipa"
+
+      - name: Upload visionOS to App Store Connect
+        run: |
+          RESULT=$(xcrun altool --upload-app \
+            --type visionos \
+            --file "$RUNNER_TEMP/ArcLakeVision.ipa" \
+            --apiKey "NQXQ595W59" \
+            --apiIssuer "90056871-d791-45f6-a770-21399c45e491" \
+            --apiKeyPath ~/.appstoreconnect/private_keys/AuthKey_NQXQ595W59.p8 2>&1)
+          echo "$RESULT"
+          if echo "$RESULT" | grep -iE "UPLOAD FAILED|State_Error|Validation failed|^.*ERROR:" | grep -v "No errors"; then
+            echo "Upload failed — see above"; exit 1
+          fi
+          echo "✓ Arc Lake visionOS build 263 uploaded to App Store Connect"
