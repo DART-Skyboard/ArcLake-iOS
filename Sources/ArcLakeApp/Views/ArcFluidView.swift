@@ -107,22 +107,27 @@ struct ArcFluidView: View {
                 }
             }
 
-            // Scene preset
-            card("SCENE PRESET") {
-                ScrollView(.horizontal, showsIndicators:false) {
-                    HStack(spacing:4) {
-                        ForEach(ArcFluidScene.allCases) { s in
-                            Button { eng.setScene(s) } label: {
-                                Text(s.rawValue.uppercased())
-                                    .font(.system(size:8,weight:.bold,design:.monospaced))
-                                    .foregroundColor(eng.scenePreset==s ? .black : .white.opacity(0.6))
-                                    .padding(.horizontal,10).padding(.vertical,5)
-                                    .background(eng.scenePreset==s ? themeVM.accent : Color.white.opacity(0.07))
-                                    .clipShape(Capsule())
+            // Particle visual mode
+            card("PARTICLE VISUAL") {
+                HStack(spacing:4) {
+                    ForEach(ArcParticleVisual.allCases) { v in
+                        Button { eng.particleVisual = v } label: {
+                            VStack(spacing:2) {
+                                Image(systemName:v.icon).font(.system(size:12))
+                                Text(v.rawValue).font(.system(size:7,weight:.bold,design:.monospaced))
                             }
+                            .foregroundColor(eng.particleVisual==v ? .black : .white.opacity(0.6))
+                            .frame(maxWidth:.infinity).padding(.vertical,7)
+                            .background(eng.particleVisual==v ? themeVM.accent : Color.white.opacity(0.05))
+                            .clipShape(RoundedRectangle(cornerRadius:8))
                         }
                     }
                 }
+                // Arc Grid Vector context note
+                Text("Particles spawn within Arc Grid Vector cavity volumes — pressure-driven per component spec")
+                    .font(.system(size:7,design:.monospaced))
+                    .foregroundColor(.white.opacity(0.3))
+                    .multilineTextAlignment(.center)
             }
 
             // Simulation parameters
@@ -165,16 +170,24 @@ struct ArcFluidView: View {
             } else {
                 Button { launchCFD() } label: {
                     HStack(spacing:8) {
-                        Image(systemName:"water.waves").font(.system(size:14))
-                        Text("LAUNCH CFD SIMULATION")
+                        Image(systemName:"flame.fill").font(.system(size:14))
+                        Text("IGNITE — FILL & SIMULATE")
                             .font(.system(size:11,weight:.bold,design:.monospaced)).tracking(1)
                     }
                     .foregroundColor(.black).frame(maxWidth:.infinity).padding(.vertical,14)
                     .background(themeVM.accent).clipShape(RoundedRectangle(cornerRadius:12))
                 }
-                Text("\(eng.particleCount) particles · \(eng.mode.rawValue) · mesh collision + thermal colormap")
-                    .font(.system(size:8,design:.monospaced)).foregroundColor(.white.opacity(0.35))
-                    .multilineTextAlignment(.center)
+                VStack(spacing:3) {
+                    if !ArcFluidEngine.shared.componentSpecs.isEmpty {
+                        Text("Auto-fills named cavities (LOX + LH₂ at 200 psi)")
+                            .font(.system(size:8,design:.monospaced)).foregroundColor(.green.opacity(0.7))
+                    } else {
+                        Text("\(eng.particleCount) particles · \(eng.mode.rawValue)")
+                            .font(.system(size:8,design:.monospaced)).foregroundColor(.white.opacity(0.35))
+                    }
+                    Text("Tap any component in the 3D scene to select + configure it")
+                        .font(.system(size:7,design:.monospaced)).foregroundColor(.white.opacity(0.28))
+                }.multilineTextAlignment(.center)
             }
 
             // Credits
@@ -471,3 +484,4 @@ extension ArcFluidEngine {
         scanComponentSpecs(scene)
     }
 }
+
