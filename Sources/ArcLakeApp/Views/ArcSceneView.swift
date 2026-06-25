@@ -169,7 +169,39 @@ public struct ArcSceneView: UIViewRepresentable {
         // Gesture start snapshot for pinch dolly
         private var r0: Float = 0
 
-        init(labVM: ArcLabViewModel) { self.labVM = labVM }
+        init(labVM: ArcLabViewModel) {
+            self.labVM = labVM
+            // Wire camera manager callbacks
+            ArcCameraManager.shared.getCameraState = { [weak self] in
+                guard let self else { return ArcCameraState(
+                    camQ: Coordinator.defaultQ, radius:20, pivot:.zero, fov:60, isOrtho:false) }
+                return ArcCameraState(
+                    camQ:   self.camQ,
+                    radius: self.radius,
+                    pivot:  self.pivot,
+                    fov:    self.camNode?.camera?.fieldOfView ?? 60,
+                    isOrtho: self.camNode?.camera?.usesOrthographicProjection ?? false)
+            }
+            ArcCameraManager.shared.setCameraState = { [weak self] state, animated in
+                guard let self else { return }
+                if animated {
+                    SCNTransaction.begin()
+                    SCNTransaction.animationDuration = 0.5
+                    SCNTransaction.animationTimingFunction = CAMediaTimingFunction(name:.easeInEaseOut)
+                }
+                self.camQ   = simd_normalize(state.camQ)
+                self.radius = state.radius
+                self.pivot  = state.pivot
+                self.commit()
+                if let cam = self.camNode?.camera {
+                    cam.fieldOfView = state.fov
+                    cam.usesOrthographicProjection = state.isOrtho
+                    if state.isOrtho { cam.orthographicScale = Double(state.radius) * 0.5 }
+                }
+                if animated { SCNTransaction.commit() }
+            }
+            ArcCameraManager.shared.load()
+        }
 
         // ── 1-finger: ORBIT ──────────────────────────────────────
         // Tumbles camera around pivot — standard 3D viewport feel
@@ -854,6 +886,7 @@ import UniformTypeIdentifiers
 extension SIMD4 where Scalar == Float {
     var xyz: SIMD3<Float> { SIMD3(x,y,z) }
 }
+
 
 
 
