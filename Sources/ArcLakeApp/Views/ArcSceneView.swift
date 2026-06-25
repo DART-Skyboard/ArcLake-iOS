@@ -179,7 +179,7 @@ public struct ArcSceneView: UIViewRepresentable {
                     camQ:   self.camQ,
                     radius: self.radius,
                     pivot:  self.pivot,
-                    fov:    self.camNode?.camera?.fieldOfView ?? 60,
+                    fov:    Double(self.camNode?.camera?.fieldOfView ?? 60),
                     isOrtho: self.camNode?.camera?.usesOrthographicProjection ?? false)
             }
             ArcCameraManager.shared.setCameraState = { [weak self] state, animated in
