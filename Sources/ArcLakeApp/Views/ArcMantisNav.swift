@@ -493,7 +493,10 @@ public final class MantisNavModel: ObservableObject {
         } else {
             thrustFwd = droneLocalFwd
         }
-        let tv = SIMD3<Double>(Double(thrustFwd.x), 0, Double(thrustFwd.z)) * (activeJoyY_tick * thrustPower)
+        let _joyYscalar = activeJoyY_tick * thrustPower
+        let tv = SIMD3<Double>(Double(thrustFwd.x) * _joyYscalar,
+                               0,
+                               Double(thrustFwd.z) * _joyYscalar)
         velocity += tv
         velocity *= drag
 
