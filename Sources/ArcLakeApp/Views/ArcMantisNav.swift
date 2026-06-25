@@ -33,6 +33,10 @@ public final class MantisNavModel: ObservableObject {
     @Published public var joyX: Double = 0           // −1…1
     @Published public var joyY: Double = 0
     @Published public var thrust: Double = 0         // 0…1
+    // Chemistry thumbstick — independent from drone joyX/joyY
+    // Controls propulsion direction/vector while throttles set flow %
+    @Published public var chemJoyX: Double = 0     // -1…1 lateral vector
+    @Published public var chemJoyY: Double = 0     // -1…1 forward/thrust vector
     // Chemistry — MULTIPLE propellant sets (oxidizer+fuel+chamber each),
     // all contributing to the launch force, each assignable to a 3D asset
     public struct PropSet: Identifiable {
@@ -461,8 +465,10 @@ public final class MantisNavModel: ObservableObject {
         if tickCount % 6 == 0 { hudLift = lift }
         velocity.y += lift
 
-        // yaw: q = qY(−joy.x · yawSpeed) · q
-        let qYaw = simd_quatf(angle: Float(-joyX * yawSpeed), axis: SIMD3<Float>(0, 1, 0))
+        // yaw: chemistry mode uses chemJoyX; drone uses joyX
+        let activeJoyX = chemistryMode ? chemJoyX : joyX
+        let activeJoyY_tick = chemistryMode ? chemJoyY : joyY
+        let qYaw = simd_quatf(angle: Float(-activeJoyX * yawSpeed), axis: SIMD3<Float>(0, 1, 0))
         drone.simdOrientation = simd_normalize(qYaw * drone.simdOrientation)
 
         // ── Thrust direction ─────────────────────────────────────────
@@ -487,7 +493,7 @@ public final class MantisNavModel: ObservableObject {
         } else {
             thrustFwd = droneLocalFwd
         }
-        let tv = SIMD3<Double>(Double(thrustFwd.x), 0, Double(thrustFwd.z)) * (joyY * thrustPower)
+        let tv = SIMD3<Double>(Double(thrustFwd.x), 0, Double(thrustFwd.z)) * (activeJoyY_tick * thrustPower)
         velocity += tv
         velocity *= drag
 
@@ -564,8 +570,14 @@ struct MantisHUDOverlay: View {
         VStack(spacing: 8) {
             // Mode toggle — settings retained on switch
             HStack(spacing: 6) {
-                modePill("DRONE", active: !model.chemistryMode) { model.chemistryMode = false }
-                modePill("CHEMISTRY", active: model.chemistryMode) { model.chemistryMode = true }
+                modePill("DRONE", active: !model.chemistryMode) {
+                    model.chemistryMode = false
+                    model.chemJoyX = 0; model.chemJoyY = 0   // reset chem vector
+                }
+                modePill("CHEMISTRY", active: model.chemistryMode) {
+                    model.chemistryMode = true
+                    model.joyX = 0; model.joyY = 0           // reset drone stick
+                }
                 Spacer()
                 Text(String(format: "H:%.2f V:%.2f", model.hudVelH, model.hudVelV))
                     .font(.system(size: 9, design: .monospaced))
@@ -621,6 +633,8 @@ struct MantisHUDOverlay: View {
             }
 
             if model.chemistryMode {
+                // Chemistry propellant throttles + dedicated thumbstick for
+                // propulsion vector control (independent of drone joyX/joyY)
                 HStack(alignment: .bottom, spacing: 18) {
                     chemThrottle("OXIDIZER", value: $model.oxiFlow, color: .cyan)
                     VStack(spacing: 6) {
@@ -649,6 +663,47 @@ struct MantisHUDOverlay: View {
                         }
                     }
                     chemThrottle("FUEL", value: $model.fuelFlow, color: .orange)
+                }
+                // ── Chemistry Thumbstick ─────────────────────────────────
+                // Same MantisThumbStick component as drone mode, but bound
+                // to chemJoyX/chemJoyY — controls propulsion vector direction
+                // while oxidizer/fuel throttles control propellant flow rate.
+                HStack(alignment: .center, spacing: 16) {
+                    MantisThumbStick(
+                        joyX: $model.chemJoyX,
+                        joyY: $model.chemJoyY,
+                        accent: Color.cyan)
+                    VStack(alignment: .leading, spacing: 4) {
+                        // Vector readout
+                        HStack(spacing: 6) {
+                            Label("X", systemImage: "arrow.left.and.right")
+                                .font(.system(size: 7, design: .monospaced))
+                                .foregroundColor(Color.cyan.opacity(0.6))
+                            Text(String(format: "%.2f", model.chemJoyX))
+                                .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                                .foregroundColor(.cyan)
+                        }
+                        HStack(spacing: 6) {
+                            Label("Y", systemImage: "arrow.up.and.down")
+                                .font(.system(size: 7, design: .monospaced))
+                                .foregroundColor(Color.cyan.opacity(0.6))
+                            Text(String(format: "%.2f", model.chemJoyY))
+                                .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                                .foregroundColor(.cyan)
+                        }
+                        Text("CHEM VECTOR")
+                            .font(.system(size: 7, weight: .bold, design: .monospaced))
+                            .foregroundColor(.cyan.opacity(0.5))
+                            .tracking(1.5)
+                        // Combined propulsion magnitude
+                        let mag = sqrt(model.chemJoyX*model.chemJoyX + model.chemJoyY*model.chemJoyY)
+                        let oxFrac = model.oxiFlow / 100.0
+                        let fuFrac = model.fuelFlow / 100.0
+                        let thrust = mag * (oxFrac + fuFrac) / 2.0
+                        Text(String(format: "Σ %.1f%%", thrust * 100))
+                            .font(.system(size: 9, weight: .bold, design: .monospaced))
+                            .foregroundColor(themeVM.accent)
+                    }
                 }
             } else {
                 HStack(alignment: .bottom, spacing: 26) {
