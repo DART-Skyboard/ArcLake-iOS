@@ -627,6 +627,12 @@ struct DARTEnvPanel: View {
                         }
                     }
                 }
+
+                // ── Wind Tunnel Aerodynamic CFD ──────────────────────────
+                ArcWindTunnelPanel()
+                    .environmentObject(labVM)
+                    .environmentObject(themeVM)
+
             }
             .padding(10)
         }
