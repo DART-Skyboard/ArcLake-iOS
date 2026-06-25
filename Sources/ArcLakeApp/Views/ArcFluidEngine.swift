@@ -826,9 +826,9 @@ public final class ArcFluidEngine: ObservableObject {
             var nearMaxT: Float = self.envTempK; var nearMaxP: Float = 0
             let searchR: Float = self.smoothingH * 4
             for p in self.pts {
-                let dx = p.x - wpos.x
-                let dy = p.y - wpos.y
-                let dz = p.z - wpos.z
+                let dx = p.x - worldPos.x
+                let dy = p.y - worldPos.y
+                let dz = p.z - worldPos.z
                 if dx*dx+dy*dy+dz*dz < searchR*searchR {
                     nearMaxT = max(nearMaxT, p.tempK)
                     nearMaxP = max(nearMaxP, p.pressure)
