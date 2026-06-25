@@ -618,6 +618,13 @@ extension ArcLabViewModel {
         }
 
         rebuildArcMeasures()   // dynamic update during simulation play
+
+        // ── Sync quantum orbital clouds to atom node positions ───────────
+        // Quantum cloud follows atom position — no separate position tracking needed
+        for atomD in quantumAtoms {
+            let nodePos = atomNode(for: atomD.elementId)?.simdPosition ?? .zero
+            atomD.root.simdPosition = nodePos
+        }
     }
 
     // ── MANTIS NAVIGATION TAB — always-on while its tab lives ────────
