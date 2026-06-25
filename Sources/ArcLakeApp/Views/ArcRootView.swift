@@ -125,6 +125,14 @@ public struct DARTRootView: View {
         .overlay(alignment: .bottomTrailing) {
             AutumnOverlay()
         }
+        // Camera gimbal — upper right of 3D viewport
+        .overlay(alignment: .topTrailing) {
+            ArcGimbalOverlay()
+                .environmentObject(labVM)
+                .environmentObject(themeVM)
+                .padding(.top, sidebarVisible ? 0 : 4)
+                .padding(.trailing, 4)
+        }
         .fullScreenCover(isPresented: $showAR) {
             ZStack(alignment: .topTrailing) {
                 ArcARView()
@@ -949,3 +957,4 @@ struct IdentifiedString: Identifiable {
     let value: String
     var id: String { value }
 }
+
