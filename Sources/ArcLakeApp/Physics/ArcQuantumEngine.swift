@@ -313,17 +313,26 @@ public final class ArcQuantumAtomBuilder {
             let tCDF = tCDFCache[tKey]!
 
             let shellCenterR = shellBase + Float(orb.shellIdx) * shellStep
-            let a0Expect = ArcQuantumMath.a0 * Float(orb.n * orb.n) / max(1, orb.Zeff)
-            let scale = shellCenterR / max(0.1, a0Expect)
-            let norm  = 1.0 / (shellCenterR * 2.0)
+            // ── Corrected orbital scale ──────────────────────────────────
+            // Raw CDF samples are in Bohr radii (Å units).
+            // We normalize so the 95th-percentile radius (≈5n²a0) maps to
+            // shellCenterR scene units — keeps all elements visually contained
+            // regardless of Z or n. Matches web app visual density.
+            let rMax_95 = 5.0 * Float(orb.n * orb.n) * ArcQuantumMath.a0
+            let scale = shellCenterR / max(0.01, rMax_95)
             let sc = _ArcShellColors[orb.shellIdx % _ArcShellColors.count]
 
             for _ in 0..<PTS {
                 let raw = ArcQuantumMath.sampleOrb(n: orb.n, l: orb.l, m: orb.m,
                     Zeff: orb.Zeff, rCDF: rCDF, rMax: rMax, tCDF: tCDF)
-                let p = raw * scale
+                // Clamp to shellCenterR × 1.6 so no particle escapes the shell sphere
+                let rawLen = simd_length(raw)
+                let clampedLen = min(rawLen, shellCenterR * 1.6 / max(0.001, scale))
+                let rawClamped = rawLen > 0.001 ? raw * (clampedLen / rawLen) : raw
+                let p = rawClamped * scale
                 ePositions.append(p)
-                let v = min(1.0, simd_length(raw) * norm)
+                // Color: radial position within shell (0=inner, 1=outer edge)
+                let v = min(1.0, simd_length(p) / max(0.01, shellCenterR))
                 let heat = min(1.0, v * 1.4)
                 eColors.append(SIMD3<Float>(
                     min(1, sc.0 + heat * 0.3),
