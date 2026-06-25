@@ -125,13 +125,12 @@ public struct DARTRootView: View {
         .overlay(alignment: .bottomTrailing) {
             AutumnOverlay()
         }
-        // Camera gimbal — upper right of 3D viewport
+        // Camera gimbal — upper right of 3D viewport, below the sidebar tab bar
         .overlay(alignment: .topTrailing) {
             ArcGimbalOverlay()
-                .environmentObject(labVM)
                 .environmentObject(themeVM)
-                .padding(.top, 56)   // below the tab bar
-                .padding(.trailing, 4)
+                .padding(.top, 50)
+                .padding(.trailing, 8)
         }
         .fullScreenCover(isPresented: $showAR) {
             ZStack(alignment: .topTrailing) {
