@@ -899,7 +899,7 @@ public final class ArcFluidEngine: ObservableObject {
             if nm == self.selectedComponentName {
                 // Selected: bright emission glow (neon cyan/green outline effect)
                 mat.emission.contents = UIColor(red:0, green:1, blue:0.85, alpha:1)
-                mat.selfIlluminationMap.intensity = 1.0
+                mat.emission.intensity = 1.0
                 // Slightly lighten the diffuse
                 if let base = mat.diffuse.contents as? UIColor {
                     var r:CGFloat=0,g:CGFloat=0,b:CGFloat=0,a:CGFloat=1
