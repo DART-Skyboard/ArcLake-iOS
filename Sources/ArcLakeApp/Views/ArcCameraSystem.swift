@@ -156,6 +156,40 @@ public final class ArcCameraManager: ObservableObject {
         }
     }
 
+    // MARK: — Reset to default view (not any saved camera)
+    public func resetToDefault() {
+        // Coordinator.defaultQ is the initial view angle — replicate it here
+        let defQ = simd_normalize(
+            simd_quatf(angle:  0.52, axis: SIMD3<Float>(0,1,0)) *
+            simd_quatf(angle: -0.38, axis: SIMD3<Float>(1,0,0)))
+        let state = ArcCameraState(camQ: defQ, radius: 20, pivot: .zero,
+                                    fov: 60, isOrtho: false)
+        isOrtho = false; fov = 60
+        setCameraState?(state, true)
+    }
+
+    // MARK: — Cube drag (real-time orbit via gimbal drag)
+    private var cubeDragQ0: simd_quatf = simd_quatf(ix:0,iy:0,iz:0,r:1)
+
+    public func beginCubeDrag() {
+        if let state = getCameraState?() { cubeDragQ0 = state.camQ }
+    }
+
+    public func dragCube(dx: Float, dy: Float) {
+        guard let current = getCameraState?() else { return }
+        let spd: Float = 0.006
+        let right = current.camQ.act(SIMD3<Float>(1,0,0))
+        let qYaw   = simd_quatf(angle: -dx * spd, axis: SIMD3<Float>(0,1,0))
+        let qPitch = simd_quatf(angle: -dy * spd, axis: right)
+        let newQ   = simd_normalize(qYaw * qPitch * current.camQ)
+        let state  = ArcCameraState(camQ: newQ, radius: current.radius,
+                                     pivot: current.pivot, fov: current.fov,
+                                     isOrtho: current.isOrtho)
+        setCameraState?(state, false)  // no animation during drag
+    }
+
+    public func endCubeDrag() {}
+
     // MARK: — Snap to standard view
     public func snapToView(_ preset: GimbalPreset) {
         guard let current = getCameraState?() else { return }
