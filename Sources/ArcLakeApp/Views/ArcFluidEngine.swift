@@ -164,9 +164,15 @@ public struct ArcComponentSpec: Identifiable {
     public var fluidType: ArcCombustionFlow.FluidType? = nil
     public var boundingMin: SIMD3<Float> = .zero
     public var boundingMax: SIMD3<Float> = .zero
+    // Volume in scene units³ (not converted — scene unit scale depends on model)
+    public var volumeSceneUnits: Double {
+        let s = boundingMax - boundingMin
+        return Double(abs(s.x * s.y * s.z))
+    }
+    // Approximate m³ — assumes 1 scene unit ≈ 1 meter (adjust if model is in cm)
     public var volumeM3: Double {
         let s = boundingMax - boundingMin
-        return Double(abs(s.x * s.y * s.z)) / 1000.0  // scene units → m³ (approx)
+        return Double(abs(s.x * s.y * s.z))  // 1:1 scene unit = 1m
     }
 }
 
@@ -217,7 +223,7 @@ public final class ArcFluidEngine: ObservableObject {
     @Published public var particleVisual = ArcParticleVisual.points
     @Published public var particleCount = 500
     @Published public var gravityScale: Float = 1.0
-    @Published public var smoothingH:   Float = 30.0
+    @Published public var smoothingH:   Float = 1.5   // scene-unit SPH radius
     @Published public var envTempK:     Float = 293    // from scene environment physics
     @Published public var envPressurePa: Float = 101325
     @Published public var measure     = ArcFluidMeasure()
@@ -368,9 +374,9 @@ public final class ArcFluidEngine: ObservableObject {
                     let i0=indices[i], i1=indices[i+1], i2=indices[i+2]; i+=3
                     guard i0 < verts.count, i1 < verts.count, i2 < verts.count else { continue }
                     // Transform to world space
-                    let v0 = self.transformPoint(verts[i0], by: worldTx) * self.SCALE
-                    let v1 = self.transformPoint(verts[i1], by: worldTx) * self.SCALE
-                    let v2 = self.transformPoint(verts[i2], by: worldTx) * self.SCALE
+                    let v0 = self.transformPoint(verts[i0], by: worldTx)
+                    let v1 = self.transformPoint(verts[i1], by: worldTx)
+                    let v2 = self.transformPoint(verts[i2], by: worldTx)
                     let e1 = v1-v0, e2 = v2-v0
                     var n = simd_cross(e1, e2)
                     let nlen = simd_length(n)
@@ -401,11 +407,11 @@ public final class ArcFluidEngine: ObservableObject {
             mn = simd_min(mn, lo); mx = simd_max(mx, hi)
         }
         if mx.x > mn.x {
-            let sz = (mx - mn) / SCALE
-            let pad: Float = 1.2
-            W = max(200, sz.x * pad * 2)
-            H = max(200, sz.y * pad * 2)
-            D = max(200, sz.z * pad * 2)
+            // W/H/D used only as soft boundary extent — match model scale
+            let pad: Float = 3.0
+            W = max(30, (mx.x - mn.x) * pad)
+            H = max(30, (mx.y - mn.y) * pad)
+            D = max(30, (mx.z - mn.z) * pad)
         }
     }
 
@@ -604,7 +610,7 @@ public final class ArcFluidEngine: ObservableObject {
         guard !meshTriangles.isEmpty else { return }
         let pos = SIMD3<Float>(pts[i].x, pts[i].y, pts[i].z)
         let vel = SIMD3<Float>(pts[i].vx, pts[i].vy, pts[i].vz)
-        let h = smoothingH * 0.4   // collision radius
+        let h = smoothingH * 0.5   // collision radius in world scene units
 
         // Find nearby triangles using centroid proximity
         for (ti, ctr) in meshBVH.enumerated() {
@@ -738,12 +744,15 @@ public final class ArcFluidEngine: ObservableObject {
                 pts[i].x+=pts[i].vx*dt; pts[i].y+=pts[i].vy*dt; pts[i].z+=pts[i].vz*dt
 
                 // AABB bounds
-                if pts[i].x<0{pts[i].x=0;pts[i].vx=abs(pts[i].vx)*damp}
-                if pts[i].x>W{pts[i].x=W;pts[i].vx = -abs(pts[i].vx)*damp}
-                if pts[i].y<0{pts[i].y=0;pts[i].vy=abs(pts[i].vy)*damp}
-                if pts[i].y>H{pts[i].y=H;pts[i].vy = -abs(pts[i].vy)*damp}
-                if pts[i].z<0{pts[i].z=0;pts[i].vz=abs(pts[i].vz)*damp}
-                if pts[i].z>D{pts[i].z=D;pts[i].vz = -abs(pts[i].vz)*damp}
+                // World-space soft boundary — large box around scene model
+                // Particles that escape beyond the scene model extent fade out
+                let bnd: Float = max(W, H, D) * 2.0  // large enough to not constrain
+                if pts[i].x < -bnd { pts[i].x = -bnd; pts[i].vx = abs(pts[i].vx)*damp }
+                if pts[i].x >  bnd { pts[i].x =  bnd; pts[i].vx = -abs(pts[i].vx)*damp }
+                if pts[i].y < -bnd { pts[i].y = -bnd; pts[i].vy = abs(pts[i].vy)*damp }
+                if pts[i].y >  bnd { pts[i].y =  bnd; pts[i].vy = -abs(pts[i].vy)*damp }
+                if pts[i].z < -bnd { pts[i].z = -bnd; pts[i].vz = abs(pts[i].vz)*damp }
+                if pts[i].z >  bnd { pts[i].z =  bnd; pts[i].vz = -abs(pts[i].vz)*damp }
 
                 // Mesh collision
                 resolveTriangleCollision(i)
@@ -817,9 +826,9 @@ public final class ArcFluidEngine: ObservableObject {
             var nearMaxT: Float = self.envTempK; var nearMaxP: Float = 0
             let searchR: Float = self.smoothingH * 4
             for p in self.pts {
-                let dx = p.x*self.SCALE - worldPos.x
-                let dy = p.y*self.SCALE - worldPos.y
-                let dz = p.z*self.SCALE - worldPos.z
+                let dx = p.x - wpos.x
+                let dy = p.y - wpos.y
+                let dz = p.z - wpos.z
                 if dx*dx+dy*dy+dz*dz < searchR*searchR {
                     nearMaxT = max(nearMaxT, p.tempK)
                     nearMaxP = max(nearMaxP, p.pressure)
@@ -868,9 +877,9 @@ public final class ArcFluidEngine: ObservableObject {
                                                        recursively: true) else { continue }
             let wpos = node.worldPosition
             var nearMaxT: Float = envTempK; var nearMaxP: Float = 0; var hitCount = 0
-            let r = smoothingH * 3
+            let r = smoothingH * 6
             for p in pts {
-                let dx=p.x*SCALE-wpos.x, dy=p.y*SCALE-wpos.y, dz=p.z*SCALE-wpos.z
+                let dx=p.x-wpos.x, dy=p.y-wpos.y, dz=p.z-wpos.z
                 if dx*dx+dy*dy+dz*dz < r*r {
                     nearMaxT = max(nearMaxT, p.tempK)
                     nearMaxP = max(nearMaxP, p.pressure)
@@ -916,9 +925,15 @@ public final class ArcFluidEngine: ObservableObject {
 
     // MARK: — Auto-fill Combustion_flow demo
     private func autoFillCombustionDemo(scene: SCNScene, envTempK: Float) -> Bool {
+        // Ensure component specs are scanned before checking
+        if componentSpecs.isEmpty { scanComponentSpecs(scene) }
         let hasCombustion = componentSpecs.contains(where: { $0.displayName == "CombustionChamber" })
         let hasFuel       = componentSpecs.contains(where: { $0.displayName == "Fuel" })
-        guard hasCombustion && hasFuel else { return false }
+        guard hasCombustion && hasFuel else {
+            print("[ArcCFD] autoFill: no Combustion_flow detected (specs: \(componentSpecs.map{$0.displayName}))")
+            return false
+        }
+        print("[ArcCFD] autoFill: Combustion_flow detected — filling cavities in world space")
         print("[ArcCFD] Combustion_flow demo detected — auto-filling cavities")
         let lox = ArcPropellant.presets.first(where:{$0.id=="lox"})!
         let lh2 = ArcPropellant.presets.first(where:{$0.id=="lh2"})!
@@ -948,13 +963,9 @@ public final class ArcFluidEngine: ObservableObject {
     // they react: temperature spikes, velocity increases (gas expansion), color shifts red-white.
     private func applyCombustionReaction() {
         guard let chamberSpec = componentSpecs.first(where: { $0.isCombustionChamber }) else { return }
-        let cmin = chamberSpec.boundingMin / SCALE
-        let cmax = chamberSpec.boundingMax / SCALE
-        let offX = W*SCALE/2, offY = H*SCALE/2-22, offZ = D*SCALE/2
-
-        // Convert chamber bounds to SPH domain coords
-        let domMin = SIMD3<Float>((cmin.x + offX)/SCALE, (cmin.y + offY)/SCALE, (cmin.z + offZ)/SCALE)
-        let domMax = SIMD3<Float>((cmax.x + offX)/SCALE, (cmax.y + offY)/SCALE, (cmax.z + offZ)/SCALE)
+        // Chamber bounds are in world space — particles are in world space
+        let domMin = chamberSpec.boundingMin
+        let domMax = chamberSpec.boundingMax
         let reactionHeat = ArcCombustionFlow.reactionHeat(
             fuel: .fuel, oxidizer: .oxidizer,
             fuelMoleculeSymbols: currentFuelSymbols,
@@ -1045,47 +1056,52 @@ public final class ArcFluidEngine: ObservableObject {
                 }
             }
         }
-        let syms = propellant.id == "custom" ? propellant.elements : propellant.elements
+        let syms = propellant.elements.isEmpty ? ["H","H","O"] : propellant.elements
         let col3 = syms.isEmpty ? SIMD3<Float>(0.7,0.7,1) : colorFor(syms[0])
-        // Convert bounding box from scene units to SPH domain
-        let offX = W*SCALE/2; let offY = H*SCALE/2-22; let offZ = D*SCALE/2
-        // spec.boundingMin/Max are in scene world units
-        let bmin = spec.boundingMin / SCALE
-        let bmax = spec.boundingMax / SCALE
-        // Convert to SPH domain coords
-        let dmin = SIMD3<Float>(
-            (bmin.x + offX),
-            (bmin.y + offY),
-            (bmin.z + offZ))
-        let dmax = SIMD3<Float>(
-            (bmax.x + offX),
-            (bmax.y + offY),
-            (bmax.z + offZ))
-        let range = dmax - dmin
+
+        // ── World-space cavity fill ──────────────────────────────────────
+        // spec.boundingMin/Max are world-space SCNKit coordinates (from worldTransform).
+        // Particles are stored in world-space directly — no domain conversion needed.
+        // We shrink the fill region by one smoothing-radius on each side so particles
+        // don't immediately clip through the mesh surface.
+        let margin: Float = max(0.1, smoothingH * 0.3)
+        let wMin = spec.boundingMin + margin
+        let wMax = spec.boundingMax - margin
+        let range = wMax - wMin
+
+        // Guard: degenerate bounding box (no geometry scanned yet)
+        if range.x <= 0 || range.y <= 0 || range.z <= 0 {
+            print("[ArcCFD] ⚠ \(spec.displayName): zero bounding box — run scanComponentSpecs first")
+            return
+        }
+
         let side = Int(ceil(pow(Double(count), 1.0/3.0)))
-        let step = range / Float(max(1, side))
+        let step = range / Float(max(1, side - 1))
         var added = 0
+        let jitter = step * 0.18
+
         outer: for zi in 0..<side { for yi in 0..<side { for xi in 0..<side {
             guard added < count else { break outer }
             let ai = added % max(1, syms.count)
-            let c3 = syms.isEmpty ? col3 : colorFor(syms[ai])
-            var p = ArcParticle(
-                x: dmin.x + Float(xi)*step.x + step.x*0.5 + Float.random(in:-step.x*0.2...step.x*0.2),
-                y: dmin.y + Float(yi)*step.y + step.y*0.5 + Float.random(in:-step.y*0.2...step.y*0.2),
-                z: dmin.z + Float(zi)*step.z + step.z*0.5 + Float.random(in:-step.z*0.2...step.z*0.2),
+            let c3 = colorFor(syms[ai])
+            // World-space position directly inside the cavity
+            let wx = wMin.x + Float(xi)*step.x + Float.random(in:-jitter.x...jitter.x)
+            let wy = wMin.y + Float(yi)*step.y + Float.random(in:-jitter.y...jitter.y)
+            let wz = wMin.z + Float(zi)*step.z + Float.random(in:-jitter.z...jitter.z)
+            var p = ArcParticle(x:wx, y:wy, z:wz,
                 vx:0, vy:0, vz:0, px:0, py:0, pz:0,
                 dens:0, nDens:0, press:0, nPress:0,
                 r:c3.x, g:c3.y, b:c3.z)
             p.tempK = envTempK
-            // Pressure-driven initial velocity based on flow direction
+            p.pressure = Float(spec.pressurePsi) * 6894.76
+            // Initial downward velocity from pressure (gravity-assisted flow)
             let flowVel = ArcCombustionFlow.flowVelocity(
                 pressurePsi: Float(spec.pressurePsi),
                 densityKgM3: Float(propellant.densityKgM3))
-            // Gravity-assisted: downward initial velocity scaled by pressure
-            p.vy = -min(flowVel * 0.1, 5.0)
+            p.vy = -min(flowVel * 0.08, 2.0)  // gentle initial push downward
             pts.append(p); added += 1
         }}}
-        print("[ArcCFD] Filled \(spec.displayName) with \(added) particles")
+        print("[ArcCFD] ✓ \(spec.displayName): spawned \(added) particles at world pos \(wMin)…\(wMax)")
     }
 
     // MARK: — SceneKit point cloud
@@ -1100,12 +1116,11 @@ public final class ArcFluidEngine: ObservableObject {
     private func uploadParticleCloud() {
         guard let cloudNode else { return }
         let n = pts.count; guard n > 0 else { return }
-        let offX=W*SCALE/2, offY=H*SCALE/2-22, offZ=D*SCALE/2
-
+        // Particles are in world space — arcFluidCloud is at scene root so no offset needed
         var rawPos=[Float](); rawPos.reserveCapacity(n*3)
         var rawCol=[Float](); rawCol.reserveCapacity(n*4)
         for p in pts {
-            rawPos += [p.x*SCALE-offX, p.y*SCALE-offY, p.z*SCALE-offZ]
+            rawPos += [p.x, p.y, p.z]  // world-space directly
             let heat = min(1, max(0,(p.tempK-envTempK)/max(1,2000-envTempK)))
             let hc = thermalColor(heat)
             let alpha: Float = particleVisual == .arcWave ? 0.75 : 0.92
@@ -1204,5 +1219,6 @@ public final class ArcFluidEngine: ObservableObject {
         return SIMD3<Float>(x,y,z)
     }
 }
+
 
 
