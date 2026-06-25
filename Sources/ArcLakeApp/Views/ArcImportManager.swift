@@ -28,31 +28,28 @@ struct ArcImportManagerView: View {
         return raw
     }
 
-    @State private var importTab: ImportTab = .scene
-    enum ImportTab { case scene, assets }
+    @State private var impTab: ImpTab = .scene
+    enum ImpTab: String, CaseIterable { case scene = "Scene", assets = "Assets" }
 
     var body: some View {
         VStack(spacing: 0) {
-            // Tab: Scene Outliner | Assets
+            // Scene/Assets tab switcher
             HStack(spacing: 0) {
-                Button { importTab = .scene } label: {
-                    Text("Scene").font(.system(size:9,weight:.bold,design:.monospaced))
-                        .foregroundColor(importTab == .scene ? .black : .white.opacity(0.5))
-                        .frame(maxWidth:.infinity).padding(.vertical,7)
-                        .background(importTab == .scene ? themeVM.accent : Color.clear)
-                }
-                Button { importTab = .assets } label: {
-                    Text("Assets").font(.system(size:9,weight:.bold,design:.monospaced))
-                        .foregroundColor(importTab == .assets ? .black : .white.opacity(0.5))
-                        .frame(maxWidth:.infinity).padding(.vertical,7)
-                        .background(importTab == .assets ? themeVM.accent : Color.clear)
+                ForEach(ImpTab.allCases, id: \.self) { t in
+                    Button { impTab = t } label: {
+                        Text(t.rawValue)
+                            .font(.system(size:9,weight:.bold,design:.monospaced))
+                            .foregroundColor(impTab==t ? .black : .white.opacity(0.5))
+                            .frame(maxWidth:.infinity).padding(.vertical,7)
+                            .background(impTab==t ? themeVM.accent : Color.clear)
+                    }
                 }
             }
             .background(Color.white.opacity(0.05))
             .clipShape(RoundedRectangle(cornerRadius:8))
             .padding(.horizontal,10).padding(.vertical,6)
 
-            if importTab == .scene {
+            if impTab == .scene {
                 ArcSceneOutliner()
                     .environmentObject(labVM)
                     .environmentObject(themeVM)
@@ -205,10 +202,8 @@ struct ArcImportManagerView: View {
                     .padding(.bottom,8)
                 }
             }
-        } // assets content
-        } // else block
-    }     // VStack
-    }     // body
+        }
+    }
 
     @ViewBuilder
     private func assetRow(_ nodeName: String) -> some View {
@@ -243,7 +238,6 @@ struct ArcImportManagerView: View {
                 refreshID = UUID()
             } label: {
                 Label("Remove", systemImage: "trash")
-            }
             }
         }
     }
@@ -322,6 +316,10 @@ struct ArcGizmoOverlay: View {
                 .frame(width: 28, height: 22)
                 .background(color.opacity(0.55))
                 .clipShape(RoundedRectangle(cornerRadius: 5))
-        }
+        }         // axisBtn
+        }         // else (assets)
+    }             // body VStack + body
+}                 // struct
+
 
 
