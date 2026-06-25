@@ -267,7 +267,7 @@ struct ArcComponentConfigView: View {
                     Text("\(totalParticles.formatted()) particles")
                         .font(.system(size: 9, weight: .bold, design: .monospaced)).foregroundColor(themeVM.accent)
                 }
-                Text(String(format: "Volume: %.3f m³  =  %.0f cm³", vol, volCm3))
+                Text(String(format: "Volume: %.3f scene units³", vol))
                     .font(.system(size: 8, design: .monospaced)).foregroundColor(.white.opacity(0.3))
             }
         }
