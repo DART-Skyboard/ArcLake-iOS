@@ -130,7 +130,7 @@ public struct DARTRootView: View {
             ArcGimbalOverlay()
                 .environmentObject(labVM)
                 .environmentObject(themeVM)
-                .padding(.top, sidebarVisible ? 0 : 4)
+                .padding(.top, 56)   // below the tab bar
                 .padding(.trailing, 4)
         }
         .fullScreenCover(isPresented: $showAR) {
