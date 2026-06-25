@@ -553,6 +553,17 @@ struct DARTArcPanel: View {
                         }
                     }
                 }
+
+                // ── Extended Arc Edge: Grid Vector + Trig Delta + Multi-Domain ──
+                ArcEdgeExtPanel()
+                    .environmentObject(labVM)
+                    .environmentObject(themeVM)
+
+                // ── Field Array (existing) ────────────────────────────
+                ArcFieldArraySection()
+                    .environmentObject(labVM)
+                    .environmentObject(themeVM)
+
             }
             .padding(10)
         }
