@@ -18,17 +18,6 @@ public final class ArcLabViewModel: ObservableObject {
     @Published public var cfdParticles: [SPHEngine.Particle] = []
     @Published public var alloyComponents: [AlloyComponent] = []
 
-    // ── Quantum particle system (matches web app) ──────────────────────
-    @Published public var quantumAtoms: [ArcAtomData] = []
-    @Published public var isPhysicsSimulating: Bool = false
-    @Published public var recordedFrameCount: Int = 0
-    @Published public var scrubberPosition: Int = 0  // 0...recordedFrameCount-1
-    @Published public var ptsPerElectron: Int = 30 {
-        didSet { ArcQuantumAtomBuilder.ptsPerElectron = ptsPerElectron; rebuildAllAtoms() }
-    }
-    private var displayLink: CADisplayLink?
-    private var physEngine = ArcQuantumPhysics.shared
-
     // ── Particle resolution — pts per component (proton/neutron/electron)
     // Default 30, user-adjustable in Physics tab
     @Published public var ptsPerComponent: Int = 30   // range 1…3000 (web parity)
@@ -67,6 +56,15 @@ public final class ArcLabViewModel: ObservableObject {
     @Published public var recordedFrameCount: Int = 0
     public var recordedFrames: [RecordedFrame] = []
     var engineTimer: Timer? = nil
+
+    // ── Quantum orbital particle system ──────────────────────────────
+    @Published public var quantumAtoms: [ArcAtomData] = []
+    @Published public var isPhysicsSimulating: Bool = false
+    @Published public var scrubberPosition: Int = 0
+    @Published public var ptsPerElectron: Int = 30 {
+        didSet { ArcQuantumAtomBuilder.ptsPerElectron = ptsPerElectron; rebuildAllAtoms() }
+    }
+    private var physEngine = ArcQuantumPhysics.shared
 
     // Engine extension (separate file) needs atom node access
     public func atomNode(for id: Int) -> SCNNode? { atomNodes[id] }
@@ -576,6 +574,65 @@ public final class ArcLabViewModel: ObservableObject {
         log("Rebuilt \(elements.count) atoms @ \(ptsPerComponent) pts/component")
     }
 
+    // MARK: — Quantum physics simulation (web app applyNewPhysics parity)
+    public func startPhysicsSimulation() {
+        guard !isPhysicsSimulating else { return }
+        isPhysicsSimulating = true; isPlaying = true; isRecording = true
+        physEngine.isSimulating = true
+        physEngine.gravity = Float(physics.gravity)
+        physEngine.clearRecording()
+        recordedFrameCount = 0; recordedFrames = []
+        for i in quantumAtoms.indices {
+            let imp: Float = 0.00005
+            quantumAtoms[i].velocity = SIMD3<Float>(
+                Float.random(in: -imp...imp),
+                Float.random(in: -imp*0.5...imp*0.5),
+                Float.random(in: -imp...imp))
+            quantumAtoms[i].devWarmup = 0
+            quantumAtoms[i].isActive = true
+        }
+        displayLink = CADisplayLink(target: self, selector: #selector(physicsDisplayLinkTick))
+        displayLink?.add(to: .main, forMode: .common)
+        log("Physics simulation started")
+    }
+
+    public func stopPhysicsSimulation() {
+        isPhysicsSimulating = false; isPlaying = false; isRecording = false
+        physEngine.isSimulating = false
+        displayLink?.invalidate(); displayLink = nil
+        resetQuantumAtomPositions()
+        recordedFrameCount = physEngine.frames.count
+        log("Simulation stopped — \(recordedFrameCount) frames")
+    }
+
+    @objc private func physicsDisplayLinkTick() {
+        guard isPhysicsSimulating else { return }
+        physEngine.tick(atoms: &quantumAtoms, dt: 0.016)
+        physEngine.captureFrame(atoms: quantumAtoms)
+        recordedFrameCount = physEngine.frames.count
+        playheadFrame = recordedFrameCount
+    }
+
+    private func resetQuantumAtomPositions() {
+        for i in quantumAtoms.indices {
+            let idx = i
+            let el = selectedElements.first(where: { $0.id == quantumAtoms[idx].elementId })
+            let pos = el.map { physicsPosition(for: $0, index: idx) } ?? SIMD3<Float>(Float(idx)*2, 0, 0)
+            quantumAtoms[i].root.position = SCNVector3(pos.x, pos.y, pos.z)
+            quantumAtoms[i].velocity = .zero
+            quantumAtoms[i].devWarmup = 0
+        }
+    }
+
+    public func scrubToFrame(_ frameIndex: Int) {
+        physEngine.isScrubbing = true
+        scrubberPosition = max(0, min(frameIndex, physEngine.frames.count - 1))
+        physEngine.applyFrame(scrubberPosition, atoms: &quantumAtoms)
+        playheadFrame = scrubberPosition
+    }
+
+    public func endScrubbing() { physEngine.isScrubbing = false }
+
     // MARK: — Physics-based positioning
     // Atoms auto-space based on atomic radius, charge, and environment physics
     // They repel each other so they never overlap — just like the web app
@@ -643,75 +700,7 @@ public final class ArcLabViewModel: ObservableObject {
         atomNodes[element.id] = atomData.root
     }
 
-    // Rebuild all currently displayed atoms (called on ptsPerElectron change)
-    private func rebuildAllAtoms() {
-        let els = elements  // snapshot
-        clearElements()
-        for el in els { addElement(el) }
-    }
 
-    // MARK: — Physics simulation (matches web app applyNewPhysics)
-    public func startPhysicsSimulation() {
-        guard !isPhysicsSimulating else { return }
-        isPhysicsSimulating = true
-        physEngine.isSimulating = true
-        physEngine.gravity = Float(physics.activeTab.gravity)
-        physEngine.clearRecording()
-        recordedFrameCount = 0
-        // Seed tiny impulse on each atom (matches web: nucleusVelocity seed)
-        for i in quantumAtoms.indices {
-            let imp: Float = 0.00005
-            quantumAtoms[i].velocity = SIMD3<Float>(
-                Float.random(in: -imp...imp),
-                Float.random(in: -imp*0.5...imp*0.5),
-                Float.random(in: -imp...imp))
-            quantumAtoms[i].devWarmup = 0
-            quantumAtoms[i].isActive = true
-        }
-        // CADisplayLink fires at screen refresh rate (~60fps)
-        displayLink = CADisplayLink(target: self, selector: #selector(physicsDisplayLinkTick))
-        displayLink?.add(to: .main, forMode: .common)
-        log("Physics simulation started — quantum orbital mode")
-    }
-
-    public func stopPhysicsSimulation() {
-        isPhysicsSimulating = false
-        physEngine.isSimulating = false
-        displayLink?.invalidate(); displayLink = nil
-        // Reset atoms to original positions
-        resetAtomPositions()
-        log("Physics simulation stopped — \(physEngine.frames.count) frames recorded")
-        recordedFrameCount = physEngine.frames.count
-    }
-
-    @objc private func physicsDisplayLinkTick() {
-        guard isPhysicsSimulating else { return }
-        physEngine.tick(atoms: &quantumAtoms, dt: 0.016)
-        // Capture frame for scrubber
-        physEngine.captureFrame(atoms: quantumAtoms)
-        DispatchQueue.main.async { [weak self] in
-            self?.recordedFrameCount = self?.physEngine.frames.count ?? 0
-        }
-    }
-
-    private func resetAtomPositions() {
-        for i in quantumAtoms.indices {
-            // Re-position using physicsPosition — same as when added
-            let pos = physicsPosition(for: ElementStore.shared.elements.first(where: { $0.id == quantumAtoms[i].elementId }) ?? elements[min(i, elements.count-1)], index: i)
-            quantumAtoms[i].root.position = SCNVector3(pos.x, pos.y, pos.z)
-            quantumAtoms[i].velocity = .zero
-            quantumAtoms[i].devWarmup = 0
-        }
-    }
-
-    // MARK: — Scrubber playback
-    public func scrubToFrame(_ frameIndex: Int) {
-        physEngine.isScrubbing = true
-        scrubberPosition = max(0, min(frameIndex, physEngine.frames.count - 1))
-        physEngine.applyFrame(scrubberPosition, atoms: &quantumAtoms)
-    }
-
-    public func endScrubbing() { physEngine.isScrubbing = false }
 
     // Create a node of tiny spheres at given positions
     private func buildParticleCloud(parent: SCNNode, points: [SIMD3<Float>],
