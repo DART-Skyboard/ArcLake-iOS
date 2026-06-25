@@ -33,7 +33,7 @@ struct ArcImportManagerView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Scene/Assets tab switcher
+            // Scene / Assets tab selector
             HStack(spacing: 0) {
                 ForEach(ImpTab.allCases, id: \.self) { t in
                     Button { impTab = t } label: {
@@ -47,13 +47,14 @@ struct ArcImportManagerView: View {
             }
             .background(Color.white.opacity(0.05))
             .clipShape(RoundedRectangle(cornerRadius:8))
-            .padding(.horizontal,10).padding(.vertical,6)
+            .padding(.horizontal,10).padding(.top,6)
 
             if impTab == .scene {
                 ArcSceneOutliner()
                     .environmentObject(labVM)
                     .environmentObject(themeVM)
             } else {
+        VStack(spacing: 0) {
             // ── Header ──────────────────────────────────────────────
             HStack {
                 Image(systemName: "square.and.arrow.down")
@@ -203,7 +204,9 @@ struct ArcImportManagerView: View {
                 }
             }
         }
-    }
+            }   // end else
+        }       // end outer VStack
+    }           // end body
 
     @ViewBuilder
     private func assetRow(_ nodeName: String) -> some View {
@@ -316,10 +319,9 @@ struct ArcGizmoOverlay: View {
                 .frame(width: 28, height: 22)
                 .background(color.opacity(0.55))
                 .clipShape(RoundedRectangle(cornerRadius: 5))
-        }         // axisBtn
-        }         // else (assets)
-    }             // body VStack + body
-}                 // struct
+        }
+    }
+}
 
 
 
