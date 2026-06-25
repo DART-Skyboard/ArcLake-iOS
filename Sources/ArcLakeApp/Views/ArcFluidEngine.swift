@@ -19,6 +19,21 @@ import simd
 // ═══════════════════════════════════════════════════════════════════
 
 // MARK: — Fluid mode
+// Particle visual rendering mode
+public enum ArcParticleVisual: String, CaseIterable, Identifiable {
+    case points    = "Points"    // fast dot particles
+    case spheres   = "Spheres"   // larger spheres, metaball-like blend
+    case arcWave   = "Arc Wave"  // arc traces that react to physics
+    public var id: String { rawValue }
+    var icon: String {
+        switch self {
+        case .points:  return "circle.fill"
+        case .spheres: return "circlebadge.fill"
+        case .arcWave: return "wave.3.right"
+        }
+    }
+}
+
 public enum ArcFluidMode: String, CaseIterable, Identifiable {
     case liquid="Liquid", gas="Gas", viscous="Viscous", granular="Granular"
     public var id: String { rawValue }
@@ -199,6 +214,7 @@ public final class ArcFluidEngine: ObservableObject {
     @Published public var isRunning   = false
     @Published public var mode        = ArcFluidMode.liquid
     @Published public var scenePreset = ArcFluidScene.dam
+    @Published public var particleVisual = ArcParticleVisual.points
     @Published public var particleCount = 500
     @Published public var gravityScale: Float = 1.0
     @Published public var smoothingH:   Float = 30.0
@@ -212,6 +228,11 @@ public final class ArcFluidEngine: ObservableObject {
     // Inlet/outlet zone centers (set from ArcMeshSelectorView)
     public var inletZone:  SIMD3<Float>? = nil
     public var outletZone: SIMD3<Float>? = nil
+
+    // Selection state — drives neon glow outline in scene
+    @Published public var selectedComponentName: String? = nil {
+        didSet { applySelectionGlow(scene: scene) }
+    }
     public var inletRadius:  Float = 40
     public var outletRadius: Float = 40
 
@@ -300,9 +321,12 @@ public final class ArcFluidEngine: ObservableObject {
         // Initialize component specs for all mesh nodes
         scanComponentSpecs(scene)
 
-        // Spawn particles
-        let syms = elementSymbols.isEmpty ? ["O","H","H"] : elementSymbols
-        spawnParticles(syms)
+        // If imported model has named components (Combustion_flow demo or any named model),
+        // fill cavities by component. Otherwise fall back to generic spawn.
+        if !autoFillCombustionDemo(scene: scene, envTempK: envTempK) {
+            let syms = elementSymbols.isEmpty ? ["O","H","H"] : elementSymbols
+            spawnParticles(syms)
+        }
         buildCloudNode(scene)
 
         simTask = Task.detached(priority: .userInitiated) { [weak self] in
@@ -861,6 +885,43 @@ public final class ArcFluidEngine: ObservableObject {
         }
     }
 
+    // MARK: — Component selection glow
+    public func selectComponent(_ name: String?, in scene: SCNScene) {
+        selectedComponentName = name
+        applySelectionGlow(scene: scene)
+    }
+
+    private func applySelectionGlow(scene: SCNScene?) {
+        guard let scene else { return }
+        scene.rootNode.enumerateChildNodes { node, _ in
+            guard let nm = node.name, let mat = node.geometry?.firstMaterial,
+                  !nm.hasPrefix("arc_light_"), nm != "arcFluidCloud" else { return }
+            if nm == self.selectedComponentName {
+                // Selected: bright emission glow (neon cyan/green outline effect)
+                mat.emission.contents = UIColor(red:0, green:1, blue:0.85, alpha:1)
+                mat.selfIlluminationMap.intensity = 1.0
+                // Slightly lighten the diffuse
+                if let base = mat.diffuse.contents as? UIColor {
+                    var r:CGFloat=0,g:CGFloat=0,b:CGFloat=0,a:CGFloat=1
+                    base.getRed(&r,green:&g,blue:&b,alpha:&a)
+                    mat.diffuse.contents = UIColor(red:min(1,r+0.15),green:min(1,g+0.15),
+                                                   blue:min(1,b+0.15),alpha:a)
+                }
+            } else if self.selectedComponentName != nil {
+                // Others: dim slightly
+                mat.emission.contents = UIColor.black
+                if let base = mat.diffuse.contents as? UIColor {
+                    var r:CGFloat=0,g:CGFloat=0,b:CGFloat=0,a:CGFloat=1
+                    base.getRed(&r,green:&g,blue:&b,alpha:&a)
+                    mat.diffuse.contents = UIColor(red:r*0.55,green:g*0.55,blue:b*0.55,alpha:a)
+                }
+            } else {
+                // Deselected: restore emission off, restore full brightness
+                mat.emission.contents = UIColor.black
+            }
+        }
+    }
+
     // MARK: — Auto-fill Combustion_flow demo
     private func autoFillCombustionDemo(scene: SCNScene, envTempK: Float) -> Bool {
         let hasCombustion = componentSpecs.contains(where: { $0.displayName == "CombustionChamber" })
@@ -1018,16 +1079,17 @@ public final class ArcFluidEngine: ObservableObject {
         guard let cloudNode else { return }
         let n = pts.count; guard n > 0 else { return }
         let offX=W*SCALE/2, offY=H*SCALE/2-22, offZ=D*SCALE/2
+
         var rawPos=[Float](); rawPos.reserveCapacity(n*3)
         var rawCol=[Float](); rawCol.reserveCapacity(n*4)
         for p in pts {
             rawPos += [p.x*SCALE-offX, p.y*SCALE-offY, p.z*SCALE-offZ]
-            // Color: CPK base tinted toward thermal
             let heat = min(1, max(0,(p.tempK-envTempK)/max(1,2000-envTempK)))
             let hc = thermalColor(heat)
+            let alpha: Float = particleVisual == .arcWave ? 0.75 : 0.92
             rawCol += [p.r*(1-heat*0.6)+hc.x*heat*0.6,
                        p.g*(1-heat*0.6)+hc.y*heat*0.6,
-                       p.b*(1-heat*0.6)+hc.z*heat*0.6, 0.92]
+                       p.b*(1-heat*0.6)+hc.z*heat*0.6, alpha]
         }
         let posSource = SCNGeometrySource(
             data: Data(bytes:rawPos, count:rawPos.count*4), semantic:.vertex,
@@ -1039,16 +1101,39 @@ public final class ArcFluidEngine: ObservableObject {
             bytesPerComponent:4, dataOffset:0, dataStride:16)
         let indices=(0..<n).map{UInt32($0)}
         let elem=SCNGeometryElement(indices:indices, primitiveType:.point)
-        // Larger, velocity-based point sizes for teardrop appearance
+
+        // Visual mode determines point size
         let avgSpd = pts.isEmpty ? 0 : pts.map({$0.spd}).reduce(0,+)/Float(pts.count)
-        let dynSize = Float(min(12, max(3, 3 + avgSpd * 0.2)))
-        elem.pointSize = CGFloat(dynSize)
-        elem.minimumPointScreenSpaceRadius = 1.5
-        elem.maximumPointScreenSpaceRadius = CGFloat(dynSize * 2.5)
+        switch particleVisual {
+        case .points:
+            let sz = Float(min(8, max(2, 2 + avgSpd * 0.15)))
+            elem.pointSize = CGFloat(sz)
+            elem.minimumPointScreenSpaceRadius = 1.0
+            elem.maximumPointScreenSpaceRadius = CGFloat(sz * 2)
+        case .spheres:
+            // Larger spheres that visually blend together
+            let sz = Float(min(20, max(6, 6 + avgSpd * 0.3)))
+            elem.pointSize = CGFloat(sz)
+            elem.minimumPointScreenSpaceRadius = 3.0
+            elem.maximumPointScreenSpaceRadius = CGFloat(sz * 3)
+        case .arcWave:
+            // Arc wave: medium size, velocity-elongated teardrop
+            let sz = Float(min(14, max(3, 3 + avgSpd * 0.25)))
+            elem.pointSize = CGFloat(sz)
+            elem.minimumPointScreenSpaceRadius = 1.5
+            elem.maximumPointScreenSpaceRadius = CGFloat(sz * 2.5)
+        }
+
         let geo=SCNGeometry(sources:[posSource,colSource], elements:[elem])
-        let mat=SCNMaterial(); mat.lightingModel = .constant
-        geo.firstMaterial=mat
-        cloudNode.geometry=geo
+        let mat=SCNMaterial()
+        mat.lightingModel = .constant
+        mat.isDoubleSided = true
+        // Arc wave gets additive blending for glow-on-glow effect
+        if particleVisual == .arcWave {
+            mat.blendMode = .add
+        }
+        geo.firstMaterial = mat
+        cloudNode.geometry = geo
     }
 
     // MARK: — Geometry helpers
@@ -1097,3 +1182,4 @@ public final class ArcFluidEngine: ObservableObject {
         return SIMD3<Float>(x,y,z)
     }
 }
+
