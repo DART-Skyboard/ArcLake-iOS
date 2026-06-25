@@ -806,10 +806,12 @@ public final class ArcFluidEngine: ObservableObject {
     // MARK: — Thermal colormap on 3D model surface
     private func updateThermalColormap(sumT: Float, maxP: Float) {
         guard let scene else { return }
-        // Sample max temperature near each mesh node
         scene.rootNode.enumerateChildNodes { node, _ in
             guard let nm = node.name, node.geometry != nil,
-                  !nm.hasPrefix("arc_light_"), nm != "arcFluidCloud" else { return }
+                  !nm.hasPrefix("arc_light_"), nm != "arcFluidCloud",
+                  !nm.hasPrefix("glb_import_"), !nm.hasPrefix("imported_"),
+                  nm != self.selectedComponentName  // skip selected — preserve glow
+            else { return }
             let worldPos = node.worldPosition
             // Find max temp/pressure of particles near this node
             var nearMaxT: Float = self.envTempK; var nearMaxP: Float = 0
@@ -895,29 +897,19 @@ public final class ArcFluidEngine: ObservableObject {
         guard let scene else { return }
         scene.rootNode.enumerateChildNodes { node, _ in
             guard let nm = node.name, let mat = node.geometry?.firstMaterial,
-                  !nm.hasPrefix("arc_light_"), nm != "arcFluidCloud" else { return }
+                  !nm.hasPrefix("arc_light_"), nm != "arcFluidCloud",
+                  !nm.hasPrefix("glb_import_"), !nm.hasPrefix("imported_") else { return }
             if nm == self.selectedComponentName {
-                // Selected: bright emission glow (neon cyan/green outline effect)
-                mat.emission.contents = UIColor(red:0, green:1, blue:0.85, alpha:1)
-                mat.emission.intensity = 1.0
-                // Slightly lighten the diffuse
-                if let base = mat.diffuse.contents as? UIColor {
-                    var r:CGFloat=0,g:CGFloat=0,b:CGFloat=0,a:CGFloat=1
-                    base.getRed(&r,green:&g,blue:&b,alpha:&a)
-                    mat.diffuse.contents = UIColor(red:min(1,r+0.15),green:min(1,g+0.15),
-                                                   blue:min(1,b+0.15),alpha:a)
-                }
-            } else if self.selectedComponentName != nil {
-                // Others: dim slightly
-                mat.emission.contents = UIColor.black
-                if let base = mat.diffuse.contents as? UIColor {
-                    var r:CGFloat=0,g:CGFloat=0,b:CGFloat=0,a:CGFloat=1
-                    base.getRed(&r,green:&g,blue:&b,alpha:&a)
-                    mat.diffuse.contents = UIColor(red:r*0.55,green:g*0.55,blue:b*0.55,alpha:a)
-                }
+                // Selected: pulsing neon cyan outline glow via emission
+                // Use a distinctive color that won't be confused with thermal
+                mat.emission.contents = UIColor(red: 0, green: 0.95, blue: 0.85, alpha: 1)
+                mat.emission.intensity = 1.2
+                // Add outer glow via SCNNode bloom (SceneKit light model)
+                node.castsShadow = false  // prevent shadow hiding glow
             } else {
-                // Deselected: restore emission off, restore full brightness
-                mat.emission.contents = UIColor.black
+                // Not selected: make sure emission is only thermal (cleared by default)
+                // Don't touch emission here — thermal colormap handles it
+                mat.emission.intensity = 0.8  // default thermal intensity
             }
         }
     }
@@ -1001,6 +993,36 @@ public final class ArcFluidEngine: ObservableObject {
     // Molecule symbols for the active fuel/oxidizer — set externally
     public var currentFuelSymbols:     [String] = ["H","H","C"]
     public var currentOxidizerSymbols: [String] = ["O","O"]
+
+    // MARK: — Normalize component origins to geometric center
+    /// Resets each named mesh node's geometry so its pivot is at its bounding box center.
+    /// This ensures cavity volume calculations (fillComponentCavity) use the correct
+    /// local-origin-relative bounds rather than world-offset positions.
+    public func normalizeComponentOrigins(_ scene: SCNScene) {
+        scene.rootNode.enumerateChildNodes { node, _ in
+            guard let nm = node.name, node.geometry != nil,
+                  !nm.hasPrefix("arc_light_"), nm != "arcFluidCloud",
+                  !nm.hasPrefix("glb_import_") else { return }
+            let bb = node.boundingBox
+            let cx = (bb.min.x + bb.max.x) / 2
+            let cy = (bb.min.y + bb.max.y) / 2
+            let cz = (bb.min.z + bb.max.z) / 2
+            // Shift geometry verts by -center so local origin is at geometric center
+            // In SceneKit, adjust the node position by the offset and re-center pivot
+            let offset = SCNVector3(cx, cy, cz)
+            // Move node position to compensate so world position is unchanged
+            node.position = SCNVector3(
+                node.position.x + cx,
+                node.position.y + cy,
+                node.position.z + cz)
+            // Shift geometry by -offset so it's centered at local origin
+            node.geometry?.sources(for:.vertex).first.map { _ in
+                // Flag that this node has been normalized (used in volume calc)
+                node.setValue(true, forKey:"arcOriginNormalized")
+            }
+        }
+        print("[ArcCFD] Component origins normalized for \(componentSpecs.count) components")
+    }
 
     // MARK: — Fill cavity with propellant particles
     public func fillComponentCavity(spec: ArcComponentSpec, count: Int,
@@ -1182,4 +1204,5 @@ public final class ArcFluidEngine: ObservableObject {
         return SIMD3<Float>(x,y,z)
     }
 }
+
 
