@@ -205,8 +205,9 @@ struct ArcImportManagerView: View {
                     .padding(.bottom,8)
                 }
             }
-        }
-    }
+        } // assets content
+        } // else block
+    }     // VStack
 
     @ViewBuilder
     private func assetRow(_ nodeName: String) -> some View {
@@ -321,7 +322,6 @@ struct ArcGizmoOverlay: View {
                 .background(color.opacity(0.55))
                 .clipShape(RoundedRectangle(cornerRadius: 5))
         }
-    }
 }
 
 
