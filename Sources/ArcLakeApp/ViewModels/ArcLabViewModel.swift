@@ -617,7 +617,7 @@ public final class ArcLabViewModel: ObservableObject {
         for i in quantumAtoms.indices {
             let idx = i
             let el = selectedElements.first(where: { $0.id == quantumAtoms[idx].elementId })
-            let pos = el.map { physicsPosition(for: $0, index: idx) } ?? SIMD3<Float>(Float(idx)*2, 0, 0)
+            let pos = el.map { physicsPosition(for: $0, index: idx) } ?? SIMD3<Float>(Float(idx)*2, 0.6, 0)
             quantumAtoms[i].root.position = SCNVector3(pos.x, pos.y, pos.z)
             quantumAtoms[i].velocity = .zero
             quantumAtoms[i].devWarmup = 0
@@ -648,8 +648,9 @@ public final class ArcLabViewModel: ObservableObject {
         var candidate = spiralPosition(index: index, spacing: atomicRadius * 3.5)
 
         // Apply physics offsets
-        // Higher gravity pulls atoms down
-        candidate.y -= gravity * 0.05
+        // Spawn atoms AT floor level (y=0.6) so physics sim start causes no jump.
+        // The floor in engineTick is at y=0.6 — matching prevents the altitude snap.
+        candidate.y = 0.6
         // Higher pressure compresses the arrangement
         let pressureFactor = max(0.3, 1.0 - pressure * 0.005)
         candidate.x *= pressureFactor
