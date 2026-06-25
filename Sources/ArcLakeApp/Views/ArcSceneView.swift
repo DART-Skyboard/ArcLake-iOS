@@ -259,28 +259,40 @@ public struct ArcSceneView: UIViewRepresentable {
             guard let v = scnView else { return }
             let loc = g.location(in: v)
 
-            // ── CFD mode: tap on imported mesh → open component config ───
-            // Only active when ArcFluidEngine is running
-            if ArcFluidEngine.shared.isRunning || !ArcFluidEngine.shared.componentSpecs.isEmpty {
-                let hits = v.hitTest(loc, options: [
-                    SCNHitTestOption.searchMode: SCNHitTestSearchMode.closest.rawValue as NSNumber,
-                    SCNHitTestOption.ignoreHiddenNodes: true as NSNumber,
-                ])
-                for hit in hits {
-                    var node: SCNNode? = hit.node
-                    // Walk up to find the named imported root node
-                    while let n = node {
-                        if let nm = n.name,
-                           (nm.hasPrefix("glb_import_") || nm.hasPrefix("imported_") ||
-                            ArcFluidEngine.shared.componentSpecs.contains(where: { $0.nodeName == nm })) {
-                            // Found a CFD component — notify ViewModel
-                            DispatchQueue.main.async {
-                                self.labVM.tappedCFDComponent = nm
-                            }
-                            return
+            // ── Component selection: tap mesh → glow + open config ─────
+            let cfdHits = v.hitTest(loc, options: [
+                SCNHitTestOption.searchMode: SCNHitTestSearchMode.closest.rawValue as NSNumber,
+                SCNHitTestOption.ignoreHiddenNodes: true as NSNumber,
+            ])
+            var hitComponent: String? = nil
+            for hit in cfdHits {
+                var node: SCNNode? = hit.node
+                while let n = node {
+                    if let nm = n.name, nm != "arcFluidCloud",
+                       !nm.hasPrefix("arc_light_"),
+                       (ArcFluidEngine.shared.componentSpecs.contains(where:{$0.nodeName==nm}) ||
+                        ArcFluidEngine.shared.componentSpecs.isEmpty) {
+                        // Only select named geometry nodes (not the fluid cloud)
+                        if n.geometry != nil && !nm.hasPrefix("glb_import_") {
+                            hitComponent = nm; break
                         }
-                        node = n.parent
                     }
+                    node = n.parent
+                }
+                if hitComponent != nil { break }
+            }
+            if let name = hitComponent {
+                // Select component — apply glow + open config sheet
+                ArcFluidEngine.shared.selectComponent(name, in: v.scene ?? SCNScene())
+                DispatchQueue.main.async {
+                    self.labVM.tappedCFDComponent = name
+                }
+                return
+            } else {
+                // Tapped empty space — deselect everything
+                if ArcFluidEngine.shared.selectedComponentName != nil {
+                    ArcFluidEngine.shared.selectComponent(nil, in: v.scene ?? SCNScene())
+                    return
                 }
             }
 
@@ -842,6 +854,7 @@ import UniformTypeIdentifiers
 extension SIMD4 where Scalar == Float {
     var xyz: SIMD3<Float> { SIMD3(x,y,z) }
 }
+
 
 
 
