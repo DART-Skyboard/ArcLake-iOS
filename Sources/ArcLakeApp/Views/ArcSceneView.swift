@@ -171,7 +171,8 @@ public struct ArcSceneView: UIViewRepresentable {
 
         init(labVM: ArcLabViewModel) {
             self.labVM = labVM
-            // Wire camera manager callbacks
+            super.init()
+            // Wire camera manager callbacks after super.init
             ArcCameraManager.shared.getCameraState = { [weak self] in
                 guard let self else { return ArcCameraState(
                     camQ: Coordinator.defaultQ, radius:20, pivot:.zero, fov:60, isOrtho:false) }
