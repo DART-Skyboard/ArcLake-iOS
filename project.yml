@@ -3,8 +3,6 @@ options:
   bundleIdPrefix: com.dartmeadow
   deploymentTarget:
     iOS: "16.0"
-    macOS: "14.0"
-    visionOS: "1.0"
   generateEmptyDirectories: true
   xcodeVersion: "15.4"
   xcodeCompatibilityVersion: "Xcode 14.0"
@@ -13,7 +11,6 @@ packages:
     url: https://github.com/gonzalezreal/swift-markdown-ui
     from: "2.4.0"
 targets:
-  # ── iOS (iPhone + iPad) ────────────────────────────────────────────
   ArcLakeApp:
     type: application
     platform: iOS
@@ -46,7 +43,7 @@ targets:
         NSCameraUsageDescription: Used for AR mode atom visualization
         NSPhotoLibraryAddUsageDescription: Save GLB exports and screenshots
         NSMicrophoneUsageDescription: Voice commands for the ArcLake lab assistant
-        NSSpeechRecognitionUsageDescription: Autumn uses speech recognition for voice commands
+        NSSpeechRecognitionUsageDescription: Autumn uses speech recognition to understand your voice commands for the ArcLake molecular lab
     entitlements:
       path: Sources/ArcLakeApp/ArcLakeApp.entitlements
     dependencies:
@@ -71,155 +68,18 @@ targets:
         ENABLE_USER_SCRIPT_SANDBOXING: NO
         SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
         TARGETED_DEVICE_FAMILY: "1,2"
-        CURRENT_PROJECT_VERSION: "263"
+        CURRENT_PROJECT_VERSION: "264"
         MARKETING_VERSION: "1.5.2"
-        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
       configs:
         Debug:
           SWIFT_OPTIMIZATION_LEVEL: "-Onone"
         Release:
           SWIFT_OPTIMIZATION_LEVEL: "-O"
           DEBUG_INFORMATION_FORMAT: "dwarf-with-dsym"
-
-  # ── macOS — Mac Catalyst (same source, runs iOS app on Mac) ────────
-  ArcLakeMac:
-    type: application
-    platform: iOS
-    deploymentTarget: "16.0"
-    sources:
-      - Sources/ArcLakeApp
-      - Sources/ArcLakeApp/ArcLakeData.xcdatamodeld
-      - Sources/ArcLakeApp/Resources
-    info:
-      path: Sources/ArcLakeApp/Info.plist
-      properties:
-        CFBundleDisplayName: Arc Lake
-        CFBundleIconName: AppIcon
-        CFBundleShortVersionString: "$(MARKETING_VERSION)"
-        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
-        ITSAppUsesNonExemptEncryption: false
-        UIRequiresFullScreen: false
-        UILaunchScreen:
-          UIColorName: ""
-        UISupportedInterfaceOrientations:
-          - UIInterfaceOrientationPortrait
-          - UIInterfaceOrientationLandscapeLeft
-          - UIInterfaceOrientationLandscapeRight
-        "UISupportedInterfaceOrientations~ipad":
-          - UIInterfaceOrientationPortrait
-          - UIInterfaceOrientationPortraitUpsideDown
-          - UIInterfaceOrientationLandscapeLeft
-          - UIInterfaceOrientationLandscapeRight
-        UIApplicationSupportsIndirectInputEvents: true
-        NSCameraUsageDescription: Used for AR mode atom visualization
-        NSPhotoLibraryAddUsageDescription: Save GLB exports and screenshots
-        NSMicrophoneUsageDescription: Voice commands for the ArcLake lab assistant
-        NSSpeechRecognitionUsageDescription: Autumn uses speech recognition for voice commands
-    entitlements:
-      path: Sources/ArcLakeApp/ArcLakeApp.entitlements
-    dependencies:
-      - package: swift-markdown-ui
-        product: MarkdownUI
-        embed: false
-        link: true
-      - sdk: ModelIO.framework
-    settings:
-      base:
-        PRODUCT_NAME: "Arc Lake"
-        PRODUCT_BUNDLE_IDENTIFIER: DART-Meadow-LLC.Cotharticren
-        DEVELOPMENT_TEAM: L7AHWS9Q6V
-        CODE_SIGN_STYLE: Manual
-        CODE_SIGN_IDENTITY: "Apple Distribution"
-        PROVISIONING_PROFILE_SPECIFIER: "ArcLakeMacFlow"
-        SWIFT_VERSION: "5.9"
-        CODE_SIGN_ENTITLEMENTS: Sources/ArcLakeApp/ArcLakeApp.entitlements
-        ENABLE_USER_SCRIPT_SANDBOXING: NO
-        SUPPORTS_MACCATALYST: YES
-        DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER: NO
-        TARGETED_DEVICE_FAMILY: "1,2"
-        CURRENT_PROJECT_VERSION: "263"
-        MARKETING_VERSION: "1.5.2"
-        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        # Disable ARKit on Catalyst — handled by #if canImport(ARKit) guards already
-        EXCLUDED_ARCHS[sdk=macosx*]: ""
-      configs:
-        Debug:
-          SWIFT_OPTIMIZATION_LEVEL: "-Onone"
-        Release:
-          SWIFT_OPTIMIZATION_LEVEL: "-O"
-          DEBUG_INFORMATION_FORMAT: "dwarf-with-dsym"
-
-  # ── visionOS — runs iOS/iPadOS app in a window on Apple Vision Pro ─
-  ArcLakeVision:
-    type: application
-    platform: visionOS
-    deploymentTarget: "1.0"
-    sources:
-      - Sources/ArcLakeApp
-      - Sources/ArcLakeApp/ArcLakeData.xcdatamodeld
-      - Sources/ArcLakeApp/Resources
-    info:
-      path: Sources/ArcLakeApp/Info.plist
-      properties:
-        CFBundleDisplayName: Arc Lake
-        CFBundleIconName: AppIcon
-        CFBundleShortVersionString: "$(MARKETING_VERSION)"
-        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
-        ITSAppUsesNonExemptEncryption: false
-        UIRequiresFullScreen: false
-        UILaunchScreen:
-          UIColorName: ""
-        NSCameraUsageDescription: Used for AR mode atom visualization
-        NSPhotoLibraryAddUsageDescription: Save GLB exports and screenshots
-        NSMicrophoneUsageDescription: Voice commands for the ArcLake lab assistant
-        NSSpeechRecognitionUsageDescription: Autumn uses speech recognition for voice commands
-    entitlements:
-      path: Sources/ArcLakeApp/ArcLakeApp.entitlements
-    dependencies:
-      - package: swift-markdown-ui
-        product: MarkdownUI
-        embed: false
-        link: true
-      - sdk: RealityKit.framework
-      - sdk: ModelIO.framework
-    settings:
-      base:
-        PRODUCT_NAME: "Arc Lake"
-        PRODUCT_BUNDLE_IDENTIFIER: DART-Meadow-LLC.Cotharticren
-        DEVELOPMENT_TEAM: L7AHWS9Q6V
-        CODE_SIGN_STYLE: Manual
-        CODE_SIGN_IDENTITY: "Apple Distribution"
-        PROVISIONING_PROFILE_SPECIFIER: "ArcLakeVisionFlow"
-        SWIFT_VERSION: "5.9"
-        CODE_SIGN_ENTITLEMENTS: Sources/ArcLakeApp/ArcLakeApp.entitlements
-        ENABLE_USER_SCRIPT_SANDBOXING: NO
-        TARGETED_DEVICE_FAMILY: "7"
-        CURRENT_PROJECT_VERSION: "263"
-        MARKETING_VERSION: "1.5.2"
-        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-      configs:
-        Debug:
-          SWIFT_OPTIMIZATION_LEVEL: "-Onone"
-        Release:
-          SWIFT_OPTIMIZATION_LEVEL: "-O"
-          DEBUG_INFORMATION_FORMAT: "dwarf-with-dsym"
-
 schemes:
   ArcLakeApp:
     build:
       targets:
         ArcLakeApp: all
-    archive:
-      config: Release
-  ArcLakeMac:
-    build:
-      targets:
-        ArcLakeMac: all
-    archive:
-      config: Release
-  ArcLakeVision:
-    build:
-      targets:
-        ArcLakeVision: all
     archive:
       config: Release
