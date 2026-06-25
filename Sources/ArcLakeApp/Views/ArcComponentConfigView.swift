@@ -254,10 +254,13 @@ struct ArcComponentConfigView: View {
                         .frame(width: 36, alignment: .trailing)
                 }
                 // Computed particle count
-                let vol = spec?.volumeM3 ?? 1.0
-                let volCm3 = vol * 1_000_000
-                let density = particleDensityUnit == .perCubicCm ? particleDensity : particleDensity / 1_000_000
-                let totalParticles = Int(volCm3 * density * fillFraction)
+                // Volume in scene units³ (1 scene unit ≈ 1 m for GLB models)
+                let vol = spec?.volumeSceneUnits ?? 1.0
+                // Max useful particle count: 50/unit³ at scene scale → hundreds per tank
+                let density = particleDensityUnit == .perCubicCm
+                    ? particleDensity * 0.000001  // /cm³ → /scene-unit³ (1m³)
+                    : particleDensity * 0.000001  // /m³  → /scene-unit³
+                let totalParticles = min(2000, max(5, Int(vol * density * fillFraction)))
                 HStack {
                     Text("Computed particles").font(.system(size: 9, design: .monospaced)).foregroundColor(.white.opacity(0.4))
                     Spacer()
