@@ -40,10 +40,10 @@ public final class MantisNavModel: ObservableObject {
     // ── Trajectory link ──────────────────────────────────────────────
     @Published public var showTargetBodySelector: Bool = false
     @Published public var isTrajectoryLinked: Bool = false
-    @Published public var trajectoryTargetId: String = "499"       // default: Mars
+    @Published public var trajectoryTargetId:   String = "499"
     @Published public var trajectoryTargetName: String = "Mars"
-    @Published public var trajectoryLinkedPropSetId: UUID? = nil   // which prop set is linked
-    @Published public var showTrajectorySection: Bool = true        // expanded in settings
+    @Published public var trajectoryLinkedPropSetId: UUID? = nil
+    @Published public var showTrajectorySection: Bool = true
     // Chemistry — MULTIPLE propellant sets (oxidizer+fuel+chamber each),
     // all contributing to the launch force, each assignable to a 3D asset
     public struct PropSet: Identifiable {
@@ -475,8 +475,8 @@ public final class MantisNavModel: ObservableObject {
         // yaw: chemistry mode uses chemJoyX; drone uses joyX
         // Flag manual override when trajectory is linked and user steers
         let trajEng = ArcTrajectoryEngine.shared
-        let hasInput = (chemistryMode ? abs(chemJoyX) + abs(chemJoyY) : abs(joyX) + abs(joyY)) > 0.05
-        if trajEng.isLinked && hasInput && !trajEng.isManualOverride {
+        let _input = (chemistryMode ? abs(chemJoyX)+abs(chemJoyY) : abs(joyX)+abs(joyY))
+        if trajEng.isLinked && _input > 0.05 && !trajEng.isManualOverride {
             trajEng.manualOverride()
         }
         let activeJoyX = chemistryMode ? chemJoyX : joyX
@@ -598,7 +598,7 @@ struct MantisHUDOverlay: View {
                 Text(String(format: "H:%.2f V:%.2f", model.hudVelH, model.hudVelV))
                     .font(.system(size: 9, design: .monospaced))
                     .foregroundColor(.white.opacity(0.6))
-                // Trajectory status — compact pill
+                // Trajectory status pill — tap to return to nav or unlink
                 ArcNavStatusPill(model: model)
                 Button { model.deactivate() } label: {
                     Image(systemName: "xmark").font(.system(size: 10, weight: .bold))
@@ -829,143 +829,6 @@ struct MantisSettingsSheet: View {
     @ObservedObject var model: MantisNavModel        // direct observation —
     @Environment(\.dismiss) var dismiss              // adds/deletes update live
 
-    @ViewBuilder
-    private var trajectoryCard: some View {
-        MantisTrajectoryCard(model: model)
-    }
-    .padding(.horizontal,12).padding(.vertical,10)
-
-    if model.showTrajectorySection {
-        Divider().background(Color.cyan.opacity(0.15))
-        VStack(alignment:.leading, spacing:10) {
-
-            // Target body selector (inline list, not a sheet)
-            Text("TARGET BODY")
-                .font(.system(size:8,weight:.bold,design:.monospaced))
-                .foregroundColor(.white.opacity(0.4)).tracking(1.5)
-
-            ScrollView(.horizontal, showsIndicators:false) {
-                HStack(spacing:6) {
-                    ForEach(ArcCelestialBody.catalog.prefix(12), id:\.id) { body in
-                        let selected = model.trajectoryTargetId == body.id
-                        Button {
-                            model.trajectoryTargetId  = body.id
-                            model.trajectoryTargetName = body.name
-                            ArcTrajectoryEngine.shared.targetBodyId   = body.id
-                            ArcTrajectoryEngine.shared.targetBodyName = body.name
-                        } label: {
-                            VStack(spacing:3) {
-                                Text(body.symbol).font(.system(size:14))
-                                Text(body.name)
-                                    .font(.system(size:7,weight:.semibold,design:.monospaced))
-                            }
-                            .frame(width:54, height:54)
-                            .background(selected
-                                ? Color.cyan.opacity(0.22) : Color.white.opacity(0.04))
-                            .clipShape(RoundedRectangle(cornerRadius:8))
-                            .overlay(RoundedRectangle(cornerRadius:8)
-                                .stroke(selected
-                                    ? Color.cyan.opacity(0.6) : Color.white.opacity(0.08),
-                                        lineWidth:1))
-                        }
-                        .foregroundColor(selected ? .cyan : .white.opacity(0.65))
-                    }
-                }.padding(.horizontal,12)
-            }
-
-            // Link to propulsion set
-            Text("LINK TO PROPULSION SET")
-                .font(.system(size:8,weight:.bold,design:.monospaced))
-                .foregroundColor(.white.opacity(0.4)).tracking(1.5)
-                .padding(.horizontal,12)
-
-            ScrollView(.horizontal, showsIndicators:false) {
-                HStack(spacing:6) {
-                    // "No link" option
-                    Button {
-                        model.trajectoryLinkedPropSetId = nil
-                    } label: {
-                        Text("No Link")
-                            .font(.system(size:8,weight:.semibold,design:.monospaced))
-                            .padding(.horizontal,10).padding(.vertical,6)
-                            .background(model.trajectoryLinkedPropSetId == nil
-                                ? Color.white.opacity(0.15) : Color.white.opacity(0.04))
-                            .clipShape(Capsule())
-                            .foregroundColor(model.trajectoryLinkedPropSetId == nil
-                                ? .white : .white.opacity(0.45))
-                    }
-                    ForEach(model.propSets) { s in
-                        let linked = model.trajectoryLinkedPropSetId == s.id
-                        Button {
-                            model.trajectoryLinkedPropSetId = linked ? nil : s.id
-                        } label: {
-                            HStack(spacing:4) {
-                                if linked {
-                                    Circle().fill(Color.cyan)
-                                        .frame(width:5,height:5)
-                                }
-                                Text("SET \(model.propSets.firstIndex(where:{$0.id==s.id}).map{$0+1} ?? 1)")
-                                    .font(.system(size:8,weight:.bold,design:.monospaced))
-                            }
-                            .padding(.horizontal,10).padding(.vertical,6)
-                            .background(linked
-                                ? Color.cyan.opacity(0.2) : Color.white.opacity(0.04))
-                            .clipShape(Capsule())
-                            .overlay(Capsule().stroke(
-                                linked ? Color.cyan.opacity(0.6) : Color.white.opacity(0.08),
-                                lineWidth:1))
-                            .foregroundColor(linked ? .cyan : .white.opacity(0.55))
-                        }
-                    }
-                }.padding(.horizontal,12)
-            }
-
-            // ACTIVATE / DEACTIVATE button
-            Button {
-                let traj = ArcTrajectoryEngine.shared
-                if model.isTrajectoryLinked {
-                    traj.unlink()
-                    model.isTrajectoryLinked = false
-                } else {
-                    model.isTrajectoryLinked = true
-                    Task {
-                        let vNode = model.vehicleNode(in: labVM.scene) ?? SCNNode()
-                        await traj.link(scene: labVM.scene, vehicleNode: vNode,
-                                        targetId: model.trajectoryTargetId)
-                    }
-                }
-            } label: {
-                HStack(spacing:8) {
-                    Image(systemName: model.isTrajectoryLinked
-                          ? "stop.circle.fill" : "paperplane.circle.fill")
-                        .font(.system(size:13))
-                    Text(model.isTrajectoryLinked
-                         ? "UNLINK TRAJECTORY" : "ACTIVATE TRAJECTORY")
-                        .font(.system(size:10,weight:.black,design:.monospaced))
-                        .tracking(1)
-                }
-                .frame(maxWidth:.infinity).padding(.vertical,11)
-                .background(model.isTrajectoryLinked
-                    ? Color.red.opacity(0.18) : Color.cyan.opacity(0.16))
-                .foregroundColor(model.isTrajectoryLinked ? .red : .cyan)
-                .clipShape(RoundedRectangle(cornerRadius:9))
-                .overlay(RoundedRectangle(cornerRadius:9)
-                    .stroke(model.isTrajectoryLinked
-                        ? Color.red.opacity(0.45) : Color.cyan.opacity(0.45),
-                            lineWidth:1))
-            }
-            .padding(.horizontal,12).padding(.bottom,12)
-        }
-    }
-}
-.background(Color.cyan.opacity(0.05))
-.clipShape(RoundedRectangle(cornerRadius:12))
-.overlay(RoundedRectangle(cornerRadius:12)
-    .stroke(model.isTrajectoryLinked
-        ? Color.cyan.opacity(0.5) : Color.cyan.opacity(0.15), lineWidth:1))
-    }
-
-
     var body: some View {
         ZStack {
             Color(red: 0.024, green: 0.039, blue: 0.063).ignoresSafeArea()
@@ -985,7 +848,9 @@ struct MantisSettingsSheet: View {
                         }
                     }.padding(.top, 16)
 
-                    trajectoryCard
+                    // ── TRAJECTORY NAVIGATION (inline card) ──────────────
+                    MantisTrajectoryCard(model: model)
+                        .environmentObject(themeVM)
 
                     // ── VEHICLE — default drone or any imported 3D asset ──
                     VStack(alignment: .leading, spacing: 8) {
@@ -1219,83 +1084,188 @@ struct MantisSettingsSheet: View {
     }
 }
 
-// MARK: — Compact NAV status pill (extracted for type-checker relief)
+// MARK: — ArcNavStatusPill — compact trajectory status in HUD header
 struct ArcNavStatusPill: View {
     @ObservedObject var model: MantisNavModel
-    private var traj: ArcTrajectoryEngine { ArcTrajectoryEngine.shared }
     var body: some View {
         Button {
-            if traj.isLinked && traj.isManualOverride { traj.returnToNav() }
-            else if traj.isLinked { traj.unlink(); model.isTrajectoryLinked = false }
+            let t = ArcTrajectoryEngine.shared
+            if t.isLinked && t.isManualOverride { t.returnToNav() }
+            else if t.isLinked { t.unlink(); model.isTrajectoryLinked = false }
         } label: {
             HStack(spacing: 3) {
                 if model.isTrajectoryLinked {
-                    Circle()
-                        .fill(traj.isManualOverride ? Color.yellow : Color.cyan)
+                    Circle().fill(ArcTrajectoryEngine.shared.isManualOverride
+                                  ? Color.yellow : Color.cyan)
                         .frame(width: 5, height: 5)
                 }
                 Text(model.isTrajectoryLinked
-                     ? (traj.isManualOverride ? "↩ NAV" : "NAV") : "NAV")
+                     ? (ArcTrajectoryEngine.shared.isManualOverride ? "↩ NAV" : "NAV") : "NAV")
                     .font(.system(size: 7.5, weight: .black, design: .monospaced))
                     .foregroundColor(model.isTrajectoryLinked
-                        ? (traj.isManualOverride ? .yellow : .cyan) : .white.opacity(0.28))
+                        ? (ArcTrajectoryEngine.shared.isManualOverride ? .yellow : .cyan)
+                        : .white.opacity(0.28))
             }
             .padding(.horizontal, 6).padding(.vertical, 3)
-            .background(model.isTrajectoryLinked
-                ? (traj.isManualOverride ? Color.yellow.opacity(0.14) : Color.cyan.opacity(0.14))
-                : Color.white.opacity(0.06))
+            .background(model.isTrajectoryLinked ? Color.cyan.opacity(0.14) : Color.white.opacity(0.06))
             .clipShape(Capsule())
             .overlay(Capsule().stroke(
-                model.isTrajectoryLinked
-                    ? (traj.isManualOverride ? Color.yellow.opacity(0.5) : Color.cyan.opacity(0.5))
-                    : Color.white.opacity(0.1), lineWidth: 1))
+                model.isTrajectoryLinked ? Color.cyan.opacity(0.5) : Color.white.opacity(0.1),
+                lineWidth: 1))
         }
     }
 }
 
-// MARK: — Standalone trajectory card (extracted from MantisSettingsSheet for type-checker)
+// MARK: — MantisTrajectoryCard — inline trajectory section in MantisSettingsSheet
+// Extracted to its own struct so it doesn't contribute to MantisSettingsSheet.body complexity
 struct MantisTrajectoryCard: View {
     @ObservedObject var model: MantisNavModel
     @EnvironmentObject var themeVM: ArcThemeViewModel
     @EnvironmentObject var labVM: ArcLabViewModel
     var body: some View {
-        MantisTrajectoryCardTop(model: model)
+        VStack(alignment: .leading, spacing: 0) {
+            // ── Header row ──────────────────────────────────────────
+            HStack {
+                Image(systemName: "paperplane.fill")
+                    .font(.system(size: 9)).foregroundColor(.cyan)
+                Text("TRAJECTORY NAVIGATION")
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .foregroundColor(.cyan).tracking(2)
+                Spacer()
+                if model.isTrajectoryLinked {
+                    HStack(spacing: 4) {
+                        Circle().fill(Color.green).frame(width:6,height:6)
+                            .shadow(color:.green,radius:3)
+                        Text("LINKED")
+                            .font(.system(size:7.5,weight:.bold,design:.monospaced))
+                            .foregroundColor(.green)
+                    }
+                }
+                Button {
+                    withAnimation(.easeInOut(duration:0.2)) {
+                        model.showTrajectorySection.toggle()
+                    }
+                } label: {
+                    Image(systemName: model.showTrajectorySection ? "chevron.up" : "chevron.down")
+                        .font(.system(size:9,weight:.bold)).foregroundColor(.cyan.opacity(0.7))
+                }
+            }
+            .padding(.horizontal,12).padding(.vertical,10)
+
+            if model.showTrajectorySection {
+                Divider().background(Color.cyan.opacity(0.15))
+                MantisTrajectoryCardBody(model: model)
+                    .environmentObject(labVM)
+            }
+        }
+        .background(Color.cyan.opacity(0.05))
+        .clipShape(RoundedRectangle(cornerRadius:12))
+        .overlay(RoundedRectangle(cornerRadius:12)
+            .stroke(model.isTrajectoryLinked ? Color.cyan.opacity(0.5) : Color.cyan.opacity(0.15),
+                    lineWidth:1))
     }
 }
 
-struct MantisTrajectoryCardTop: View {
+// Split body for type-checker
+struct MantisTrajectoryCardBody: View {
     @ObservedObject var model: MantisNavModel
+    @EnvironmentObject var labVM: ArcLabViewModel
     var body: some View {
-// ── TRAJECTORY NAVIGATION ────────────────────────────
-// Inline in panel — no separate sheet
-// Link a propulsion set to a real-time Horizons trajectory
-VStack(alignment: .leading, spacing: 0) {
-    // Header row
-    HStack {
-        Image(systemName: "paperplane.fill")
-            .font(.system(size: 9)).foregroundColor(.cyan)
-        Text("TRAJECTORY NAVIGATION")
-            .font(.system(size: 9, weight: .bold, design: .monospaced))
-            .foregroundColor(.cyan).tracking(2)
-        Spacer()
-        // Link status indicator
-        if model.isTrajectoryLinked {
-            HStack(spacing: 4) {
-                Circle().fill(Color.green).frame(width:6,height:6)
-                    .shadow(color:.green,radius:3)
-                Text("LINKED").font(.system(size:7.5,weight:.bold,design:.monospaced))
-                    .foregroundColor(.green)
+        VStack(alignment:.leading, spacing:10) {
+            // Target picker
+            Text("TARGET BODY")
+                .font(.system(size:8,weight:.bold,design:.monospaced))
+                .foregroundColor(.white.opacity(0.4)).tracking(1.5)
+                .padding(.horizontal,12).padding(.top,10)
+            ScrollView(.horizontal, showsIndicators:false) {
+                HStack(spacing:6) {
+                    ForEach(ArcCelestialBody.catalog.prefix(12), id:\.id) { body in
+                        let sel = model.trajectoryTargetId == body.id
+                        Button {
+                            model.trajectoryTargetId   = body.id
+                            model.trajectoryTargetName = body.name
+                            ArcTrajectoryEngine.shared.targetBodyId   = body.id
+                            ArcTrajectoryEngine.shared.targetBodyName = body.name
+                        } label: {
+                            VStack(spacing:3) {
+                                Text(body.symbol).font(.system(size:14))
+                                Text(body.name).font(.system(size:7,weight:.semibold,design:.monospaced))
+                            }
+                            .frame(width:54,height:54)
+                            .background(sel ? Color.cyan.opacity(0.22) : Color.white.opacity(0.04))
+                            .clipShape(RoundedRectangle(cornerRadius:8))
+                            .overlay(RoundedRectangle(cornerRadius:8)
+                                .stroke(sel ? Color.cyan.opacity(0.6) : Color.white.opacity(0.08),lineWidth:1))
+                        }
+                        .foregroundColor(sel ? .cyan : .white.opacity(0.65))
+                    }
+                }.padding(.horizontal,12)
             }
-        }
-        Button {
-            withAnimation(.easeInOut(duration:0.2)) {
-                model.showTrajectorySection.toggle()
+            // Prop set link
+            Text("LINK TO PROPULSION SET")
+                .font(.system(size:8,weight:.bold,design:.monospaced))
+                .foregroundColor(.white.opacity(0.4)).tracking(1.5)
+                .padding(.horizontal,12)
+            ScrollView(.horizontal, showsIndicators:false) {
+                HStack(spacing:6) {
+                    Button {
+                        model.trajectoryLinkedPropSetId = nil
+                    } label: {
+                        Text("No Link")
+                            .font(.system(size:8,weight:.semibold,design:.monospaced))
+                            .padding(.horizontal,10).padding(.vertical,6)
+                            .background(model.trajectoryLinkedPropSetId == nil
+                                ? Color.white.opacity(0.15) : Color.white.opacity(0.04))
+                            .clipShape(Capsule())
+                            .foregroundColor(model.trajectoryLinkedPropSetId == nil
+                                ? .white : .white.opacity(0.45))
+                    }
+                    ForEach(model.propSets) { s in
+                        let linked = model.trajectoryLinkedPropSetId == s.id
+                        let idx = model.propSets.firstIndex(where:{$0.id==s.id}).map{$0+1} ?? 1
+                        Button { model.trajectoryLinkedPropSetId = linked ? nil : s.id } label: {
+                            HStack(spacing:4) {
+                                if linked { Circle().fill(Color.cyan).frame(width:5,height:5) }
+                                Text("SET \(idx)")
+                                    .font(.system(size:8,weight:.bold,design:.monospaced))
+                            }
+                            .padding(.horizontal,10).padding(.vertical,6)
+                            .background(linked ? Color.cyan.opacity(0.2) : Color.white.opacity(0.04))
+                            .clipShape(Capsule())
+                            .overlay(Capsule().stroke(linked ? Color.cyan.opacity(0.6) : Color.white.opacity(0.08),lineWidth:1))
+                            .foregroundColor(linked ? .cyan : .white.opacity(0.55))
+                        }
+                    }
+                }.padding(.horizontal,12)
             }
-        } label: {
-            Image(systemName: model.showTrajectorySection
-                  ? "chevron.up" : "chevron.down")
-                .font(.system(size:9,weight:.bold))
-                .foregroundColor(.cyan.opacity(0.7))
+            // Activate button
+            Button {
+                let t = ArcTrajectoryEngine.shared
+                if model.isTrajectoryLinked {
+                    t.unlink(); model.isTrajectoryLinked = false
+                } else {
+                    model.isTrajectoryLinked = true
+                    Task {
+                        let vNode = model.vehicleNode(in: labVM.scene) ?? SCNNode()
+                        await t.link(scene: labVM.scene, vehicleNode: vNode,
+                                     targetId: model.trajectoryTargetId)
+                    }
+                }
+            } label: {
+                HStack(spacing:8) {
+                    Image(systemName: model.isTrajectoryLinked
+                          ? "stop.circle.fill" : "paperplane.circle.fill").font(.system(size:13))
+                    Text(model.isTrajectoryLinked ? "UNLINK TRAJECTORY" : "ACTIVATE TRAJECTORY")
+                        .font(.system(size:10,weight:.black,design:.monospaced)).tracking(1)
+                }
+                .frame(maxWidth:.infinity).padding(.vertical,11)
+                .background(model.isTrajectoryLinked ? Color.red.opacity(0.18) : Color.cyan.opacity(0.16))
+                .foregroundColor(model.isTrajectoryLinked ? .red : .cyan)
+                .clipShape(RoundedRectangle(cornerRadius:9))
+                .overlay(RoundedRectangle(cornerRadius:9)
+                    .stroke(model.isTrajectoryLinked ? Color.red.opacity(0.45) : Color.cyan.opacity(0.45),lineWidth:1))
+            }
+            .padding(.horizontal,12).padding(.bottom,12)
         }
     }
 }
