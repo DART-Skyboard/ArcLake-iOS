@@ -1,5 +1,19 @@
 name: Build & Deploy ArcLake macOS to TestFlight
 
+# ═══════════════════════════════════════════════════════════════════
+# PREREQUISITES — Add these two secrets in GitHub repo settings:
+#   MAC_CERTIFICATE_BASE64  — Base64 of "Mac App Distribution" .p12 cert
+#                             From: developer.apple.com → Certificates → Mac App Distribution
+#   MAC_PROFILE_BASE64      — Base64 of macOS App Store provisioning profile (.provisionprofile)
+#                             From: developer.apple.com → Profiles → Mac App Store
+#                             App ID: DART-Meadow-LLC.Cotharticren
+#                             Cert: Mac App Distribution (created above)
+#                             Name: ArcLakeMacFlow
+#
+# All other secrets (CERTIFICATE_PASSWORD, KEYCHAIN_PASSWORD, APP_STORE_CONNECT_*)
+# are already in the repo from the iOS build.
+# ═══════════════════════════════════════════════════════════════════
+
 on:
   workflow_dispatch:
 
@@ -26,23 +40,21 @@ jobs:
           echo "$ASC_KEY" > ~/.appstoreconnect/private_keys/AuthKey_NQXQ595W59.p8
           chmod 600 ~/.appstoreconnect/private_keys/AuthKey_NQXQ595W59.p8
 
-      - name: Setup keychain + Apple Distribution cert + iOS profile
-        # Mac Catalyst uses the same iOS distribution cert + provisioning profile.
-        # No separate Mac profile is needed — the iOS profile covers Catalyst builds.
+      - name: Setup keychain + Mac App Distribution cert + macOS profile
         env:
-          CERTIFICATE_BASE64:   ${{ secrets.CERTIFICATE_BASE64 }}
-          CERTIFICATE_PASSWORD: ${{ secrets.CERTIFICATE_PASSWORD }}
-          PROFILE_BASE64:       ${{ secrets.PROVISIONING_PROFILE_BASE64 }}
-          KEYCHAIN_PASSWORD:    ${{ secrets.KEYCHAIN_PASSWORD }}
+          MAC_CERTIFICATE_BASE64:  ${{ secrets.MAC_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD:    ${{ secrets.CERTIFICATE_PASSWORD }}
+          MAC_PROFILE_BASE64:      ${{ secrets.MAC_PROFILE_BASE64 }}
+          KEYCHAIN_PASSWORD:       ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           KEYCHAIN_PATH="$RUNNER_TEMP/signing.keychain-db"
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
-          # Import distribution certificate
-          P12_PATH="$RUNNER_TEMP/dist.p12"
-          echo "$CERTIFICATE_BASE64" | base64 --decode > "$P12_PATH"
+          # Import Mac App Distribution certificate
+          P12_PATH="$RUNNER_TEMP/mac_dist.p12"
+          echo "$MAC_CERTIFICATE_BASE64" | base64 --decode > "$P12_PATH"
           security import "$P12_PATH" -k "$KEYCHAIN_PATH" \
             -P "$CERTIFICATE_PASSWORD" \
             -T /usr/bin/codesign -T /usr/bin/security -f pkcs12
@@ -50,39 +62,41 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: \
             -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
-          # Install the iOS provisioning profile (valid for Catalyst)
-          PP_PATH="$RUNNER_TEMP/arclake.mobileprovision"
-          echo "$PROFILE_BASE64" | base64 --decode > "$PP_PATH"
+          # Install macOS App Store provisioning profile
+          PP_PATH="$RUNNER_TEMP/arclake_mac.provisionprofile"
+          echo "$MAC_PROFILE_BASE64" | base64 --decode > "$PP_PATH"
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           PP_UUID=$(security cms -D -i "$PP_PATH" 2>/dev/null | \
-            plutil -extract UUID raw - 2>/dev/null || echo "4f27288c-6ada-4a8b-b93a-b42dec94a720")
-          cp "$PP_PATH" ~/Library/MobileDevice/Provisioning\ Profiles/"$PP_UUID.mobileprovision"
-          echo "PROFILE_UUID=$PP_UUID" >> $GITHUB_ENV
-          echo "Profile UUID: $PP_UUID"
+            plutil -extract UUID raw - 2>/dev/null || echo "")
+          if [ -n "$PP_UUID" ]; then
+            cp "$PP_PATH" ~/Library/MobileDevice/Provisioning\ Profiles/"$PP_UUID.provisionprofile"
+            echo "MAC_PROFILE_UUID=$PP_UUID" >> $GITHUB_ENV
+            echo "macOS profile UUID: $PP_UUID"
+          else
+            echo "Warning: could not extract profile UUID"
+          fi
 
-          # List identities to confirm cert is loaded
-          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+          # Confirm cert loaded
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep -i "Mac App Distribution" || \
+            echo "Warning: Mac App Distribution cert not found"
 
       - name: Install xcodegen
         run: |
           brew install xcodegen 2>/dev/null || brew upgrade xcodegen 2>/dev/null || true
           xcodegen version
 
-      - name: Generate Xcode project (iOS + macOS Catalyst targets)
+      - name: Generate Xcode project
         run: xcodegen generate --spec project.yml
 
       - name: Resolve Swift packages
         run: |
           xcodebuild -resolvePackageDependencies \
             -project ArcLake.xcodeproj \
-            -scheme ArcLakeMac \
-            -destination "generic/platform=macOS,variant=Mac Catalyst"
+            -scheme ArcLakeMac
 
       - name: Archive — Mac Catalyst
-        env:
-          PROFILE_UUID: ${{ env.PROFILE_UUID }}
         run: |
-          PP="${PROFILE_UUID:-4f27288c-6ada-4a8b-b93a-b42dec94a720}"
+          PP="${MAC_PROFILE_UUID:-}"
           set -o pipefail
           xcodebuild archive \
             -project ArcLake.xcodeproj \
@@ -91,117 +105,60 @@ jobs:
             -destination "generic/platform=macOS,variant=Mac Catalyst" \
             -archivePath "$RUNNER_TEMP/ArcLakeMac.xcarchive" \
             CODE_SIGN_STYLE=Manual \
-            CODE_SIGN_IDENTITY="Apple Distribution" \
-            PROVISIONING_PROFILE="$PP" \
-            PROVISIONING_PROFILE_SPECIFIER="ArcLakeGitHubFlow" \
+            CODE_SIGN_IDENTITY="Mac App Distribution" \
+            PROVISIONING_PROFILE_SPECIFIER="ArcLakeMacFlow" \
             DEVELOPMENT_TEAM=L7AHWS9Q6V \
             SUPPORTS_MACCATALYST=YES \
             OTHER_CODE_SIGN_FLAGS="--keychain $RUNNER_TEMP/signing.keychain-db" \
             2>&1 | tee /tmp/xcodebuild_mac.log
           BUILD_EXIT=${PIPESTATUS[0]}
-          echo "xcodebuild exit: $BUILD_EXIT"
           if [ "$BUILD_EXIT" -ne 0 ]; then
-            echo "=== LAST 60 LINES OF BUILD LOG ==="
-            tail -60 /tmp/xcodebuild_mac.log
-            echo "=== SWIFT ERRORS ==="
+            echo "=== BUILD ERRORS ==="
             grep -E "error:|BUILD FAILED" /tmp/xcodebuild_mac.log | head -30
             exit 1
           fi
           ls -la "$RUNNER_TEMP/ArcLakeMac.xcarchive"
 
-      - name: Export — Mac Catalyst PKG via xcodebuild exportArchive
+      - name: Export macOS package
         run: |
-          # Write ExportOptions.plist for Mac Catalyst App Store upload
           cat > "$RUNNER_TEMP/ExportOptions.plist" << 'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
             "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
+          <plist version="1.0"><dict>
             <key>method</key>               <string>app-store-connect</string>
             <key>teamID</key>               <string>L7AHWS9Q6V</string>
             <key>destination</key>          <string>export</string>
             <key>signingStyle</key>         <string>manual</string>
-            <key>signingCertificate</key>   <string>Apple Distribution</string>
-            <key>installerSigningCertificate</key> <string>3rd Party Mac Developer Installer: DART Meadow LLC</string>
-          </dict>
-          </plist>
+            <key>signingCertificate</key>   <string>Mac App Distribution</string>
+          </dict></plist>
           PLIST
 
           xcodebuild -exportArchive \
             -archivePath "$RUNNER_TEMP/ArcLakeMac.xcarchive" \
             -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
-            -exportPath "$RUNNER_TEMP/MacExport" \
-            -allowProvisioningUpdates 2>&1 | tail -30 || true
+            -exportPath "$RUNNER_TEMP/MacExport" 2>&1 | tail -20 || true
 
-          # Find the exported pkg or app
           PKG=$(find "$RUNNER_TEMP/MacExport" -name "*.pkg" 2>/dev/null | head -1)
-          APP=$(find "$RUNNER_TEMP/MacExport" -name "*.app" 2>/dev/null | head -1)
-          echo "Exported PKG: $PKG"
-          echo "Exported APP: $APP"
-
-          # Fallback: manually package the archive if exportArchive didn't produce PKG
           if [ -z "$PKG" ]; then
-            echo "exportArchive did not produce .pkg — packaging manually"
+            # Fallback: productbuild from archive
             ARCHIVE_APP=$(find "$RUNNER_TEMP/ArcLakeMac.xcarchive/Products" -name "*.app" | head -1)
-            echo "Archive app: $ARCHIVE_APP"
-
-            # Re-sign with Apple Distribution for App Store
-            codesign --force --deep --sign "Apple Distribution" \
-              --keychain "$RUNNER_TEMP/signing.keychain-db" \
-              "$ARCHIVE_APP" 2>&1 || true
-
-            # Package as PKG using productbuild
-            PKG_OUT="$RUNNER_TEMP/ArcLakeMac.pkg"
-            productbuild \
-              --component "$ARCHIVE_APP" /Applications \
-              --sign "3rd Party Mac Developer Installer: DART Meadow LLC" \
-              --keychain "$RUNNER_TEMP/signing.keychain-db" \
-              "$PKG_OUT" 2>&1 || \
-            # If installer cert not found, try without signing (upload will attempt)
-            productbuild \
-              --component "$ARCHIVE_APP" /Applications \
-              "$PKG_OUT" 2>&1 || true
-
-            if [ -f "$PKG_OUT" ]; then
-              PKG="$PKG_OUT"
-              echo "Manually packaged: $PKG"
-            fi
+            PKG="$RUNNER_TEMP/ArcLakeMac.pkg"
+            productbuild --component "$ARCHIVE_APP" /Applications "$PKG" 2>&1 || true
           fi
+          echo "PKG_PATH=$PKG" >> $GITHUB_ENV
+          ls -la "$PKG" || echo "No PKG produced"
 
-          echo "MACOS_PKG=$PKG" >> $GITHUB_ENV
-          ls -la "$PKG" || echo "Warning: no PKG found — will try APP zip"
-          echo "MACOS_APP=$APP" >> $GITHUB_ENV
-
-      - name: Upload to App Store Connect (TestFlight)
+      - name: Upload to App Store Connect
         run: |
-          UPLOAD_FILE="${MACOS_PKG:-$MACOS_APP}"
-          FILE_TYPE="osx"
-
-          if [ -z "$UPLOAD_FILE" ] || [ ! -e "$UPLOAD_FILE" ]; then
-            echo "No upload file found — checking archive directly"
-            UPLOAD_FILE=$(find "$RUNNER_TEMP/ArcLakeMac.xcarchive/Products/Applications" -name "*.app" | head -1)
-            echo "Using archive app: $UPLOAD_FILE"
-          fi
-
-          echo "Uploading: $UPLOAD_FILE"
           RESULT=$(xcrun altool --upload-app \
-            --type "$FILE_TYPE" \
-            --file "$UPLOAD_FILE" \
+            --type osx \
+            --file "$PKG_PATH" \
             --apiKey "NQXQ595W59" \
             --apiIssuer "90056871-d791-45f6-a770-21399c45e491" \
             --apiKeyPath ~/.appstoreconnect/private_keys/AuthKey_NQXQ595W59.p8 2>&1)
           echo "$RESULT"
-
           if echo "$RESULT" | grep -iE "UPLOAD FAILED|State_Error|Validation failed" | grep -v "No errors"; then
-            echo "Upload failed — trying xcrun notarytool as fallback"
-            # Try with notarytool (Xcode 13+)
-            xcrun notarytool submit "$UPLOAD_FILE" \
-              --key ~/.appstoreconnect/private_keys/AuthKey_NQXQ595W59.p8 \
-              --key-id "NQXQ595W59" \
-              --issuer "90056871-d791-45f6-a770-21399c45e491" \
-              --wait 2>&1 || true
-            exit 0   # Don't fail the CI even if upload has issues — log is the evidence
+            echo "Upload failed — see above"; exit 1
           fi
-
-          echo "✓ Arc Lake macOS v1.5.2 (274) submitted to App Store Connect"
+          echo "✓ Arc Lake macOS v1.5.2 (274) submitted to App Store Connect TestFlight"
