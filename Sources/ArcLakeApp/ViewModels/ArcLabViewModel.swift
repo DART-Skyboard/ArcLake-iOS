@@ -591,9 +591,13 @@ public final class ArcLabViewModel: ObservableObject {
             quantumAtoms[i].devWarmup = 0
             quantumAtoms[i].isActive = true
         }
+        // Pass current scene physics to quantum engine
+        physEngine.gravity         = Float(physics.gravity)
+        physEngine.startEnvTempF   = Float(physics.temperature)
+        physEngine.startEnvPressure= Float(physics.pressure)
         displayLink = CADisplayLink(target: self, selector: #selector(physicsDisplayLinkTick))
         displayLink?.add(to: .main, forMode: .common)
-        log("Physics simulation started")
+        log("Physics simulation started — LEATR neutron-first propagation")
     }
 
     public func stopPhysicsSimulation() {
@@ -607,7 +611,11 @@ public final class ArcLabViewModel: ObservableObject {
 
     @objc private func physicsDisplayLinkTick() {
         guard isPhysicsSimulating else { return }
-        physEngine.tick(atoms: &quantumAtoms, dt: 0.016)
+        physEngine.tick(atoms: &quantumAtoms, dt: 0.016,
+                        envTempF:      physEngine.startEnvTempF,
+                        envGravity:    physEngine.gravity,
+                        envPressurePsi: physEngine.startEnvPressure,
+                        envWindMS:     Float(physics.windVelocity))
         physEngine.captureFrame(atoms: quantumAtoms)
         recordedFrameCount = physEngine.frames.count
         playheadFrame = recordedFrameCount
@@ -648,9 +656,12 @@ public final class ArcLabViewModel: ObservableObject {
         var candidate = spiralPosition(index: index, spacing: atomicRadius * 3.5)
 
         // Apply physics offsets
-        // Spawn atoms AT floor level (y=0.6) so physics sim start causes no jump.
-        // The floor in engineTick is at y=0.6 — matching prevents the altitude snap.
-        candidate.y = 0.6
+        // Atoms spawn at their natural scene position above the floor.
+        // The LEATR tick floor is at y=0.6 — candidate must be >= 0.6.
+        // Higher gravity makes atoms sit slightly lower; higher temp raises them.
+        let gravityOffset = -gravity * 0.02   // gentle pull, not extreme
+        let tempLift      = (temp - 72.0) * 0.005   // warmer = slightly elevated
+        candidate.y = max(0.6, candidate.y + gravityOffset + tempLift)
         // Higher pressure compresses the arrangement
         let pressureFactor = max(0.3, 1.0 - pressure * 0.005)
         candidate.x *= pressureFactor
