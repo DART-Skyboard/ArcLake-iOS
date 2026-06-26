@@ -831,37 +831,7 @@ struct MantisSettingsSheet: View {
 
     @ViewBuilder
     private var trajectoryCard: some View {
-        // ── TRAJECTORY NAVIGATION ────────────────────────────
-// Inline in panel — no separate sheet
-// Link a propulsion set to a real-time Horizons trajectory
-VStack(alignment: .leading, spacing: 0) {
-    // Header row
-    HStack {
-        Image(systemName: "paperplane.fill")
-            .font(.system(size: 9)).foregroundColor(.cyan)
-        Text("TRAJECTORY NAVIGATION")
-            .font(.system(size: 9, weight: .bold, design: .monospaced))
-            .foregroundColor(.cyan).tracking(2)
-        Spacer()
-        // Link status indicator
-        if model.isTrajectoryLinked {
-            HStack(spacing: 4) {
-                Circle().fill(Color.green).frame(width:6,height:6)
-                    .shadow(color:.green,radius:3)
-                Text("LINKED").font(.system(size:7.5,weight:.bold,design:.monospaced))
-                    .foregroundColor(.green)
-            }
-        }
-        Button {
-            withAnimation(.easeInOut(duration:0.2)) {
-                model.showTrajectorySection.toggle()
-            }
-        } label: {
-            Image(systemName: model.showTrajectorySection
-                  ? "chevron.up" : "chevron.down")
-                .font(.system(size:9,weight:.bold))
-                .foregroundColor(.cyan.opacity(0.7))
-        }
+        MantisTrajectoryCard(model: model)
     }
     .padding(.horizontal,12).padding(.vertical,10)
 
@@ -1279,6 +1249,53 @@ struct ArcNavStatusPill: View {
                 model.isTrajectoryLinked
                     ? (traj.isManualOverride ? Color.yellow.opacity(0.5) : Color.cyan.opacity(0.5))
                     : Color.white.opacity(0.1), lineWidth: 1))
+        }
+    }
+}
+
+// MARK: — Standalone trajectory card (extracted from MantisSettingsSheet for type-checker)
+struct MantisTrajectoryCard: View {
+    @ObservedObject var model: MantisNavModel
+    @EnvironmentObject var themeVM: ArcThemeViewModel
+    @EnvironmentObject var labVM: ArcLabViewModel
+    var body: some View {
+        MantisTrajectoryCardTop(model: model)
+    }
+}
+
+struct MantisTrajectoryCardTop: View {
+    @ObservedObject var model: MantisNavModel
+    var body: some View {
+// ── TRAJECTORY NAVIGATION ────────────────────────────
+// Inline in panel — no separate sheet
+// Link a propulsion set to a real-time Horizons trajectory
+VStack(alignment: .leading, spacing: 0) {
+    // Header row
+    HStack {
+        Image(systemName: "paperplane.fill")
+            .font(.system(size: 9)).foregroundColor(.cyan)
+        Text("TRAJECTORY NAVIGATION")
+            .font(.system(size: 9, weight: .bold, design: .monospaced))
+            .foregroundColor(.cyan).tracking(2)
+        Spacer()
+        // Link status indicator
+        if model.isTrajectoryLinked {
+            HStack(spacing: 4) {
+                Circle().fill(Color.green).frame(width:6,height:6)
+                    .shadow(color:.green,radius:3)
+                Text("LINKED").font(.system(size:7.5,weight:.bold,design:.monospaced))
+                    .foregroundColor(.green)
+            }
+        }
+        Button {
+            withAnimation(.easeInOut(duration:0.2)) {
+                model.showTrajectorySection.toggle()
+            }
+        } label: {
+            Image(systemName: model.showTrajectorySection
+                  ? "chevron.up" : "chevron.down")
+                .font(.system(size:9,weight:.bold))
+                .foregroundColor(.cyan.opacity(0.7))
         }
     }
 }
