@@ -67,10 +67,11 @@ public struct DARTRootView: View {
                             .padding(.leading, 6)
 
                             // ── Trajectory Navigation Scrubber ──────────────────
-                            // Shown at top of viewport when Horizons trajectory is linked
-                            ArcTrajectoryScrubberOverlay()
-                                .environmentObject(themeVM)
-                                .allowsHitTesting(ArcTrajectoryEngine.shared.isLinked)
+                            Group {
+                                ArcTrajectoryScrubberOverlay()
+                                    .environmentObject(themeVM)
+                                    .allowsHitTesting(ArcTrajectoryEngine.shared.isLinked)
+                            }
 
                             // Mantis Navigation HUD — bottom-centered over the
                             // 3D viewport, semi-transparent, web parity
