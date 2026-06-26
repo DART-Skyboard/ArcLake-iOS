@@ -594,7 +594,7 @@ public final class ArcLabViewModel: ObservableObject {
         // Pass current scene physics to quantum engine
         physEngine.gravity         = Float(physics.gravity)
         physEngine.startEnvTempF   = Float(physics.temperature)
-        physEngine.startEnvPressure= Float(physics.pressure)
+        physEngine.startEnvPressure = Float(physics.pressure)
         displayLink = CADisplayLink(target: self, selector: #selector(physicsDisplayLinkTick))
         displayLink?.add(to: .main, forMode: .common)
         log("Physics simulation started — LEATR neutron-first propagation")
