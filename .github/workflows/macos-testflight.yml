@@ -83,6 +83,7 @@ jobs:
           PROFILE_UUID: ${{ env.PROFILE_UUID }}
         run: |
           PP="${PROFILE_UUID:-4f27288c-6ada-4a8b-b93a-b42dec94a720}"
+          set -o pipefail
           xcodebuild archive \
             -project ArcLake.xcodeproj \
             -scheme ArcLakeMac \
@@ -96,10 +97,17 @@ jobs:
             DEVELOPMENT_TEAM=L7AHWS9Q6V \
             SUPPORTS_MACCATALYST=YES \
             OTHER_CODE_SIGN_FLAGS="--keychain $RUNNER_TEMP/signing.keychain-db" \
-            | xcpretty --simple 2>/dev/null || true
-
-          ls -la "$RUNNER_TEMP/ArcLakeMac.xcarchive" || \
-            (echo "Archive failed"; ls -la "$RUNNER_TEMP"; exit 1)
+            2>&1 | tee /tmp/xcodebuild_mac.log
+          BUILD_EXIT=${PIPESTATUS[0]}
+          echo "xcodebuild exit: $BUILD_EXIT"
+          if [ "$BUILD_EXIT" -ne 0 ]; then
+            echo "=== LAST 60 LINES OF BUILD LOG ==="
+            tail -60 /tmp/xcodebuild_mac.log
+            echo "=== SWIFT ERRORS ==="
+            grep -E "error:|BUILD FAILED" /tmp/xcodebuild_mac.log | head -30
+            exit 1
+          fi
+          ls -la "$RUNNER_TEMP/ArcLakeMac.xcarchive"
 
       - name: Export — Mac Catalyst PKG via xcodebuild exportArchive
         run: |
