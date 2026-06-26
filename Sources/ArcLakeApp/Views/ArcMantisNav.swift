@@ -37,6 +37,9 @@ public final class MantisNavModel: ObservableObject {
     // Controls propulsion direction/vector while throttles set flow %
     @Published public var chemJoyX: Double = 0     // -1…1 lateral vector
     @Published public var chemJoyY: Double = 0     // -1…1 forward/thrust vector
+    // ── Trajectory link ──────────────────────────────────────────────
+    @Published public var showTargetBodySelector: Bool = false
+    @Published public var isTrajectoryLinked: Bool = false
     // Chemistry — MULTIPLE propellant sets (oxidizer+fuel+chamber each),
     // all contributing to the launch force, each assignable to a 3D asset
     public struct PropSet: Identifiable {
@@ -466,6 +469,12 @@ public final class MantisNavModel: ObservableObject {
         velocity.y += lift
 
         // yaw: chemistry mode uses chemJoyX; drone uses joyX
+        // Flag manual override when trajectory is linked and user steers
+        let trajEng = ArcTrajectoryEngine.shared
+        let hasInput = (chemistryMode ? abs(chemJoyX) + abs(chemJoyY) : abs(joyX) + abs(joyY)) > 0.05
+        if trajEng.isLinked && hasInput && !trajEng.isManualOverride {
+            trajEng.manualOverride()
+        }
         let activeJoyX = chemistryMode ? chemJoyX : joyX
         let activeJoyY_tick = chemistryMode ? chemJoyY : joyY
         let qYaw = simd_quatf(angle: Float(-activeJoyX * yawSpeed), axis: SIMD3<Float>(0, 1, 0))
@@ -585,6 +594,27 @@ struct MantisHUDOverlay: View {
                 Text(String(format: "H:%.2f V:%.2f", model.hudVelH, model.hudVelV))
                     .font(.system(size: 9, design: .monospaced))
                     .foregroundColor(.white.opacity(0.6))
+                // ── Trajectory LINK / RETURN button ──────────────────
+                Button {
+                    let trajEng = ArcTrajectoryEngine.shared
+                    if trajEng.isLinked {
+                        if trajEng.isManualOverride { trajEng.returnToNav() }
+                        else { trajEng.unlink() }
+                    } else {
+                        model.showTargetBodySelector = true
+                    }
+                } label: {
+                    let trajEng = ArcTrajectoryEngine.shared
+                    Text(trajEng.isLinked
+                         ? (trajEng.isManualOverride ? "↩ NAV" : "UNLINK")
+                         : "🛸 NAV")
+                        .font(.system(size: 7.5, weight: .black, design: .monospaced))
+                        .foregroundColor(trajEng.isLinked ? .yellow : .cyan)
+                        .padding(.horizontal, 6).padding(.vertical, 3)
+                        .background(trajEng.isLinked
+                            ? Color.yellow.opacity(0.18) : Color.cyan.opacity(0.14))
+                        .clipShape(Capsule())
+                }
                 Button { model.deactivate() } label: {
                     Image(systemName: "xmark").font(.system(size: 10, weight: .bold))
                         .foregroundColor(.white.opacity(0.6))
