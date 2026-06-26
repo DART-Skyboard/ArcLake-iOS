@@ -2,17 +2,18 @@ import StoreKit
 import SwiftUI
 
 // MARK: — SupportSubscriptionService
-// $4.99/month "Support Development" auto-renewable subscription
-// Product IDs must match what you create in App Store Connect:
-//   Autumn:  DART-Meadow-LLC.Cotharticren.support.monthly
-//   ArcLake: DART-Meadow-LLC.Cotharticren.support.monthly
+// $2.99/month "Support Arc Lake" auto-renewable subscription
+// Product ID in App Store Connect (Auto-Renewable Subscription type):
+//   DART_Meadow_LLC.Cotharticren.support.monthly
+//   (hyphens replaced with underscores — ASC only allows alphanumeric, periods, underscores)
+// Subscription Group: "Arc Lake Support"
 
 @MainActor
 public final class ArcSupportSubscriptionService: ObservableObject {
     public static let shared = ArcSupportSubscriptionService()
 
     // Set this to the correct product ID for each app
-    public var productID: String = "ALM"  // Matches App Store Connect Product ID
+    public var productID: String = "DART_Meadow_LLC.Cotharticren.support.monthly"
 
     @Published public var product: Product?
     @Published public var isSubscribed = false
@@ -186,7 +187,7 @@ public struct ArcSupportSheet: View {
                                     .multilineTextAlignment(.center)
                             }
                         } else {
-                            Text("$2.99 / month")
+                            Text("$2.99/month")  // fallback if ASC product not loaded yet
                                 .font(.system(size:36, weight:.bold, design:.monospaced))
                                 .foregroundColor(accentColor)
                         }
