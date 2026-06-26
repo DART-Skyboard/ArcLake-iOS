@@ -11,6 +11,7 @@ packages:
     url: https://github.com/gonzalezreal/swift-markdown-ui
     from: "2.4.0"
 targets:
+  # ── iOS (primary) ─────────────────────────────────────────────────────
   ArcLakeApp:
     type: application
     platform: iOS
@@ -70,16 +71,97 @@ targets:
         TARGETED_DEVICE_FAMILY: "1,2"
         CURRENT_PROJECT_VERSION: "274"
         MARKETING_VERSION: "1.5.2"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
       configs:
         Debug:
           SWIFT_OPTIMIZATION_LEVEL: "-Onone"
         Release:
           SWIFT_OPTIMIZATION_LEVEL: "-O"
           DEBUG_INFORMATION_FORMAT: "dwarf-with-dsym"
+
+  # ── macOS — Mac Catalyst (runs same iOS source on macOS) ──────────────
+  # Uses SUPPORTS_MACCATALYST so the existing iOS provisioning profile
+  # covers it — no separate Mac profile required.
+  ArcLakeMac:
+    type: application
+    platform: iOS
+    deploymentTarget: "16.0"
+    sources:
+      - Sources/ArcLakeApp
+      - Sources/ArcLakeApp/ArcLakeData.xcdatamodeld
+      - Sources/ArcLakeApp/Resources
+    info:
+      path: Sources/ArcLakeApp/Info.plist
+      properties:
+        CFBundleDisplayName: Arc Lake
+        CFBundleIconName: AppIcon
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        ITSAppUsesNonExemptEncryption: false
+        UIRequiresFullScreen: false
+        UILaunchScreen:
+          UIColorName: ""
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        "UISupportedInterfaceOrientations~ipad":
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UIApplicationSupportsIndirectInputEvents: true
+        NSCameraUsageDescription: Used for AR mode atom visualization
+        NSPhotoLibraryAddUsageDescription: Save GLB exports and screenshots
+        NSMicrophoneUsageDescription: Voice commands for the ArcLake lab assistant
+        NSSpeechRecognitionUsageDescription: Autumn uses speech recognition for voice commands
+    entitlements:
+      path: Sources/ArcLakeApp/ArcLakeApp.entitlements
+    dependencies:
+      - package: swift-markdown-ui
+        product: MarkdownUI
+        embed: false
+        link: true
+      - sdk: ModelIO.framework
+    settings:
+      base:
+        PRODUCT_NAME: "Arc Lake"
+        PRODUCT_BUNDLE_IDENTIFIER: DART-Meadow-LLC.Cotharticren
+        DEVELOPMENT_TEAM: L7AHWS9Q6V
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "Apple Distribution"
+        # Mac Catalyst uses the iOS provisioning profile — no separate Mac profile needed
+        PROVISIONING_PROFILE: "4f27288c-6ada-4a8b-b93a-b42dec94a720"
+        PROVISIONING_PROFILE_SPECIFIER: "ArcLakeGitHubFlow"
+        SWIFT_VERSION: "5.9"
+        CODE_SIGN_ENTITLEMENTS: Sources/ArcLakeApp/ArcLakeApp.entitlements
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        SUPPORTS_MACCATALYST: YES
+        DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER: NO
+        MACCATALYST_DEPLOYMENT_TARGET: "13.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CURRENT_PROJECT_VERSION: "274"
+        MARKETING_VERSION: "1.5.2"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # Exclude ARKit (not available on macOS Catalyst)
+        EXCLUDED_SOURCE_FILE_NAMES[sdk=macosx*]: ""
+      configs:
+        Debug:
+          SWIFT_OPTIMIZATION_LEVEL: "-Onone"
+        Release:
+          SWIFT_OPTIMIZATION_LEVEL: "-O"
+          DEBUG_INFORMATION_FORMAT: "dwarf-with-dsym"
+
 schemes:
   ArcLakeApp:
     build:
       targets:
         ArcLakeApp: all
+    archive:
+      config: Release
+  ArcLakeMac:
+    build:
+      targets:
+        ArcLakeMac: all
     archive:
       config: Release
