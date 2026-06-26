@@ -108,8 +108,9 @@ public final class ArcBlenderExporter {
 
     // MARK: — Build scene JSON from labVM
 
+    @MainActor
     public static func buildSceneJSON(labVM: ArcLabViewModel) -> Data? {
-        let atoms: [ALBAtomExport] = labVM.quantumAtoms.enumerated().compactMap { idx, atomData in
+        let atoms: [ALBAtomExport] = labVM.quantumAtoms.enumerated().compactMap { (idx, atomData) -> ALBAtomExport? in
             guard let el = labVM.selectedElements.first(where: { $0.id == atomData.elementId })
             else { return nil }
             let pos = atomData.root.simdPosition
@@ -143,15 +144,15 @@ public final class ArcBlenderExporter {
         }
 
         let mantis = ALBMantisExport(
-            mode: labVM.mantis?.chemistryMode == true ? "chemistry" : "drone",
+            mode: labVM.mantis.chemistryMode ? "chemistry" : "drone",
             gravity: labVM.physics.gravity,
-            thrust: labVM.mantis?.thrust ?? 0,
-            oxidizerFlow: labVM.mantis?.oxiFlow ?? 0,
-            fuelFlow: labVM.mantis?.fuelFlow ?? 0,
-            chemJoyX: labVM.mantis?.chemJoyX ?? 0,
-            chemJoyY: labVM.mantis?.chemJoyY ?? 0,
-            joyX: labVM.mantis?.joyX ?? 0,
-            joyY: labVM.mantis?.joyY ?? 0,
+            thrust: labVM.mantis.thrust,
+            oxidizerFlow: labVM.mantis.oxiFlow,
+            fuelFlow: labVM.mantis.fuelFlow,
+            chemJoyX: labVM.mantis.chemJoyX,
+            chemJoyY: labVM.mantis.chemJoyY,
+            joyX: labVM.mantis.joyX,
+            joyY: labVM.mantis.joyY,
             environmentPreset: "Earth")
 
         let sceneExport = ALBSceneExport(
@@ -652,6 +653,7 @@ print("[ArcLake] ✓ N panel registered — press N in viewport to open Arc Lake
 
     // MARK: — Export to ZIP (JSON + Python script)
 
+    @MainActor
     public static func exportToZip(labVM: ArcLabViewModel) -> URL? {
         guard let jsonData = buildSceneJSON(labVM: labVM) else { return nil }
         let jsonStr = String(data: jsonData, encoding: .utf8) ?? "{}"
@@ -669,6 +671,8 @@ print("[ArcLake] ✓ N panel registered — press N in viewport to open Arc Lake
         try? jsonData.write(to: jsonURL)
         try? pyScript.data(using: .utf8)?.write(to: pyURL)
 
+        let atomCount  = labVM.selectedElements.count
+        let arcCount   = ArcEdgeExtEngine.shared.extResults.count
         let readme = """
 ARC LAKE → BLENDER EXPORT
 Radical Deepscale / DART Meadow
@@ -677,14 +681,14 @@ HOW TO IMPORT INTO BLENDER:
 1. Open Blender (version 4.0 or later)
 2. Go to the Scripting workspace (tab at top of screen)
 3. Click "Open" and select: arclake_setup.py
-4. Click "Run Script" (▶ button or Ctrl+R)
-5. Wait for the scene to build (see System Console for progress)
-6. Press N in the 3D Viewport to open the "Arc Lake" side panel
-7. The .blend file is auto-saved to your Desktop as ArcLake_Export.blend
+4. Click "Run Script" (play button or Alt+P)
+5. Wait for the scene to build (check System Console for progress)
+6. Press N in the 3D Viewport → "Arc Lake" tab for controls
+7. The .blend is auto-saved to your Desktop as ArcLake_Export.blend
 
 WHAT'S INCLUDED:
-- \(labVM.selectedElements.count) atom(s) as Geometry Node electron cloud instances
-- \(ArcEdgeExtEngine.shared.extResults.count) Arc Edge measurement curve(s) with DOC curvature
+- \(atomCount) atom(s) as Geometry Node electron cloud instances
+- \(arcCount) Arc Edge measurement curve(s) with DOC curvature (κ×DOC=3)
 - Mantis Navigation Geometry Node group (drone + chemistry modes)
 - All physics values as Custom Properties on each object
 - Arc Lake N-panel UI in the 3D Viewport
