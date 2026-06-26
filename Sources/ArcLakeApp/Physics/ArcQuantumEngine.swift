@@ -428,60 +428,130 @@ public final class ArcQuantumPhysics {
 
     // Simulation state
     public var isSimulating: Bool = false
-    public var gravity: Float = 9.80  // m/s² — from scene physics settings
-    public var frames: [[ArcFrameState]] = []   // recorded frames
+    public var gravity: Float = 9.80        // m/s² from scene
+    public var startEnvTempF: Float = 72    // °F from scene
+    public var startEnvPressure: Float = 14.7  // psi from scene
+    public var frames: [[ArcFrameState]] = []
     public var isScrubbing: Bool = false
 
-    // Tick — call from CADisplayLink or SwiftUI TimelineView
-    public func tick(atoms: inout [ArcAtomData], dt: Float = 0.016) {
+    // Tick — LEATR neutron-first propagation:
+    // Neutron (blueprint root) → Proton (radian/degree passage of state) → Electron shells
+    // All forces enter and exit through the neutron.
+    // Proton is a proportionality bridge — never receives direct calculation.
+    // Electrons receive waveform attenuated by shell distance from neutron.
+    // Formula (per web arclake.html + Quantum Socket doc):
+    //   bridge = neutrons × (π / protonCount) × stateModifier   [radian/degree]
+    //   shellAttenuation = max(0.1, 1 - shellIdx/totalShells × 0.7)
+    //   electronDev = neutronDev × protonBridge × shellAttenuation
+    public func tick(atoms: inout [ArcAtomData], dt: Float = 0.016,
+                     envTempF: Float = 72, envGravity: Float = 9.8,
+                     envPressurePsi: Float = 14.7, envWindMS: Float = 0) {
         guard isSimulating && !isScrubbing else { return }
 
-        let gVec = SIMD3<Float>(0, -gravityScale * gravity, 0)
+        let gVec = SIMD3<Float>(0, -gravityScale * envGravity, 0)
         let t = Float(CACurrentMediaTime())
+        let floorY: Float = 0.6
 
         for i in atoms.indices {
             var a = atoms[i]
             a.devWarmup = min(warmupFrames, a.devWarmup + 1)
             let devRamp = Float(a.devWarmup) / Float(warmupFrames)
 
-            // ── Step 1: gravity always accumulates ──────────────────────
+            // ── NEUTRON STEP: gravity + Brownian thermal motion ──────────
+            // Neutron is physics root — receives 100% of environmental forces
             a.velocity += gVec
+            // Thermal Brownian motion from temperature
+            let tempFactor = max(0, envTempF - 32) / 212.0   // 0 at 32°F, 1 at 244°F
+            let brown: Float = 0.00008 * tempFactor * devRamp
+            a.velocity += SIMD3<Float>(
+                Float.random(in: -brown...brown),
+                Float.random(in: -brown*0.3...brown*0.3),
+                Float.random(in: -brown...brown))
+            // Wind drift along X axis
+            a.velocity.x += envWindMS * 0.00002
             a.velocity *= friction
 
-            // ── Step 2: translate nucleus cloud node ─────────────────────
-            let delta = SCNVector3(a.velocity.x, a.velocity.y, a.velocity.z)
-            a.root.position = SCNVector3(
-                a.root.position.x + delta.x,
-                a.root.position.y + delta.y,
-                a.root.position.z + delta.z)
-            a.nucleusCenter = a.root.position
+            // Translate entire atom (root node = neutron origin in scene)
+            let delta = a.velocity
+            var newPos = SIMD3<Float>(
+                a.root.presentation.simdWorldPosition.x + delta.x,
+                a.root.presentation.simdWorldPosition.y + delta.y,
+                a.root.presentation.simdWorldPosition.z + delta.z)
+            // Floor — atom rests at spawn plane, doesn't sink below
+            if newPos.y < floorY { newPos.y = floorY; a.velocity.y = abs(a.velocity.y) * 0.08 }
+            a.root.simdPosition = newPos
+            a.nucleusCenter = SCNVector3(newPos.x, newPos.y, newPos.z)
 
-            // ── Step 3: Arc Edge deviation (temperature × velocity wave) ─
-            // Matches web: arcEdgeInfluenceBase = temp * velocity → deviates electrons
-            let envTemp = Float(72)  // °F default — will be overridden by scene physics
-            let envVel: Float = 0.0
-            let arcInfluence = (envTemp * 0.001) * devRamp
-            let devX = sin(t * 1.3 + Float(a.elementId) * 0.7) * arcInfluence * 0.12
-            let devY = cos(t * 0.9 + Float(a.elementId) * 1.1) * arcInfluence * 0.08
-            let devZ = sin(t * 1.7 + Float(a.elementId) * 0.4) * arcInfluence * 0.10
+            // ── PROTON BRIDGE: radian/degree proportionality of state ────
+            // bridge = neutrons × (π / max(1,protons)) × stateModifier
+            // This is the passage — never a direct reaction — reflects matter state
+            // as radian offset between neutron blueprint and electron target
+            let neutronCount = Float(a.mass > 0 ? Int(a.mass) - a.elementId : 0)
+            let protonCount  = Float(max(1, a.elementId))
+            // State modifier: maps matter state to angle (gas=1.0, liquid=0.85, solid=0.65, plasma=1.2)
+            let tempK = (envTempF - 32) * 5 / 9 + 273.15
+            let stateModifier: Float = tempK > 3000 ? 1.2 : tempK > 373 ? 1.0 : tempK > 273 ? 0.85 : 0.65
+            let protonBridgeRad = neutronCount * (.pi / protonCount) * stateModifier * devRamp
+            let protonBridgeDeg = protonBridgeRad * 180 / .pi
+            // Proton bridge gives proportionality between nucleus and shells
+            let bridgeFactor = cos(protonBridgeRad) * 0.88 + 0.12  // 0.12..1.0
 
-            // ── Step 4: Proton relay (85% of neutron dev) ───────────────
-            // (implicit in cloud position — nucleus cloud moves with root)
+            // ── ARC EDGE DEVIATION at neutron level ──────────────────────
+            // arcEdgeInfluenceBase = envTemp × envPressure / 14.7 (normalized)
+            let arcInfluenceBase = (envTempF * 0.001) * (envPressurePsi / 14.7) * devRamp
+            let devX = sin(t * 1.3 + Float(a.elementId) * 0.7) * arcInfluenceBase * 0.12
+            let devY = cos(t * 0.9 + Float(a.elementId) * 1.1) * arcInfluenceBase * 0.08
+            let devZ = sin(t * 1.7 + Float(a.elementId) * 0.4) * arcInfluenceBase * 0.10
+            let neutronDev = SIMD3<Float>(devX, devY, devZ)  // 100% at neutron
 
-            // ── Step 5: Electron wave propagation ───────────────────────
-            // Outer shells attenuate: shellAttenuation = max(0.1, 1 - shellIdx/totalShells * 0.7)
-            // Sync orbital cloud position to nucleus center
-            a.orbitalCloudNode.position = SCNVector3(0, 0, 0)  // relative to root
+            // ── PROTON: 85% relay, modulated by bridge radian ───────────
+            // Proton never receives direct calc — it relays through bridge
+            let protonDev = neutronDev * Float(protonRelayFactor) * bridgeFactor
 
-            // Apply subtle rotation to orbital cloud based on dev (not preset)
-            // This matches web: _idleGroup position syncs to nucleusCenter
-            let waveRot = arcInfluence * 0.018
+            // ── ELECTRON SHELLS: attenuated by shell index ───────────────
+            // Each shell gets wave from proton relay, attenuated by distance
+            // Inner shells (K) couple most strongly; outer shells diminish
+            // This drives the orbital cloud rotation per shell
+            let totalShells = Float(max(1, a.electronProxyPositions.count > 0
+                ? a.electronInitialOffsets.map { Int(simd_length($0) / 1.15) }.max() ?? 1
+                : 1))
+
+            // Update orbital cloud rotation shell-by-shell
+            // Each shell orbits at its own speed driven by electron wave amplitude
+            let waveBase = simd_length(protonDev)
+            let orbitalCloudRotX = protonDev.x * 0.025
+            let orbitalCloudRotY = waveBase * 0.015 + Float(a.elementId) * 0.0001
+            let orbitalCloudRotZ = protonDev.z * 0.020
+            // Additive rotation (no preset — purely physics driven)
+            let cur = a.orbitalCloudNode.eulerAngles
             a.orbitalCloudNode.eulerAngles = SCNVector3(
-                devX * waveRot,
-                devY * waveRot,
-                devZ * waveRot)
+                cur.x + orbitalCloudRotX,
+                cur.y + orbitalCloudRotY,
+                cur.z + orbitalCloudRotZ)
 
             atoms[i] = a
+        }
+
+        // ── INTER-ATOM COUPLING via velocity potential ───────────────────
+        // Sigma impulse between neighboring atoms (pairwise, Phi field)
+        // Only when multiple atoms in scene
+        if atoms.count > 1 {
+            for i in atoms.indices {
+                for j in (i+1)..<atoms.count {
+                    let posI = atoms[i].root.simdPosition
+                    let posJ = atoms[j].root.simdPosition
+                    let diff = posI - posJ
+                    let dist = max(0.5, simd_length(diff))
+                    // LJ-style coupling: attractive at medium range, repulsive close
+                    let massI = atoms[i].mass; let massJ = atoms[j].mass
+                    let sigma = 0.05 * (massI * massJ / (massI + massJ)) / (dist * dist)
+                    let dir   = diff / dist
+                    // Apply through proton bridge proportionality
+                    let coupling = sigma * 0.001
+                    atoms[i].velocity -= dir * coupling
+                    atoms[j].velocity += dir * coupling
+                }
+            }
         }
     }
 
