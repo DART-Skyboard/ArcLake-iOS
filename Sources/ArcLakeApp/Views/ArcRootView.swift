@@ -78,8 +78,6 @@ public struct DARTRootView: View {
                                     MantisHUDOverlay(model: labVM.mantis)
                                 }
                             }
-                            // Trajectory scrubber — top overlay, low complexity
-
 
                             // CFD badge
                             if labVM.isCFDActive {
@@ -179,21 +177,7 @@ public struct DARTRootView: View {
                 .environmentObject(labVM)
                 .environmentObject(themeVM)
         }
-        // ── Trajectory target body selector ─────────────────────────
-        .sheet(isPresented: $labVM.mantis.showTargetBodySelector) {
-            ArcTargetBodySelector { selectedId in
-                labVM.mantis.showTargetBodySelector = false
-                labVM.mantis.isTrajectoryLinked = true
-                Task {
-                    await ArcTrajectoryEngine.shared.link(
-                        scene: labVM.scene,
-                        vehicleNode: labVM.mantis.droneNode ?? SCNNode(),
-                        targetId: selectedId)
-                }
-            }
-            .environmentObject(themeVM)
-        }
-        // Trajectory sheet + scrubber — zero body complexity via ViewModifier
+        // Trajectory: sheet + scrubber via ViewModifier (single call, zero body complexity)
         .modifier(ArcTrajectoryModifier())
     }
 }
