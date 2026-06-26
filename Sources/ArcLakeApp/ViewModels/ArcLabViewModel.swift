@@ -615,7 +615,7 @@ public final class ArcLabViewModel: ObservableObject {
                         envTempF:      physEngine.startEnvTempF,
                         envGravity:    physEngine.gravity,
                         envPressurePsi: physEngine.startEnvPressure,
-                        envWindMS:     Float(physics.windVelocity))
+                        envWindMS:     Float(windVelocity))
         physEngine.captureFrame(atoms: quantumAtoms)
         recordedFrameCount = physEngine.frames.count
         playheadFrame = recordedFrameCount
@@ -887,6 +887,16 @@ private extension Array {
         indices.contains(index) ? self[index] : nil
     }
 }
+
+
+
+
+
+
+
+
+
+// Array[safe:] subscript defined in ArcHorizonsEngine.swift
 
 
 
