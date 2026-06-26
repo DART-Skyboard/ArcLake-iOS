@@ -54,6 +54,31 @@ struct DARTMoleculePanel: View {
                                     .rootViewController?.present(av, animated: true)
                             }
                         }
+                        DARTActionTile(label: "Export\nBlender", icon: "cube.transparent",
+                                       color: Color(red:1.0,green:0.45,blue:0.0)) {
+                            // Export Arc Lake scene as Blender Python setup script + JSON
+                            // User runs arclake_setup.py in Blender Scripting tab to
+                            // reconstruct atoms, arc measures, CFD, Mantis nav as
+                            // Geometry Nodes with N-panel UI
+                            if let exportDir = ArcBlenderExporter.exportToZip(labVM: labVM) {
+                                // Share all files: JSON + Python script + README
+                                var shareItems: [URL] = []
+                                if let contents = try? FileManager.default.contentsOfDirectory(
+                                    at: exportDir, includingPropertiesForKeys: nil) {
+                                    shareItems = contents.sorted { $0.lastPathComponent < $1.lastPathComponent }
+                                }
+                                if shareItems.isEmpty { shareItems = [exportDir] }
+                                let av = UIActivityViewController(
+                                    activityItems: shareItems, applicationActivities: nil)
+                                av.completionWithItemsHandler = { _, _, _, _ in
+                                    try? FileManager.default.removeItem(at: exportDir)
+                                }
+                                UIApplication.shared.connectedScenes
+                                    .compactMap { $0 as? UIWindowScene }
+                                    .first?.windows.first?
+                                    .rootViewController?.present(av, animated: true)
+                            }
+                        }
                         DARTActionTile(label: "Mantis\nNav", icon: "paperplane.fill",
                                        color: Color(red: 0.35, green: 0.78, blue: 1.0)) {
                             labVM.openMantisTab()      // dedicated tab + live flight
