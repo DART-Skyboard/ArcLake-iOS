@@ -20,7 +20,11 @@ struct ArcTrajectoryModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             // Target body selector sheet
-            .sheet(isPresented: $labVM.mantis.showTargetBodySelector) {
+            // Custom Binding because labVM.mantis is `public let` (not @Published)
+            .sheet(isPresented: Binding(
+                get: { labVM.mantis.showTargetBodySelector },
+                set: { labVM.mantis.showTargetBodySelector = $0 }
+            )) {
                 ArcTargetBodySelector { selectedId in
                     labVM.mantis.showTargetBodySelector = false
                     labVM.mantis.isTrajectoryLinked = true
