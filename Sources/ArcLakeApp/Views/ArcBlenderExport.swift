@@ -128,7 +128,13 @@ public final class ArcBlenderExporter {
                 ptsPerElectron: ArcQuantumAtomBuilder.ptsPerElectron,
                 velocity: [atomData.velocity.x, atomData.velocity.y, atomData.velocity.z],
                 elementCategory: el.category.rawValue,
-                hexColor: el.category.hexColor)
+                hexColor: {
+                // Convert UIColor to hex string for JSON/Blender
+                var r: CGFloat=0, g: CGFloat=0, b: CGFloat=0, a: CGFloat=0
+                el.category.color.getRed(&r, green: &g, blue: &b, alpha: &a)
+                return String(format: "#%02X%02X%02X",
+                              Int(r*255), Int(g*255), Int(b*255))
+            }())
         }
 
         let cfdComps: [ALBCFDComponentExport] = []  // populated from ArcWindTunnelEngine if active
