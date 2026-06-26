@@ -66,8 +66,7 @@ public struct DARTRootView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.leading, 6)
 
-                            // ── Trajectory Navigation Scrubber injected via outer overlay ──
-                            // (moved to .overlay() below to reduce body complexity)
+
 
                             // Mantis Navigation HUD — bottom-centered over the
                             // 3D viewport, semi-transparent, web parity
@@ -80,14 +79,7 @@ public struct DARTRootView: View {
                                 }
                             }
                             // Trajectory scrubber — top overlay, low complexity
-                            if ArcTrajectoryEngine.shared.isLinked {
-                                VStack {
-                                    ArcTrajectoryScrubberOverlay()
-                                        .environmentObject(themeVM)
-                                    Spacer()
-                                }
-                                .allowsHitTesting(true)
-                            }
+
 
                             // CFD badge
                             if labVM.isCFDActive {
