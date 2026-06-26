@@ -66,6 +66,12 @@ public struct DARTRootView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.leading, 6)
 
+                            // ── Trajectory Navigation Scrubber ──────────────────
+                            // Shown at top of viewport when Horizons trajectory is linked
+                            ArcTrajectoryScrubberOverlay()
+                                .environmentObject(themeVM)
+                                .allowsHitTesting(ArcTrajectoryEngine.shared.isLinked)
+
                             // Mantis Navigation HUD — bottom-centered over the
                             // 3D viewport, semi-transparent, web parity
                             // HUD lives on the Mantis Nav tab only
@@ -174,6 +180,20 @@ public struct DARTRootView: View {
             ArcComponentConfigView(nodeName: identified.value)
                 .environmentObject(labVM)
                 .environmentObject(themeVM)
+        }
+        // ── Trajectory target body selector ─────────────────────────
+        .sheet(isPresented: $labVM.mantis.showTargetBodySelector) {
+            ArcTargetBodySelector { selectedId in
+                labVM.mantis.showTargetBodySelector = false
+                labVM.mantis.isTrajectoryLinked = true
+                Task {
+                    await ArcTrajectoryEngine.shared.link(
+                        scene: labVM.scene,
+                        vehicleNode: labVM.mantis.droneNode ?? SCNNode(),
+                        targetId: selectedId)
+                }
+            }
+            .environmentObject(themeVM)
         }
     }
 }
