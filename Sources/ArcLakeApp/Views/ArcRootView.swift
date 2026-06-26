@@ -193,6 +193,8 @@ public struct DARTRootView: View {
             }
             .environmentObject(themeVM)
         }
+        // Trajectory sheet + scrubber — zero body complexity via ViewModifier
+        .modifier(ArcTrajectoryModifier())
     }
 }
 
