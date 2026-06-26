@@ -90,10 +90,10 @@ public final class ArcTrajectoryEngine: ObservableObject {
         await ArcHorizonsEngine.shared.fetchAll(scene: scene)
 
         // Build space environment
-        buildSpaceEnvironment(scene: scene)
+        buildSpaceEnvironment(scene)
 
         // Hide lab floor grid
-        hideLabFloor(scene: scene)
+        hideLabFloor(scene)
 
         isLinked = true
         isManualOverride = false
