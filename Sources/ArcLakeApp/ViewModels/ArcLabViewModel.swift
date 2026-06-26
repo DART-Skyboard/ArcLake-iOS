@@ -882,11 +882,7 @@ public enum ArcTab: String, CaseIterable {
 }
 public enum SceneMode { case atomic, cfd, mol2D }
 
-private extension Array {
-    subscript(safe index: Int) -> Element? {
-        indices.contains(index) ? self[index] : nil
-    }
-}
+
 
 
 
