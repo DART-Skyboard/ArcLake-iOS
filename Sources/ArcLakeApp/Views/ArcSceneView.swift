@@ -209,7 +209,7 @@ public struct ArcSceneView: UIViewRepresentable {
         private var lastOrbitTranslation = CGPoint.zero
 
         @objc func handleOrbit(_ g: UIPanGestureRecognizer) {
-            if labVM.mantis.isActive && labVM.mantis.cameraMode != .orbit { return }
+            if labVM.mantis.isActive && labVM.mantis.cameraMode != .orbit && labVM.mantisTabIndex == labVM.activeTabIndex { return }
             guard let v = scnView else { return }
             if g.state == .began {
                 lastOrbitTranslation = .zero
@@ -240,7 +240,7 @@ public struct ArcSceneView: UIViewRepresentable {
         private var lastPanTranslation = CGPoint.zero
 
         @objc func handlePan(_ g: UIPanGestureRecognizer) {
-            if labVM.mantis.isActive && labVM.mantis.cameraMode != .orbit { return }
+            if labVM.mantis.isActive && labVM.mantis.cameraMode != .orbit && labVM.mantisTabIndex == labVM.activeTabIndex { return }
             guard let v = scnView else { return }
             if g.state == .began {
                 lastPanTranslation = .zero
@@ -267,7 +267,7 @@ public struct ArcSceneView: UIViewRepresentable {
         // Pinch OUT (scale > 1) = zoom in = closer
         // Pinch IN  (scale < 1) = zoom out = farther
         @objc func handleDolly(_ g: UIPinchGestureRecognizer) {
-            if labVM.mantis.isActive && labVM.mantis.cameraMode != .orbit { return }
+            if labVM.mantis.isActive && labVM.mantis.cameraMode != .orbit && labVM.mantisTabIndex == labVM.activeTabIndex { return }
             if g.state == .began { r0 = radius }
             if g.state == .changed {
                 radius = max(0.3, min(1_000, r0 / Float(g.scale)))
