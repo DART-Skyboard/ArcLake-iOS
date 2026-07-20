@@ -233,13 +233,12 @@ public struct ArcSupportSheet: View {
                                     if store.isPurchasing {
                                         ProgressView().tint(.black)
                                     } else {
-                                        HStack(spacing:8) {
-                                            Image(systemName:"applelogo")
-                                                .font(.system(size:14))
-                                            Text("Subscribe with Apple Pay")
-                                                .font(.system(size:14, weight:.semibold, design:.monospaced))
-                                        }
-                                        .foregroundColor(.black)
+                                        // Guideline 1.1.6: this is an In-App Purchase,
+                                        // not Apple Pay — label must not say "Apple Pay".
+                                        Text(store.product.map { "Subscribe · \($0.displayPrice)/month" }
+                                             ?? "Subscribe · $2.99/month")
+                                            .font(.system(size:14, weight:.semibold, design:.monospaced))
+                                            .foregroundColor(.black)
                                     }
                                 }
                                 .frame(maxWidth:.infinity).frame(height:52)
