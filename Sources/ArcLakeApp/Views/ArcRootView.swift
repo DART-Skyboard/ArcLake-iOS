@@ -704,6 +704,7 @@ struct ArcProfileSheet: View {
     @State private var showApplePicker  = false
     @State private var showGitHubPicker = false
     @State private var showSupport = false
+    @State private var showDeleteConfirm = false
 
     var body: some View {
         ZStack {
@@ -807,10 +808,26 @@ struct ArcProfileSheet: View {
                         .frame(maxWidth: .infinity).frame(height: 48)
                         .background(Color.red.opacity(0.1)).cornerRadius(10)
                 }
-                .padding(.horizontal, 20).padding(.bottom, 40)
+                .padding(.horizontal, 20)
+
+                Button { showDeleteConfirm = true } label: {
+                    Text("Delete Account")
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundColor(.red.opacity(0.55))
+                }
+                .padding(.top, 10).padding(.bottom, 40)
             }
         }
         .presentationDetents([.fraction(0.74), .large])
+        .alert("Delete Account?", isPresented: $showDeleteConfirm) {
+            Button("Delete", role: .destructive) {
+                authVM.deleteAccount()
+                dismiss()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This permanently removes your signed-in accounts and all ArcLake vault data from this device and iCloud Drive. This cannot be undone.")
+        }
         .sheet(isPresented: $showSupport) {
             ArcSupportSheet(accentColor: themeVM.accent, appName: "ArcLake")
         }
