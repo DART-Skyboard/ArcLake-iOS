@@ -164,17 +164,23 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
         }
     }
 
-    // Legacy — kept for compatibility
+    // Used by profile menu + confirmation dialogs.
+    // Delayed 0.6s so any dismissing sheet/dialog finishes its transition first —
+    // otherwise the ASAuthorization presentation anchor is mid-dismissal and the
+    // Apple sheet silently never appears (the App Review "did not respond" bug).
     public func signInWithApple() {
         error = nil
-        let request = ASAuthorizationAppleIDProvider().createRequest()
-        request.requestedScopes = [.fullName, .email]
-        let controller = ASAuthorizationController(authorizationRequests: [request])
-        controller.delegate                    = self
-        controller.presentationContextProvider = self
-        // Retain controller — local vars get deallocated before delegate fires
-        appleAuthController = controller
-        controller.performRequests()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+            guard let self else { return }
+            let request = ASAuthorizationAppleIDProvider().createRequest()
+            request.requestedScopes = [.fullName, .email]
+            let controller = ASAuthorizationController(authorizationRequests: [request])
+            controller.delegate                    = self
+            controller.presentationContextProvider = self
+            // Retain controller — local vars get deallocated before delegate fires
+            self.appleAuthController = controller
+            controller.performRequests()
+        }
     }
 
     // MARK: — Google Sign-In
@@ -452,10 +458,13 @@ extension ArcAuthViewModel:
             .first { $0.activationState == .foregroundActive }
         if let window = scene?.keyWindow { return window }
         // Fallback for edge cases (e.g. background launch)
-        if let window = UIApplication.shared.connectedScenes
-            .compactMap({ $0 as? UIWindowScene })
-            .flatMap({ $0.windows })
-            .first(where: { !$0.isHidden && $0.alpha > 0 }) { return window }
+        let scenes = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+        // Prefer the key window of the foreground-active scene
+        if let key = scenes.first(where: { $0.activationState == .foregroundActive })?
+            .windows.first(where: { $0.isKeyWindow }) { return key }
+        if let any = scenes.flatMap({ $0.windows })
+            .first(where: { !$0.isHidden && $0.alpha > 0 }) { return any }
         return UIWindow()
     }
 
@@ -564,6 +573,7 @@ struct KeychainHelper {
         SecItemDelete(q as CFDictionary)
     }
 }
+
 
 
 
