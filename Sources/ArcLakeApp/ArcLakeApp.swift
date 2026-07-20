@@ -1,4 +1,7 @@
 import SwiftUI
+#if canImport(GoogleSignIn)
+import GoogleSignIn
+#endif
 
 @main
 struct DARTApp: App {
@@ -13,6 +16,12 @@ struct DARTApp: App {
                 .environmentObject(themeVM)
                 .environmentObject(authVM)
                 .preferredColorScheme(.dark)
+                // Google Sign-In OAuth callback (reversed client-ID URL scheme)
+                .onOpenURL { url in
+                    #if canImport(GoogleSignIn)
+                    GIDSignIn.sharedInstance.handle(url)
+                    #endif
+                }
         }
     }
 }
@@ -27,6 +36,10 @@ struct DARTAppRootView: View {
                 ArcWelcomeView()
             }
         }
-        .onAppear { authVM.restoreSession() }
+        .onAppear {
+            authVM.restoreSession()
+            // Google session restore — GIDClientID is read from Info.plist automatically
+            authVM.restoreGoogleSession()
+        }
     }
 }
