@@ -49,11 +49,32 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: \
             -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
+          # Fetch the LIVE ArcLakeGitHubFlow profile from ASC API — never stale,
+          # always includes current App ID capabilities (Sign in with Apple etc.)
+          pip3 install --quiet pyjwt cryptography 2>/dev/null || pip3 install --user --quiet pyjwt cryptography
           PP_PATH="$RUNNER_TEMP/arclake.mobileprovision"
-          echo "$PROVISIONING_PROFILE_BASE64" | base64 --decode > "$PP_PATH"
+          python3 - "$PP_PATH" << 'PYEOF'
+          import jwt, time, json, urllib.request, base64, sys
+          key = open(f"{__import__('os').path.expanduser('~')}/.appstoreconnect/private_keys/AuthKey_NQXQ595W59.p8").read()
+          token = jwt.encode({"iss":"90056871-d791-45f6-a770-21399c45e491","iat":int(time.time()),
+              "exp":int(time.time())+1200,"aud":"appstoreconnect-v1"}, key,
+              algorithm="ES256", headers={"kid":"NQXQ595W59"})
+          req = urllib.request.Request(
+              "https://api.appstoreconnect.apple.com/v1/profiles?filter[name]=ArcLakeGitHubFlow",
+              headers={"Authorization": f"Bearer {token}"})
+          d = json.loads(urllib.request.urlopen(req).read())
+          prof = d["data"][0]["attributes"]
+          open(sys.argv[1], "wb").write(base64.b64decode(prof["profileContent"]))
+          print(f"Fetched profile UUID: {prof['uuid']}")
+          PYEOF
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           PP_UUID=$(security cms -D -i "$PP_PATH" 2>/dev/null | \
-            plutil -extract UUID raw - 2>/dev/null || echo "4f27288c-6ada-4a8b-b93a-b42dec94a720")
+            plutil -extract UUID raw - 2>/dev/null)
+          if [ -z "$PP_UUID" ]; then
+            echo "ASC fetch failed — falling back to secret profile"
+            echo "$PROVISIONING_PROFILE_BASE64" | base64 --decode > "$PP_PATH"
+            PP_UUID=$(security cms -D -i "$PP_PATH" | plutil -extract UUID raw -)
+          fi
           cp "$PP_PATH" ~/Library/MobileDevice/Provisioning\ Profiles/"$PP_UUID.mobileprovision"
           echo "PROFILE_UUID=$PP_UUID" >> $GITHUB_ENV
           echo "Profile UUID: $PP_UUID"
@@ -73,7 +94,7 @@ jobs:
 
       - name: Archive
         run: |
-          PP_FINAL="${PROFILE_UUID:-4f27288c-6ada-4a8b-b93a-b42dec94a720}"
+          PP_FINAL="${PROFILE_UUID}"
           /usr/local/bin/xcodegen generate || echo "xcodegen already ran"
           xcodebuild archive \
             -project ArcLake.xcodeproj \
