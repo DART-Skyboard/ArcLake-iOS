@@ -1,5 +1,8 @@
 import SwiftUI
 import AuthenticationServices
+#if canImport(GoogleSignIn)
+import GoogleSignIn
+#endif
 
 // MARK: — ArcAuthViewModel (Fruta pattern)
 // Follows Apple's canonical Sign in with Apple implementation exactly:
