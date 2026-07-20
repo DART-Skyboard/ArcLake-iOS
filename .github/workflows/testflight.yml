@@ -51,7 +51,7 @@ jobs:
 
           # Fetch the LIVE ArcLakeGitHubFlow profile from ASC API — never stale,
           # always includes current App ID capabilities (Sign in with Apple etc.)
-          pip3 install --quiet pyjwt cryptography 2>/dev/null || pip3 install --user --quiet pyjwt cryptography
+          pip3 install --quiet --break-system-packages pyjwt cryptography 2>/dev/null || pip3 install --user --quiet --break-system-packages pyjwt cryptography 2>/dev/null || python3 -m pip install --quiet --break-system-packages pyjwt cryptography || true
           PP_PATH="$RUNNER_TEMP/arclake.mobileprovision"
           python3 - "$PP_PATH" << 'PYEOF'
           import jwt, time, json, urllib.request, base64, sys
