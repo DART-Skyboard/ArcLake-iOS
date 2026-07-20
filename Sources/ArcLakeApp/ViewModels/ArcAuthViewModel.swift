@@ -419,6 +419,38 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
         // Keep: Apple keychainKey / displayNameKey — Fruta restore handles those
     }
 
+    // MARK: — Account Deletion (App Review Guideline 5.1.1(v))
+    // Permanently removes every credential and all vault data ArcLake stores for
+    // the user: Keychain tokens, saved account lists, and the Autumn-Ash/ArcLake
+    // folder in local Documents and iCloud Drive. Autumn's shared data is untouched.
+    public func deleteAccount() {
+        // 1. Apple credential
+        KeychainHelper.delete(key: keychainKey)
+        KeychainHelper.delete(key: displayNameKey)
+        // 2. GitHub — every saved account token
+        for a in savedGitHubAccounts { KeychainHelper.delete(key: "arc_github_pat_\(a.id)") }
+        KeychainHelper.delete(key: "arc_github_pat")
+        KeychainHelper.delete(key: "arc_github_username")
+        KeychainHelper.delete(key: "arc_github_avatar_url")
+        // 3. Google
+        #if canImport(GoogleSignIn)
+        GIDSignIn.sharedInstance.signOut()
+        #endif
+        KeychainHelper.delete(key: "arc_google_email")
+        KeychainHelper.delete(key: "arc_google_name")
+        // 4. Saved account lists
+        savedAppleAccounts = []; savedGitHubAccounts = []; savedGoogleAccounts = []
+        UserDefaults.standard.removeObject(forKey: "arc_saved_apple")
+        UserDefaults.standard.removeObject(forKey: "arc_saved_github")
+        // 5. Vault data — local + iCloud (actor call)
+        Task { await ArcVaultService.shared.wipeAll() }
+        // 6. Reset session state
+        googleConnected = false; googleEmail = ""
+        isSignedIn = false; isGuest = false; githubConnected = false
+        username = ""; githubUsername = ""; appleUserId = ""
+        deviceFlowCode = nil; error = nil
+    }
+
     @AppStorage("policy_accepted_v1") public var hasAcceptedPolicy = false
     public func acceptPolicy() { hasAcceptedPolicy = true }
 
