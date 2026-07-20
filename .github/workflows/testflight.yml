@@ -96,16 +96,15 @@ jobs:
         run: |
           PP_FINAL="${PROFILE_UUID}"
           /usr/local/bin/xcodegen generate || echo "xcodegen already ran"
+          # Signing settings live in project.yml target settings — passing them on the
+          # CLI applies globally and breaks SPM package targets (GoogleSignIn/AppAuth
+          # "does not support provisioning profiles"). Only the keychain flag is global-safe.
           xcodebuild archive \
             -project ArcLake.xcodeproj \
             -scheme ArcLakeApp \
             -configuration Release \
             -destination "generic/platform=iOS" \
             -archivePath "$RUNNER_TEMP/ArcLake.xcarchive" \
-            CODE_SIGN_STYLE=Manual \
-            CODE_SIGN_IDENTITY="iPhone Distribution" \
-            PROVISIONING_PROFILE="$PP_FINAL" \
-            DEVELOPMENT_TEAM=L7AHWS9Q6V \
             OTHER_CODE_SIGN_FLAGS="--keychain $RUNNER_TEMP/signing.keychain-db"
           ls -la "$RUNNER_TEMP/ArcLake.xcarchive"
 
