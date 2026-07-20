@@ -10,6 +10,9 @@ packages:
   swift-markdown-ui:
     url: https://github.com/gonzalezreal/swift-markdown-ui
     from: "2.4.0"
+  GoogleSignIn:
+    url: https://github.com/google/GoogleSignIn-iOS
+    from: "7.1.0"
 targets:
   ArcLakeApp:
     type: application
@@ -27,6 +30,10 @@ targets:
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         ITSAppUsesNonExemptEncryption: false
+        GIDClientID: "417023343630-uor82401j1d6q3cjroaibp90m61d9e28.apps.googleusercontent.com"
+        CFBundleURLTypes:
+          - CFBundleURLSchemes:
+              - "com.googleusercontent.apps.417023343630-uor82401j1d6q3cjroaibp90m61d9e28"
         UIRequiresFullScreen: false
         UILaunchScreen:
           UIColorName: ""
@@ -51,6 +58,10 @@ targets:
         product: MarkdownUI
         embed: false
         link: true
+      - package: GoogleSignIn
+        product: GoogleSignIn
+      - package: GoogleSignIn
+        product: GoogleSignInSwift
       - sdk: ARKit.framework
       - sdk: RealityKit.framework
       - sdk: ModelIO.framework
@@ -68,8 +79,8 @@ targets:
         ENABLE_USER_SCRIPT_SANDBOXING: NO
         SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
         TARGETED_DEVICE_FAMILY: "1,2"
-        CURRENT_PROJECT_VERSION: "295"
-        MARKETING_VERSION: "1.5.2"
+        CURRENT_PROJECT_VERSION: "300"
+        MARKETING_VERSION: "1.5.3"
       configs:
         Debug:
           SWIFT_OPTIMIZATION_LEVEL: "-Onone"
