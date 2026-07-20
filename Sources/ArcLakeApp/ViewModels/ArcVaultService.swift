@@ -25,6 +25,19 @@ public actor ArcVaultService {
         }
     }
 
+    // MARK: — Account deletion (Guideline 5.1.1(v))
+    // Removes ONLY the ArcLake subfolder — Autumn's shared vault data is untouched.
+    public func wipeAll() {
+        let fm = FileManager.default
+        let local = fm.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Autumn-Ash/ArcLake", isDirectory: true)
+        try? fm.removeItem(at: local)
+        if let icloud = iCloudURL()?.appendingPathComponent("ArcLake", isDirectory: true) {
+            try? fm.removeItem(at: icloud)
+        }
+        _vaultURL = nil
+    }
+
     private func iCloudURL() -> URL? {
         FileManager.default
             .url(forUbiquityContainerIdentifier: containerID)?
