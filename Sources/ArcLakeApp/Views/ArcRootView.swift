@@ -586,12 +586,18 @@ struct DARTTabSelector: View {
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-         HStack(spacing: 0) {
+         // Fixed-width, evenly-spaced tabs — previously spacing:0 with
+         // .frame(maxWidth:.infinity) inside an unbounded scroll HStack,
+         // which doesn't actually equalize width, it just collapses every
+         // tab flush against its neighbor with zero gap. Each tab now gets
+         // a consistent width and real breathing room between them; the
+         // strip simply scrolls a little farther, which is the right trade.
+         HStack(spacing: 10) {
             ForEach(tabs, id: \.0) { tab, label, icon in
                 Button {
                     withAnimation(.easeInOut(duration: 0.15)) { labVM.activeTab = tab }
                 } label: {
-                    VStack(spacing: 2) {
+                    VStack(spacing: 3) {
                         Image(systemName: icon)
                             .font(.system(size: 13))
                             .foregroundColor(labVM.activeTab == tab
@@ -601,10 +607,11 @@ struct DARTTabSelector: View {
                             .foregroundColor(labVM.activeTab == tab
                                              ? themeVM.accent : .white.opacity(0.25))
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 7)
+                    .frame(width: 60)
+                    .padding(.vertical, 8)
                     .background(labVM.activeTab == tab
                                 ? themeVM.accent.opacity(0.08) : Color.clear)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
                     .overlay(
                         Rectangle().frame(height: 1.5)
                             .foregroundColor(labVM.activeTab == tab
@@ -614,6 +621,7 @@ struct DARTTabSelector: View {
                 }
             }
          }  // HStack
+         .padding(.horizontal, 12).padding(.vertical, 2)
         }   // ScrollView
         .background(Color.black.opacity(0.5))
         .overlay(Rectangle().frame(height: 0.5)
