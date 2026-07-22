@@ -14,6 +14,9 @@ import GoogleSignIn
 public final class ArcAuthViewModel: NSObject, ObservableObject {
     // Retain the controller so it's not deallocated before the delegate fires
     private var appleAuthController: ASAuthorizationController?
+    // true only during the automatic launch-time silent check; false for an
+    // explicit user-tapped Sign in with Apple button
+    private var isSilentAppleCheck = false
     private var googleSignInCompletion: ((Bool) -> Void)?
 
     // MARK: — State
@@ -117,6 +120,7 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
         controller.delegate                    = self
         controller.presentationContextProvider = self
         appleAuthController = controller   // retain — prevents dealloc before delegate
+        isSilentAppleCheck = true
         controller.performRequests()
     }
 
@@ -160,9 +164,19 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
 
         case .failure(let err):
             let asErr = err as? ASAuthorizationError
-            switch asErr?.code {
-            case .canceled, .unknown: break  // user dismissed — not an error
-            default: self.error = "Apple Sign-In failed: \(err.localizedDescription)"
+            let code  = asErr?.code
+            print("[ArcAuth] SignInWithAppleButton failure: \(err.localizedDescription) (code: \(code.map(String.init(describing:)) ?? "?"))")
+            switch code {
+            case .canceled:
+                break  // user tapped Cancel — not an error, stay silent
+            case .unknown:
+                // On TestFlight/device this commonly means iCloud isn't signed in,
+                // two-factor auth is off, or the capability didn't register yet —
+                // surface it instead of swallowing it, since this is a direct
+                // button tap, not a passive background check.
+                self.error = "Sign in with Apple couldn't complete. Make sure you're signed into iCloud with two-factor authentication enabled in Settings, then try again."
+            default:
+                self.error = "Apple Sign-In failed: \(err.localizedDescription)"
             }
         }
     }
@@ -182,6 +196,7 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
             controller.presentationContextProvider = self
             // Retain controller — local vars get deallocated before delegate fires
             self.appleAuthController = controller
+            self.isSilentAppleCheck = false
             controller.performRequests()
         }
     }
@@ -551,13 +566,31 @@ extension ArcAuthViewModel:
         didCompleteWithError error: Error
     ) {
         let asErr = error as? ASAuthorizationError
-        // .canceled and .unknown (1001) are not real errors — user dismissed or
-        // performExistingAccountSetupFlows found no credential. Ignore silently.
-        switch asErr?.code {
-        case .canceled, .unknown:
-            return
-        default:
-            self.error = error.localizedDescription
+        let code  = asErr?.code
+        print("[ArcAuth] Apple Sign-In error: \(error.localizedDescription) (code: \(code.map(String.init(describing:)) ?? "?"), silentCheck: \(isSilentAppleCheck))")
+
+        if isSilentAppleCheck {
+            // Passive launch-time check — .canceled/.unknown just mean no saved
+            // credential was found, which is expected and not worth alarming
+            // the user about.
+            isSilentAppleCheck = false
+            switch code {
+            case .canceled, .unknown: return
+            default: self.error = error.localizedDescription
+            }
+        } else {
+            // User explicitly tapped "Sign in with Apple" — always show what happened.
+            // On TestFlight/real devices .unknown can mean SIWA isn't available right
+            // now (iCloud not signed in, 2FA off, capability mismatch) rather than
+            // just a dismissal, so surface it instead of swallowing it.
+            switch code {
+            case .canceled:
+                return  // user tapped Cancel in the system sheet — not an error
+            case .unknown:
+                self.error = "Sign in with Apple couldn't complete. Make sure you're signed into iCloud with two-factor authentication enabled in Settings, then try again."
+            default:
+                self.error = error.localizedDescription
+            }
         }
     }
 }
