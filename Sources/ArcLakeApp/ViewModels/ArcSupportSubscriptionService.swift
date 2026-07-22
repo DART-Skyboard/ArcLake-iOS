@@ -13,7 +13,7 @@ public final class ArcSupportSubscriptionService: ObservableObject {
     public static let shared = ArcSupportSubscriptionService()
 
     // Set this to the correct product ID for each app
-    public var productID: String = "DART_Meadow_LLC.Cotharticren.support.monthly"
+    public var productID: String = "DART_Meadow_LLC.Cotharticren.support.monthly.v2"  // v2: original product ID stuck in an unrecoverable ASC review lock after the 1.5.3 rejection; new subscription created to work around it
 
     @Published public var product: Product?
     @Published public var isSubscribed = false
