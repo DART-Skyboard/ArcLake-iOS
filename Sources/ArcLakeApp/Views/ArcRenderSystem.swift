@@ -101,6 +101,34 @@ public final class ArcRenderViewModel: ObservableObject {
     @Published public var renderScale: CGFloat = 1.0
     @Published public var msaaLevel: Int       = 4
 
+    // MARK: — Procedural sky environment (real image-based lighting)
+    // A flat ambient color gives PBR materials nothing directional to
+    // reflect, which is most of why metal/rough surfaces look flat and
+    // plasticky compared to Nomad (which uses real Poly Haven HDRIs).
+    // This generates a simple equirectangular sky gradient once and reuses
+    // it as scene.lightingEnvironment.contents — real IBL variation with
+    // zero bundled assets, so specular highlights and reflections actually
+    // have something believable to pick up.
+    public static let proceduralSkyImage: UIImage = {
+        let size = CGSize(width: 512, height: 256)
+        let renderer = UIGraphicsImageRenderer(size: size)
+        return renderer.image { ctx in
+            let colors: [CGColor] = [
+                UIColor(red: 0.22, green: 0.42, blue: 0.85, alpha: 1).cgColor, // zenith
+                UIColor(red: 0.55, green: 0.70, blue: 0.95, alpha: 1).cgColor, // upper sky
+                UIColor(red: 0.97, green: 0.88, blue: 0.72, alpha: 1).cgColor, // horizon glow
+                UIColor(red: 0.09, green: 0.10, blue: 0.13, alpha: 1).cgColor, // ground
+            ]
+            let locations: [CGFloat] = [0.0, 0.4, 0.58, 1.0]
+            guard let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                                             colors: colors as CFArray, locations: locations) else { return }
+            ctx.cgContext.drawLinearGradient(gradient,
+                start: CGPoint(x: size.width/2, y: 0),
+                end:   CGPoint(x: size.width/2, y: size.height),
+                options: [])
+        }
+    }()
+
     // Scene view ref
     public weak var sceneView: SCNView? = nil
     public func applyNow() {
@@ -122,9 +150,15 @@ public final class ArcRenderViewModel: ObservableObject {
             l.intensity       = light.intensity
             l.castsShadow     = light.castsShadow
             l.shadowMode      = .forward
-            l.shadowRadius    = light.shadowRadius
-            l.shadowSampleCount = 8
-            l.shadowColor     = UIColor.black.withAlphaComponent(0.45)
+            // Softer, higher-res shadows — this is most of the gap vs. Nomad's
+            // look: their contact/cast shadows are high-resolution and soft-
+            // edged, ours were low-res (default map size) with only 8 samples.
+            l.shadowRadius       = max(light.shadowRadius, 4)
+            l.shadowSampleCount  = 24
+            l.shadowMapSize      = CGSize(width: 4096, height: 4096)
+            l.automaticallyAdjustsShadowProjection = true
+            l.usesShadowMapAntialiasing = true
+            l.shadowColor     = UIColor.black.withAlphaComponent(0.4)
             if light.type == .spot {
                 l.spotInnerAngle = light.coneAngle * Double(1 - light.softness)
                 l.spotOuterAngle = light.coneAngle
@@ -140,7 +174,7 @@ public final class ArcRenderViewModel: ObservableObject {
             scene.rootNode.addChildNode(node)
         }
         if let env = lights.first(where: { $0.type == .environment && $0.enabled }) {
-            scene.lightingEnvironment.contents  = env.color
+            scene.lightingEnvironment.contents  = ArcRenderViewModel.proceduralSkyImage
             scene.lightingEnvironment.intensity = Double(env.intensity / 1000)
         }
         scene.background.contents = UIColor(red:0.013,green:0.027,blue:0.065,alpha:1)
