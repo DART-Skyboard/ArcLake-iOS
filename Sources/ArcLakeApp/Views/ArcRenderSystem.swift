@@ -1,5 +1,7 @@
 import SwiftUI
 import SceneKit
+import CoreImage
+import PhotosUI
 
 // ═══════════════════════════════════════════════════════════════════
 // ArcRenderSystem — Nomad-parity PBR render control for ArcLake.
@@ -9,6 +11,18 @@ import SceneKit
 // MARK: — Tone Mapping modes
 public enum ArcToneMap: String, CaseIterable, Identifiable {
     case aces = "ACES", neutral = "Neutral", none = "None"
+    public var id: String { rawValue }
+}
+
+// MARK: — Viewport Background modes (matches Nomad's Background panel)
+public enum ArcBackgroundMode: String, CaseIterable, Identifiable {
+    case color = "Color", gradient = "Gradient", environment = "Environment"
+    public var id: String { rawValue }
+}
+
+public enum ArcEnvironmentPreset: String, CaseIterable, Identifiable {
+    case day = "Day", sunset = "Sunset", overcast = "Overcast",
+         studio = "Studio", night = "Night", custom = "Custom"
     public var id: String { rawValue }
 }
 
@@ -101,6 +115,25 @@ public final class ArcRenderViewModel: ObservableObject {
     @Published public var renderScale: CGFloat = 1.0
     @Published public var msaaLevel: Int       = 4
 
+    // MARK: — Viewport Background (Color / Gradient / Environment)
+    // Matches Nomad's Background panel: pick a flat color, a two-color
+    // gradient with a blend factor, or an environment map. Environment
+    // mode drives BOTH the visible backdrop and the scene's IBL lighting
+    // together, same as picking an HDRI in Nomad — they're the same map.
+    @Published public var backgroundMode: ArcBackgroundMode = .color
+    @Published public var backgroundColor: UIColor =
+        UIColor(red: 0.013, green: 0.027, blue: 0.065, alpha: 1)
+    @Published public var gradientTopColor: UIColor =
+        UIColor(red: 0.05, green: 0.09, blue: 0.20, alpha: 1)
+    @Published public var gradientBottomColor: UIColor =
+        UIColor(red: 0.01, green: 0.015, blue: 0.03, alpha: 1)
+    @Published public var gradientFactor: CGFloat = 0.5   // blend midpoint, Nomad-style
+
+    @Published public var environmentPreset: ArcEnvironmentPreset = .day
+    @Published public var environmentImage: UIImage? = nil   // set when preset or import chosen
+    @Published public var environmentIntensity: CGFloat = 1.0  // "Exposure" in the panel
+    @Published public var environmentContrast: CGFloat = 0.0   // -1...1
+
     // MARK: — Procedural sky environment (real image-based lighting)
     // A flat ambient color gives PBR materials nothing directional to
     // reflect, which is most of why metal/rough surfaces look flat and
@@ -109,32 +142,135 @@ public final class ArcRenderViewModel: ObservableObject {
     // it as scene.lightingEnvironment.contents — real IBL variation with
     // zero bundled assets, so specular highlights and reflections actually
     // have something believable to pick up.
-    public static let proceduralSkyImage: UIImage = {
-        let size = CGSize(width: 512, height: 256)
+    // Generic vertical-gradient equirect image generator — used for both
+    // the environment presets below and the plain two-color Background
+    // gradient mode.
+    public static func verticalGradientImage(
+        size: CGSize, colors: [UIColor], locations: [CGFloat]
+    ) -> UIImage {
         let renderer = UIGraphicsImageRenderer(size: size)
         return renderer.image { ctx in
-            let colors: [CGColor] = [
-                UIColor(red: 0.22, green: 0.42, blue: 0.85, alpha: 1).cgColor, // zenith
-                UIColor(red: 0.55, green: 0.70, blue: 0.95, alpha: 1).cgColor, // upper sky
-                UIColor(red: 0.97, green: 0.88, blue: 0.72, alpha: 1).cgColor, // horizon glow
-                UIColor(red: 0.09, green: 0.10, blue: 0.13, alpha: 1).cgColor, // ground
-            ]
-            let locations: [CGFloat] = [0.0, 0.4, 0.58, 1.0]
+            let cg = colors.map { $0.cgColor }
             guard let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
-                                             colors: colors as CFArray, locations: locations) else { return }
+                                             colors: cg as CFArray, locations: locations) else { return }
             ctx.cgContext.drawLinearGradient(gradient,
                 start: CGPoint(x: size.width/2, y: 0),
                 end:   CGPoint(x: size.width/2, y: size.height),
                 options: [])
         }
-    }()
+    }
+
+    // Five preset "HDRI-style" environments — no bundled assets, generated
+    // on demand. Not a substitute for a real captured HDRI, but gives real
+    // directional IBL variation (unlike a flat ambient color) across a
+    // useful spread of lighting moods, same role Nomad's Poly Haven presets
+    // play in their Background panel.
+    public static func skyPreset(_ preset: ArcEnvironmentPreset) -> UIImage {
+        let size = CGSize(width: 512, height: 256)
+        switch preset {
+        case .day:
+            return verticalGradientImage(size: size, colors: [
+                UIColor(red: 0.22, green: 0.42, blue: 0.85, alpha: 1),
+                UIColor(red: 0.55, green: 0.70, blue: 0.95, alpha: 1),
+                UIColor(red: 0.97, green: 0.88, blue: 0.72, alpha: 1),
+                UIColor(red: 0.09, green: 0.10, blue: 0.13, alpha: 1),
+            ], locations: [0.0, 0.4, 0.58, 1.0])
+        case .sunset:
+            return verticalGradientImage(size: size, colors: [
+                UIColor(red: 0.15, green: 0.12, blue: 0.35, alpha: 1),
+                UIColor(red: 0.55, green: 0.22, blue: 0.35, alpha: 1),
+                UIColor(red: 0.95, green: 0.55, blue: 0.25, alpha: 1),
+                UIColor(red: 0.08, green: 0.06, blue: 0.09, alpha: 1),
+            ], locations: [0.0, 0.35, 0.62, 1.0])
+        case .overcast:
+            return verticalGradientImage(size: size, colors: [
+                UIColor(red: 0.55, green: 0.58, blue: 0.62, alpha: 1),
+                UIColor(red: 0.68, green: 0.70, blue: 0.73, alpha: 1),
+                UIColor(red: 0.75, green: 0.76, blue: 0.77, alpha: 1),
+                UIColor(red: 0.20, green: 0.21, blue: 0.22, alpha: 1),
+            ], locations: [0.0, 0.4, 0.6, 1.0])
+        case .studio:
+            return verticalGradientImage(size: size, colors: [
+                UIColor(red: 0.85, green: 0.85, blue: 0.87, alpha: 1),
+                UIColor(red: 0.60, green: 0.60, blue: 0.62, alpha: 1),
+                UIColor(red: 0.35, green: 0.35, blue: 0.37, alpha: 1),
+                UIColor(red: 0.12, green: 0.12, blue: 0.13, alpha: 1),
+            ], locations: [0.0, 0.45, 0.7, 1.0])
+        case .night:
+            return verticalGradientImage(size: size, colors: [
+                UIColor(red: 0.02, green: 0.03, blue: 0.08, alpha: 1),
+                UIColor(red: 0.05, green: 0.06, blue: 0.14, alpha: 1),
+                UIColor(red: 0.10, green: 0.09, blue: 0.16, alpha: 1),
+                UIColor(red: 0.01, green: 0.01, blue: 0.02, alpha: 1),
+            ], locations: [0.0, 0.4, 0.6, 1.0])
+        case .custom:
+            return verticalGradientImage(size: size,
+                colors: [.gray, .darkGray], locations: [0.0, 1.0])
+        }
+    }
+
+    // Applies contrast (-1...1) to an environment image via Core Image —
+    // this is the actual per-environment "contrast" control in the panel,
+    // independent from the camera's overall tone-mapping contrast.
+    public static func applyContrast(_ image: UIImage, amount: CGFloat) -> UIImage {
+        guard amount != 0, let cg = image.cgImage else { return image }
+        let ci = CIImage(cgImage: cg)
+        let filter = CIFilter(name: "CIColorControls")
+        filter?.setValue(ci, forKey: kCIInputImageKey)
+        filter?.setValue(1.0 + amount, forKey: kCIInputContrastKey)
+        let context = CIContext()
+        guard let output = filter?.outputImage,
+              let rendered = context.createCGImage(output, from: ci.extent) else { return image }
+        return UIImage(cgImage: rendered)
+    }
+
+    // Backward-compat alias — existing callers used this name directly.
+    public static var proceduralSkyImage: UIImage { skyPreset(.day) }
 
     // Scene view ref
     public weak var sceneView: SCNView? = nil
     public func applyNow() {
         guard let v = sceneView else { return }
         applyCamera(v)
-        if let s = v.scene { applyLights(to: s) }
+        if let s = v.scene {
+            applyLights(to: s)
+            applyBackground(to: s)
+        }
+    }
+
+    // MARK: — Apply viewport background (Color / Gradient / Environment)
+    // Environment mode intentionally drives BOTH scene.background AND
+    // scene.lightingEnvironment from the same image — picking an HDRI
+    // should light the scene the way it visually surrounds it, exactly
+    // like Nomad's own Background→Environment behavior.
+    public func applyBackground(to scene: SCNScene) {
+        switch backgroundMode {
+        case .color:
+            scene.background.contents = backgroundColor
+
+        case .gradient:
+            // Blend factor shifts where the two colors meet, matching
+            // Nomad's "Factor" slider under the two color swatches.
+            let mid = min(max(gradientFactor, 0), 1)
+            let img = ArcRenderViewModel.verticalGradientImage(
+                size: CGSize(width: 4, height: 256),
+                colors: [gradientTopColor, gradientBottomColor],
+                locations: [0.0, mid == 0.5 ? 0.5 : mid])
+            scene.background.contents = img
+            // Gradient mode still lights the scene with the existing Sky
+            // ambient light's own color, unchanged from before.
+            if let env = lights.first(where: { $0.type == .environment && $0.enabled }) {
+                scene.lightingEnvironment.contents  = env.color
+                scene.lightingEnvironment.intensity = Double(env.intensity / 1000)
+            }
+
+        case .environment:
+            let base = environmentImage ?? ArcRenderViewModel.skyPreset(environmentPreset)
+            let final = ArcRenderViewModel.applyContrast(base, amount: environmentContrast)
+            scene.background.contents = final
+            scene.lightingEnvironment.contents  = final
+            scene.lightingEnvironment.intensity = Double(environmentIntensity)
+        }
     }
 
     // MARK: — Apply lights
@@ -172,11 +308,8 @@ public final class ArcRenderViewModel: ObservableObject {
             }
             scene.rootNode.addChildNode(node)
         }
-        if let env = lights.first(where: { $0.type == .environment && $0.enabled }) {
-            scene.lightingEnvironment.contents  = ArcRenderViewModel.proceduralSkyImage
-            scene.lightingEnvironment.intensity = Double(env.intensity / 1000)
-        }
-        scene.background.contents = UIColor(red:0.013,green:0.027,blue:0.065,alpha:1)
+        // Background + lighting-environment are now handled together by
+        // applyBackground(to:) below (Color / Gradient / Environment modes).
     }
 
     // MARK: — Apply camera
@@ -293,7 +426,7 @@ struct ArcRenderPanel: View {
     @State private var showAddLight = false
     @State private var tab: PanelTab = .render
 
-    enum PanelTab: String, CaseIterable { case render = "Render", materials = "Materials" }
+    enum PanelTab: String, CaseIterable { case render = "Render", background = "Background", materials = "Materials" }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -317,7 +450,8 @@ struct ArcRenderPanel: View {
             .padding(.horizontal, 10).padding(.top, 8)
 
             ScrollView(showsIndicators: false) {
-                if tab == .render {
+                switch tab {
+                case .render:
                     VStack(spacing: 10) {
                         qualitySection
                         toneMappingSection
@@ -325,13 +459,15 @@ struct ArcRenderPanel: View {
                         lightsSection
                         Spacer().frame(height: 20)
                     }.padding(10)
-                } else {
+                case .background:
+                    ArcBackgroundPanelContent()
+                case .materials:
                     materialSection
                 }
             }
         }
         .background(Color(red:0.02,green:0.04,blue:0.09))
-        .onAppear { vm.applyLights(to: labVM.scene) }
+        .onAppear { vm.applyNow() }  // lights + background + camera, all in sync
         .onChange(of: vm.lights.count) { _ in vm.applyNow() }
     }
 
@@ -617,5 +753,200 @@ struct ArcRenderPanel: View {
     }
     private func accentLabel(_ s: String) -> some View {
         Text(s).font(.system(size: 9, design: .monospaced)).foregroundColor(themeVM.accent)
+    }
+}
+
+// MARK: — Background Panel (Color / Gradient / Environment)
+// Mirrors Nomad's Background tab: pick a flat color, a two-color gradient
+// with a blend factor, or an environment map (preset or your own photo).
+// Environment mode lights the scene with the same image it shows as the
+// backdrop — same behavior as picking an HDRI in Nomad.
+struct ArcBackgroundPanelContent: View {
+    @StateObject private var vm = ArcRenderViewModel.shared
+    @EnvironmentObject var themeVM: ArcThemeViewModel
+    @State private var photoItem: PhotosPickerItem? = nil
+    @State private var isLoadingPhoto = false
+
+    var body: some View {
+        VStack(spacing: 10) {
+            // Mode switcher — Color | Gradient | Environment
+            HStack(spacing: 0) {
+                ForEach(ArcBackgroundMode.allCases) { mode in
+                    Button {
+                        vm.backgroundMode = mode
+                        vm.applyNow()
+                    } label: {
+                        Text(mode.rawValue)
+                            .font(.system(size: 9, weight: .bold, design: .monospaced))
+                            .foregroundColor(vm.backgroundMode == mode ? .black : themeVM.accent)
+                            .frame(maxWidth: .infinity).padding(.vertical, 7)
+                            .background(vm.backgroundMode == mode ? themeVM.accent : Color.clear)
+                    }
+                }
+            }
+            .background(Color.white.opacity(0.05))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+
+            switch vm.backgroundMode {
+            case .color:
+                colorSection
+            case .gradient:
+                gradientSection
+            case .environment:
+                environmentSection
+            }
+
+            Spacer().frame(height: 20)
+        }
+        .padding(10)
+    }
+
+    // MARK: Color mode
+    private var colorSection: some View {
+        card("SOLID COLOR") {
+            ColorPicker("Background Color",
+                        selection: Binding(
+                            get: { Color(vm.backgroundColor) },
+                            set: { vm.backgroundColor = UIColor($0); vm.applyNow() }))
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(.white.opacity(0.8))
+        }
+    }
+
+    // MARK: Gradient mode
+    private var gradientSection: some View {
+        card("GRADIENT") {
+            ColorPicker("Top",
+                        selection: Binding(
+                            get: { Color(vm.gradientTopColor) },
+                            set: { vm.gradientTopColor = UIColor($0); vm.applyNow() }))
+                .font(.system(size: 11, design: .monospaced)).foregroundColor(.white.opacity(0.8))
+            ColorPicker("Bottom",
+                        selection: Binding(
+                            get: { Color(vm.gradientBottomColor) },
+                            set: { vm.gradientBottomColor = UIColor($0); vm.applyNow() }))
+                .font(.system(size: 11, design: .monospaced)).foregroundColor(.white.opacity(0.8))
+            HStack {
+                Text("Factor").font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.75))
+                Slider(value: Binding(
+                    get: { vm.gradientFactor },
+                    set: { vm.gradientFactor = $0; vm.applyNow() }), in: 0...1)
+                    .tint(themeVM.accent)
+                Text("\(Int(vm.gradientFactor * 100))%")
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundColor(themeVM.accent)
+                    .frame(width: 40, alignment: .trailing)
+            }
+        }
+    }
+
+    // MARK: Environment mode
+    private var environmentSection: some View {
+        VStack(spacing: 10) {
+            card("PRESETS") {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(ArcEnvironmentPreset.allCases.filter { $0 != .custom }) { preset in
+                            Button {
+                                vm.environmentPreset = preset
+                                vm.environmentImage = nil   // use generated preset, not an import
+                                vm.applyNow()
+                            } label: {
+                                VStack(spacing: 4) {
+                                    Image(uiImage: ArcRenderViewModel.skyPreset(preset))
+                                        .resizable().aspectRatio(contentMode: .fill)
+                                        .frame(width: 56, height: 34)
+                                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                                        .overlay(RoundedRectangle(cornerRadius: 6)
+                                            .stroke(vm.environmentPreset == preset && vm.environmentImage == nil
+                                                    ? themeVM.accent : Color.white.opacity(0.15),
+                                                    lineWidth: 2))
+                                    Text(preset.rawValue)
+                                        .font(.system(size: 8, design: .monospaced))
+                                        .foregroundColor(.white.opacity(0.6))
+                                }
+                            }
+                        }
+                    }
+                }
+
+                PhotosPicker(selection: $photoItem, matching: .images) {
+                    HStack(spacing: 6) {
+                        Image(systemName: isLoadingPhoto ? "hourglass" : "photo.badge.plus")
+                        Text(isLoadingPhoto ? "Loading…" : "Import Your Own")
+                    }
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundColor(.black)
+                    .frame(maxWidth: .infinity).padding(.vertical, 9)
+                    .background(themeVM.accent)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+                .onChange(of: photoItem) { newItem in
+                    guard let newItem else { return }
+                    isLoadingPhoto = true
+                    Task {
+                        if let data = try? await newItem.loadTransferable(type: Data.self),
+                           let uiImage = UIImage(data: data) {
+                            await MainActor.run {
+                                vm.environmentImage = uiImage
+                                vm.environmentPreset = .custom
+                                vm.applyNow()
+                                isLoadingPhoto = false
+                            }
+                        } else {
+                            await MainActor.run { isLoadingPhoto = false }
+                        }
+                    }
+                }
+
+                if vm.environmentImage != nil {
+                    Text("Using your imported image")
+                        .font(.system(size: 8, design: .monospaced))
+                        .foregroundColor(themeVM.accent.opacity(0.8))
+                }
+            }
+
+            card("EXPOSURE & CONTRAST") {
+                HStack {
+                    Text("Exposure").font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.75))
+                    Slider(value: Binding(
+                        get: { vm.environmentIntensity },
+                        set: { vm.environmentIntensity = $0; vm.applyNow() }), in: 0...3)
+                        .tint(themeVM.accent)
+                    Text(String(format: "%.2f", vm.environmentIntensity))
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundColor(themeVM.accent)
+                        .frame(width: 40, alignment: .trailing)
+                }
+                HStack {
+                    Text("Contrast").font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.75))
+                    Slider(value: Binding(
+                        get: { vm.environmentContrast },
+                        set: { vm.environmentContrast = $0; vm.applyNow() }), in: -1...1)
+                        .tint(themeVM.accent)
+                    Text(String(format: "%.2f", vm.environmentContrast))
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundColor(themeVM.accent)
+                        .frame(width: 40, alignment: .trailing)
+                }
+                Text("Environment lighting also drives real-time reflections and shadows on every material in the scene.")
+                    .font(.system(size: 8, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.3))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func card<C: View>(_ title: String, @ViewBuilder content: () -> C) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.system(size: 8, weight: .bold, design: .monospaced))
+                .foregroundColor(.white.opacity(0.4)).tracking(2)
+            content()
+        }
+        .padding(10).background(Color.white.opacity(0.03)).clipShape(RoundedRectangle(cornerRadius: 12))
     }
 }
