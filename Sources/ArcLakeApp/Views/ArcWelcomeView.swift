@@ -126,13 +126,18 @@ struct ArcWelcomeView: View {
                         .frame(height: 52).cornerRadius(12)
                     }
 
-                    // ② Google Sign-In
+                    // ② Google Sign-In — hidden until Google Cloud paid dev account
+                    // is set up with a proper iOS-type OAuth client (Google requires
+                    // the $25 one-time registration fee for API/OAuth client creation
+                    // on some account tiers). Code path stays intact in ArcAuthViewModel
+                    // for when that's ready — just remove the surrounding `if false` block
+                    // and re-add the buttons below to bring it back.
+                    if false {
                     if authVM.googleConnected {
                         Button { authVM.signOutGoogle() } label: {
                             HStack(spacing: 12) {
                                 ZStack {
                                     Circle().fill(Color.white.opacity(0.1)).frame(width:32,height:32)
-                                    // Google "G" in brand colors
                                     Text("G").font(.system(size:14,weight:.bold)).foregroundColor(.white)
                                 }
                                 VStack(alignment:.leading, spacing:2) {
@@ -169,6 +174,7 @@ struct ArcWelcomeView: View {
                                 .stroke(Color(red:0.26,green:0.52,blue:0.96).opacity(0.4),lineWidth:1))
                         }
                     }
+                    } // end Google hide
 
                     // ③ GitHub — dynamic label based on stored token
                     if hasStoredGitHub {
