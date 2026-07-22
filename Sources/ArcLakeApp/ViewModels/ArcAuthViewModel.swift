@@ -174,7 +174,7 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
                 // two-factor auth is off, or the capability didn't register yet —
                 // surface it instead of swallowing it, since this is a direct
                 // button tap, not a passive background check.
-                self.error = "Sign in with Apple couldn't complete. Make sure you're signed into iCloud with two-factor authentication enabled in Settings, then try again."
+                self.error = "Sign in with Apple couldn't complete. Check: iCloud is signed in with two-factor authentication on, and Settings → Screen Time → Content & Privacy Restrictions → Allow Changes → Account Changes is set to Allow (this specifically blocks third-party Apple sign-in when restricted)."
             default:
                 self.error = "Apple Sign-In failed: \(err.localizedDescription)"
             }
@@ -587,7 +587,7 @@ extension ArcAuthViewModel:
             case .canceled:
                 return  // user tapped Cancel in the system sheet — not an error
             case .unknown:
-                self.error = "Sign in with Apple couldn't complete. Make sure you're signed into iCloud with two-factor authentication enabled in Settings, then try again."
+                self.error = "Sign in with Apple couldn't complete. Check: iCloud is signed in with two-factor authentication on, and Settings → Screen Time → Content & Privacy Restrictions → Allow Changes → Account Changes is set to Allow (this specifically blocks third-party Apple sign-in when restricted)."
             default:
                 self.error = error.localizedDescription
             }
