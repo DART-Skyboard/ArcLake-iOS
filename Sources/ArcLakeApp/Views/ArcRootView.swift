@@ -760,14 +760,8 @@ struct ArcProfileSheet: View {
                     Divider().background(Color.white.opacity(0.08))
                     arcRow("GitHub", authVM.githubConnected ? authVM.githubUsername : "Not connected",
                            authVM.githubConnected ? themeVM.accent : .white.opacity(0.3)) { showGitHubPicker = true }
-                    Divider().background(Color.white.opacity(0.08))
-                    arcRow("Google",
-                           authVM.googleConnected ? authVM.googleEmail : "Not connected",
-                           authVM.googleConnected ? Color(red:0.26,green:0.52,blue:0.96) : .white.opacity(0.3)) {
-                        if authVM.googleConnected { authVM.signOutGoogle() }
-                        else { authVM.signInWithGoogle() }
-                    }
-                    Divider().background(Color.white.opacity(0.08))
+                    // Google row hidden until iOS-type OAuth client is set up
+                    // (pending Google Cloud paid developer registration)
                     HStack {
                         Text("Vault").font(.system(size: 13, design: .monospaced)).foregroundColor(.white.opacity(0.4))
                         Spacer()
