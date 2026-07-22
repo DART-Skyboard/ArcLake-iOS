@@ -157,7 +157,6 @@ public final class ArcRenderViewModel: ObservableObject {
             l.shadowSampleCount  = 24
             l.shadowMapSize      = CGSize(width: 4096, height: 4096)
             l.automaticallyAdjustsShadowProjection = true
-            l.usesShadowMapAntialiasing = true
             l.shadowColor     = UIColor.black.withAlphaComponent(0.4)
             if light.type == .spot {
                 l.spotInnerAngle = light.coneAngle * Double(1 - light.softness)
