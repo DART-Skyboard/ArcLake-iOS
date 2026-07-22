@@ -54,6 +54,11 @@ public struct ArcSceneView: UIViewRepresentable {
         c.lastScene = labVM.scene
         c.resetView()                       // set initial position
         ArcRenderViewModel.shared.sceneView = v   // render panel gets live target
+        // Activate full PBR lighting (Sun + Sky + shadows + SSAO/tone-mapping)
+        // immediately on scene creation — previously this only happened once
+        // the user opened the Render panel, so every tab loaded completely
+        // unlit until then. Now every tab gets Nomad-parity lighting from frame 1.
+        ArcRenderViewModel.shared.applyNow()
 
         // ── Gestures ─────────────────────────────────────────────
         // 1-finger orbit
