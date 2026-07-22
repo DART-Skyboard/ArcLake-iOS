@@ -13,7 +13,7 @@ public final class ArcSupportSubscriptionService: ObservableObject {
     public static let shared = ArcSupportSubscriptionService()
 
     // Set this to the correct product ID for each app
-    public var productID: String = "DART_Meadow_LLC.Cotharticren.support.monthly.v2"  // v2: original product ID stuck in an unrecoverable ASC review lock after the 1.5.3 rejection; new subscription created to work around it
+    public var productID: String = "DART_Meadow_LLC.Cotharticren.support.monthly.v3"  // v3: the v2 subscription's whole subscription GROUP was itself stuck on an unsupported legacy version format — moved to a brand new subscription group ("Arc Lake Support v2", id 22256329) to get a submittable state
 
     @Published public var product: Product?
     @Published public var isSubscribed = false
