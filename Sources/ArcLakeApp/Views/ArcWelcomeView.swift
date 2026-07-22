@@ -76,7 +76,15 @@ struct ArcWelcomeView: View {
                 // ── Auth buttons ──────────────────────────────────────
                 VStack(spacing: 12) {
 
-                    // ① Sign in with Apple — ALWAYS first
+                    // ① Sign in with Apple — hidden until the iOS 27 beta
+                    // Sign in with Apple bug is resolved (device fails auth with
+                    // ASAuthorizationError.unknown; code/entitlements/profile all
+                    // verified correct — this is an OS-beta issue, not app-side).
+                    // NOTE: per App Review Guideline 4.8, if GitHub sign-in is
+                    // offered as a third-party account login, Apple sign-in must
+                    // be offered as an equivalent — re-enable this before
+                    // submitting for review, or gate the GitHub entry point too.
+                    if false {
                     if !authVM.savedAppleAccounts.isEmpty {
                         // Saved Apple accounts — show them as quick-resume rows
                         ForEach(authVM.savedAppleAccounts) { account in
@@ -125,6 +133,7 @@ struct ArcWelcomeView: View {
                         .signInWithAppleButtonStyle(.white)
                         .frame(height: 52).cornerRadius(12)
                     }
+                    } // end Apple hide
 
                     // ② Google Sign-In — hidden until Google Cloud paid dev account
                     // is set up with a proper iOS-type OAuth client (Google requires
