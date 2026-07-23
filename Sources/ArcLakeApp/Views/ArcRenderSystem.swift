@@ -243,6 +243,17 @@ public final class ArcRenderViewModel: ObservableObject {
     // scene.lightingEnvironment from the same image — picking an HDRI
     // should light the scene the way it visually surrounds it, exactly
     // like Nomad's own Background→Environment behavior.
+    //
+    // Design reference: DreamWorks Animation's OpenMoonRay (Apache 2.0)
+    // treats environment maps as genuine importance-sampled lights via its
+    // pbr::EnvLight class (lib/rendering/pbr/light/EnvLight.h), not just a
+    // flat ambient convolution — bright regions of the map (e.g. a baked-in
+    // sun) are sampled as real light sources. SceneKit's fixed-function IBL
+    // pipeline doesn't expose that level of control, but the same underlying
+    // idea — an environment map is a light, not just a backdrop — is why
+    // Environment mode here feeds scene.lightingEnvironment directly rather
+    // than only scene.background.
+    // https://github.com/OpenMoonRay/moonray (studied via dartsolarpunk/DARTopenmoonray)
     public func applyBackground(to scene: SCNScene) {
         switch backgroundMode {
         case .color:
