@@ -201,6 +201,10 @@ struct ArcSettingsView: View {
                                  "OpenUSD — Universal Scene Description (Nomad Sculpt-compatible USDZ packaging)",
                                  link: "https://github.com/PixarAnimationStudios/OpenUSD")
                         Divider().background(Color.white.opacity(0.08))
+                        aboutRow("Rendering Research",
+                                 "OpenMoonRay — DreamWorks Animation's production MCRT renderer (Apache 2.0). Studied for environment-lighting design (treating HDRIs as real light sources, not just backdrops).",
+                                 link: "https://github.com/OpenMoonRay/openmoonray")
+                        Divider().background(Color.white.opacity(0.08))
                         aboutRow("Framework",
                                  "LEATR · BRPN · mc³ — Radical Deepscale LLC",
                                  link: "https://radicaldeepscale.com")
