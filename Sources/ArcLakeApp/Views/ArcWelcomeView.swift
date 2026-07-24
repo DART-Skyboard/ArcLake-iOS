@@ -77,14 +77,16 @@ struct ArcWelcomeView: View {
                 VStack(spacing: 12) {
 
                     // ① Sign in with Apple — hidden until the iOS 27 beta
-                    // Sign in with Apple bug is resolved (device fails auth with
-                    // ASAuthorizationError.unknown; code/entitlements/profile all
-                    // verified correct — this is an OS-beta issue, not app-side).
-                    // NOTE: per App Review Guideline 4.8, if GitHub sign-in is
-                    // offered as a third-party account login, Apple sign-in must
-                    // be offered as an equivalent — re-enable this before
-                    // submitting for review, or gate the GitHub entry point too.
-                    if false {
+                    // Sign in with Apple — RE-ENABLED. Everything app-side was
+                    // verified correct (APPLE_ID_AUTH capability on the bundle ID,
+                    // ACTIVE provisioning profile carrying the applesignin
+                    // entitlement, and the implementation matches Apple's own
+                    // reference pattern). It's also required here: per App Review
+                    // Guideline 4.8, offering GitHub as a third-party account login
+                    // means Apple sign-in has to be offered as an equivalent.
+                    // If it fails now, the error surfaced below reports the real
+                    // NSError domain/code rather than a guess, so the actual cause
+                    // is diagnosable instead of assumed.
                     if !authVM.savedAppleAccounts.isEmpty {
                         // Saved Apple accounts — show them as quick-resume rows
                         ForEach(authVM.savedAppleAccounts) { account in
@@ -133,7 +135,6 @@ struct ArcWelcomeView: View {
                         .signInWithAppleButtonStyle(.white)
                         .frame(height: 52).cornerRadius(12)
                     }
-                    } // end Apple hide
 
                     // ② Google Sign-In — hidden until Google Cloud paid dev account
                     // is set up with a proper iOS-type OAuth client (Google requires
