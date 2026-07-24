@@ -108,6 +108,21 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
         }
     }
 
+    // MARK: — Apple Sign-In diagnostics
+    // ASAuthorizationError.unknown (code 1000) is a catch-all Apple returns for
+    // several unrelated conditions, so a fixed "here's probably why" string is a
+    // guess. This surfaces the real NSError domain + code alongside the likely
+    // causes, so the actual failure is identifiable rather than assumed —
+    // everything app-side (APPLE_ID_AUTH capability, provisioning profile
+    // entitlement, request/delegate wiring) has been verified correct.
+    static func appleDiagnosticMessage(_ error: Error) -> String {
+        let ns = error as NSError
+        var lines = ["Sign in with Apple couldn't complete."]
+        lines.append("Error: \(ns.domain) code \(ns.code) — \(ns.localizedDescription)")
+        lines.append("Common causes: iCloud signed out, two-factor auth off, or Settings → Screen Time → Content & Privacy Restrictions → Account Changes set to Don't Allow.")
+        return lines.joined(separator: "\n\n")
+    }
+
     // MARK: — performExistingAccountSetupFlows (Fruta pattern)
     // Silently checks for BOTH Apple ID credential AND iCloud Keychain password
     // If found, completes silently without showing the login UI
@@ -174,7 +189,7 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
                 // two-factor auth is off, or the capability didn't register yet —
                 // surface it instead of swallowing it, since this is a direct
                 // button tap, not a passive background check.
-                self.error = "Sign in with Apple couldn't complete. Check: iCloud is signed in with two-factor authentication on, and Settings → Screen Time → Content & Privacy Restrictions → Allow Changes → Account Changes is set to Allow (this specifically blocks third-party Apple sign-in when restricted)."
+                self.error = Self.appleDiagnosticMessage(err)
             default:
                 self.error = "Apple Sign-In failed: \(err.localizedDescription)"
             }
@@ -587,7 +602,7 @@ extension ArcAuthViewModel:
             case .canceled:
                 return  // user tapped Cancel in the system sheet — not an error
             case .unknown:
-                self.error = "Sign in with Apple couldn't complete. Check: iCloud is signed in with two-factor authentication on, and Settings → Screen Time → Content & Privacy Restrictions → Allow Changes → Account Changes is set to Allow (this specifically blocks third-party Apple sign-in when restricted)."
+                self.error = Self.appleDiagnosticMessage(error)
             default:
                 self.error = error.localizedDescription
             }
