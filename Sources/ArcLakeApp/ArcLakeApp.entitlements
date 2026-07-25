@@ -8,5 +8,25 @@
     </array>
     <key>aps-environment</key>
     <string>production</string>
+
+    <!-- iCloud Drive document storage. These were MISSING entirely, which is
+         why FileManager.url(forUbiquityContainerIdentifier:) returned nil and
+         the vault silently fell back to local-only storage despite the UI
+         saying work saves to iCloud Drive. Container ID must match what the
+         provisioning profile permits (iCloud.dedm) or code signing fails. -->
+    <key>com.apple.developer.icloud-container-identifiers</key>
+    <array>
+        <string>iCloud.dedm</string>
+    </array>
+    <key>com.apple.developer.ubiquity-container-identifiers</key>
+    <array>
+        <string>iCloud.dedm</string>
+    </array>
+    <key>com.apple.developer.icloud-services</key>
+    <array>
+        <string>CloudDocuments</string>
+    </array>
+    <key>com.apple.developer.ubiquity-kvstore-identifier</key>
+    <string>$(TeamIdentifierPrefix)$(CFBundleIdentifier)</string>
 </dict>
 </plist>

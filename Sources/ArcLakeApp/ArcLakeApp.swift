@@ -15,6 +15,13 @@ struct DARTApp: App {
                 .environmentObject(labVM)
                 .environmentObject(themeVM)
                 .environmentObject(authVM)
+                .task {
+                    // Capture the environment snapshot automatically instead of
+                    // relying on the Log tab button being tapped — this is the
+                    // data that shows whether the SHIPPED build actually carries
+                    // the Sign in with Apple entitlement.
+                    ArcDiagnostics.shared.captureEnvironment()
+                }
                 .preferredColorScheme(.dark)
                 // Google Sign-In OAuth callback (reversed client-ID URL scheme)
                 .onOpenURL { url in

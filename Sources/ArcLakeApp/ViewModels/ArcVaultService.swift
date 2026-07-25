@@ -6,7 +6,11 @@ import Foundation
 
 public actor ArcVaultService {
     public static let shared = ArcVaultService()
-    private let containerID = "iCloud.com.dartmeadow.autumn"
+    // Must match the container in the provisioning profile — the App ID is
+    // provisioned for "iCloud.dedm". The previous value
+    // ("iCloud.com.dartmeadow.autumn") was never registered on this App ID, so
+    // the ubiquity lookup always returned nil and nothing ever reached iCloud.
+    private let containerID = "iCloud.dedm"
     private var _vaultURL: URL?
     public var vaultURL: URL? { _vaultURL }
 

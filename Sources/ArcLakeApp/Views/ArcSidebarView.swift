@@ -684,8 +684,11 @@ struct DARTLogPanel: View {
     @StateObject private var diag = ArcDiagnostics.shared
     @State private var filter = ""
     @State private var levelFilter: ArcLogLevel? = nil
-    @State private var exportURL: URL? = nil
-    @State private var showShare = false
+    // .sheet(item:) rather than (isPresented:) — with isPresented the sheet
+    // body is evaluated before the URL state lands, so the first tap showed an
+    // empty sheet and only worked on a second attempt.
+    struct ExportFile: Identifiable { let id = UUID(); let url: URL }
+    @State private var exportFile: ExportFile? = nil
 
     // Unified row — merges the app's own simple log entries with the richer
     // diagnostic entries so there's one place to look, not two.
@@ -760,8 +763,7 @@ struct DARTLogPanel: View {
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                 }
                 Button {
-                    exportURL = diag.exportToFile()
-                    showShare = exportURL != nil
+                    if let u = diag.exportToFile() { exportFile = ExportFile(url: u) }
                 } label: {
                     Label("Export .txt", systemImage: "square.and.arrow.up")
                         .font(.system(size: 9, weight: .semibold, design: .monospaced))
@@ -830,8 +832,8 @@ struct DARTLogPanel: View {
                 }
             }
         }
-        .sheet(isPresented: $showShare) {
-            if let url = exportURL { ArcShareSheet(items: [url]) }
+        .sheet(item: $exportFile) { f in
+            ArcShareSheet(items: [f.url])
         }
     }
 
