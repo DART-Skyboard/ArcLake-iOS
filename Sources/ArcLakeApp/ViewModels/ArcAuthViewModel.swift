@@ -115,6 +115,16 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
     // causes, so the actual failure is identifiable rather than assumed —
     // everything app-side (APPLE_ID_AUTH capability, provisioning profile
     // entitlement, request/delegate wiring) has been verified correct.
+    // Bridge into the exportable diagnostic log. Wrapped in a MainActor Task
+    // because ArcDiagnostics is MainActor-isolated while these delegate
+    // callbacks aren't guaranteed to be.
+    func diagLog(_ message: String, error: Error? = nil, level: ArcLogLevel = .info) {
+        Task { @MainActor in
+            if let error { ArcDiagnostics.shared.logError("SIWA", message, error: error) }
+            else { ArcDiagnostics.shared.log(level, "SIWA", message) }
+        }
+    }
+
     static func appleDiagnosticMessage(_ error: Error) -> String {
         let ns = error as NSError
         var lines = ["Sign in with Apple couldn't complete."]
@@ -165,6 +175,7 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
     // The button handles presentation — we configure the request here.
     public func configureAppleRequest(_ request: ASAuthorizationAppleIDRequest) {
         error = nil
+        diagLog("Sign in with Apple requested (scopes: fullName, email)")
         request.requestedScopes = [.fullName, .email]
         // No nonce — only needed for server-side JWT verification (Firebase etc.)
     }
@@ -195,6 +206,7 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
 
             appleUserId = uid; username = display
             isSignedIn  = true; isGuest = false; error = nil
+            diagLog("Sign in with Apple SUCCEEDED for user \(uid.prefix(8))…", level: .success)
             Task { await ArcVaultService.shared.setup(
                 githubUsername: githubConnected ? githubUsername : nil) }
 
@@ -206,6 +218,7 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
             case .canceled:
                 break  // user tapped Cancel — not an error, stay silent
             case .unknown:
+                diagLog("SignInWithAppleButton failed (.unknown)", error: err)
                 // On TestFlight/device this commonly means iCloud isn't signed in,
                 // two-factor auth is off, or the capability didn't register yet —
                 // surface it instead of swallowing it, since this is a direct
@@ -604,6 +617,7 @@ extension ArcAuthViewModel:
         let asErr = error as? ASAuthorizationError
         let code  = asErr?.code
         print("[ArcAuth] Apple Sign-In error: \(error.localizedDescription) (code: \(code.map(String.init(describing:)) ?? "?"), silentCheck: \(isSilentAppleCheck))")
+        diagLog("ASAuthorizationController delegate error (silentCheck: \(isSilentAppleCheck))", error: error)
 
         if isSilentAppleCheck {
             // Passive launch-time check — .canceled/.unknown just mean no saved

@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // MARK: — Molecule Panel
 struct DARTMoleculePanel: View {
@@ -679,11 +680,44 @@ struct DARTEnvPanel: View {
 struct DARTLogPanel: View {
     @EnvironmentObject var labVM: ArcLabViewModel
     @EnvironmentObject var themeVM: ArcThemeViewModel
+    @EnvironmentObject var authVM: ArcAuthViewModel
+    @StateObject private var diag = ArcDiagnostics.shared
     @State private var filter = ""
+    @State private var levelFilter: ArcLogLevel? = nil
+    @State private var exportURL: URL? = nil
+    @State private var showShare = false
 
-    var logs: [LogEntry] {
-        filter.isEmpty ? labVM.logEntries :
-        labVM.logEntries.filter { $0.message.localizedCaseInsensitiveContains(filter) }
+    // Unified row — merges the app's own simple log entries with the richer
+    // diagnostic entries so there's one place to look, not two.
+    struct LogRow: Identifiable {
+        let id: UUID
+        let time: Date
+        let timeString: String
+        let level: ArcLogLevel
+        let category: String
+        let message: String
+        let detail: String?
+    }
+
+    private var rows: [LogRow] {
+        var all: [LogRow] = diag.entries.map {
+            LogRow(id: $0.id, time: $0.timestamp, timeString: $0.timeString,
+                   level: $0.level, category: $0.category, message: $0.message, detail: $0.detail)
+        }
+        all += labVM.logEntries.map {
+            LogRow(id: $0.id, time: $0.timestamp, timeString: $0.timeString,
+                   level: .info, category: "APP", message: $0.message, detail: nil)
+        }
+        all.sort { $0.time > $1.time }
+        if let lf = levelFilter { all = all.filter { $0.level == lf } }
+        if !filter.isEmpty {
+            all = all.filter {
+                $0.message.localizedCaseInsensitiveContains(filter)
+                || $0.category.localizedCaseInsensitiveContains(filter)
+                || ($0.detail?.localizedCaseInsensitiveContains(filter) ?? false)
+            }
+        }
+        return all
     }
 
     var body: some View {
@@ -698,42 +732,97 @@ struct DARTLogPanel: View {
                     .foregroundColor(.white)
                     .textFieldStyle(.plain)
                 Spacer()
-                if !labVM.logEntries.isEmpty {
-                    Button { labVM.logEntries.removeAll() } label: {
-                        Image(systemName: "trash")
-                            .font(.system(size: 11))
-                            .foregroundColor(.red.opacity(0.5))
-                    }
+                Button {
+                    diag.clear(); labVM.logEntries.removeAll()
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.system(size: 11))
+                        .foregroundColor(.red.opacity(0.5))
                 }
-                Text("\(labVM.logEntries.count)")
+                Text("\(rows.count)")
                     .font(.system(size: 9, design: .monospaced))
                     .foregroundColor(.white.opacity(0.25))
             }
             .padding(.horizontal, 12).padding(.vertical, 7)
             .background(Color.black.opacity(0.4))
+
+            // Actions: run a full environment snapshot, or export everything
+            HStack(spacing: 6) {
+                Button {
+                    diag.captureEnvironment()
+                    diag.checkAppleCredentialState(userID: authVM.appleUserId)
+                } label: {
+                    Label("Run Diagnostics", systemImage: "stethoscope")
+                        .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                        .foregroundColor(.black)
+                        .padding(.horizontal, 9).padding(.vertical, 6)
+                        .background(themeVM.accent)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+                Button {
+                    exportURL = diag.exportToFile()
+                    showShare = exportURL != nil
+                } label: {
+                    Label("Export .txt", systemImage: "square.and.arrow.up")
+                        .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                        .foregroundColor(themeVM.accent)
+                        .padding(.horizontal, 9).padding(.vertical, 6)
+                        .background(themeVM.accent.opacity(0.12))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 12).padding(.vertical, 6)
+            .background(Color.black.opacity(0.25))
+
+            // Severity filter
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 5) {
+                    levelChip(nil, "All")
+                    ForEach(ArcLogLevel.allCases, id: \.self) { lv in
+                        levelChip(lv, lv.rawValue)
+                    }
+                }
+                .padding(.horizontal, 12).padding(.vertical, 5)
+            }
+            .background(Color.black.opacity(0.2))
             .overlay(Rectangle().frame(height: 0.5)
                 .foregroundColor(.white.opacity(0.06)), alignment: .bottom)
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(logs) { entry in
-                        HStack(alignment: .top, spacing: 8) {
-                            Text(entry.timeString)
-                                .font(.system(size: 7, design: .monospaced))
-                                .foregroundColor(themeVM.accent.opacity(0.4))
-                                .frame(width: 50)
-                            Text(entry.message)
-                                .font(.system(size: 9, design: .monospaced))
-                                .foregroundColor(.white.opacity(0.7))
-                                .fixedSize(horizontal: false, vertical: true)
-                            Spacer()
+                    ForEach(rows) { row in
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(alignment: .top, spacing: 8) {
+                                Text(row.timeString)
+                                    .font(.system(size: 7, design: .monospaced))
+                                    .foregroundColor(themeVM.accent.opacity(0.4))
+                                    .frame(width: 62, alignment: .leading)
+                                Text(row.category)
+                                    .font(.system(size: 7, weight: .bold, design: .monospaced))
+                                    .foregroundColor(row.level.color.opacity(0.9))
+                                    .frame(width: 52, alignment: .leading)
+                                Text(row.message)
+                                    .font(.system(size: 9, design: .monospaced))
+                                    .foregroundColor(row.level.color)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Spacer(minLength: 0)
+                            }
+                            if let d = row.detail, !d.isEmpty {
+                                Text(d)
+                                    .font(.system(size: 8, design: .monospaced))
+                                    .foregroundColor(.white.opacity(0.45))
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .padding(.leading, 122)
+                                    .textSelection(.enabled)
+                            }
                         }
                         .padding(.horizontal, 12).padding(.vertical, 3)
                         .background(Color.white.opacity(0.015))
                         Divider().background(Color.white.opacity(0.04))
                     }
-                    if logs.isEmpty {
-                        Text(filter.isEmpty ? "No log entries" : "No matches")
+                    if rows.isEmpty {
+                        Text(filter.isEmpty ? "No log entries — tap Run Diagnostics" : "No matches")
                             .font(.system(size: 10, design: .monospaced))
                             .foregroundColor(.white.opacity(0.25))
                             .frame(maxWidth: .infinity).padding(20)
@@ -741,6 +830,32 @@ struct DARTLogPanel: View {
                 }
             }
         }
+        .sheet(isPresented: $showShare) {
+            if let url = exportURL { ArcShareSheet(items: [url]) }
+        }
+    }
+
+    @ViewBuilder
+    private func levelChip(_ lv: ArcLogLevel?, _ label: String) -> some View {
+        let isOn = levelFilter == lv
+        Button { levelFilter = lv } label: {
+            Text(label)
+                .font(.system(size: 8, weight: .bold, design: .monospaced))
+                .foregroundColor(isOn ? .black : (lv?.color ?? .white.opacity(0.6)))
+                .padding(.horizontal, 8).padding(.vertical, 4)
+                .background(isOn ? (lv?.color ?? themeVM.accent) : Color.white.opacity(0.07))
+                .clipShape(Capsule())
+        }
     }
 }
+
+// UIActivityViewController wrapper — used to share the exported .txt.
+struct ArcShareSheet: UIViewControllerRepresentable {
+    let items: [Any]
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+    func updateUIViewController(_ vc: UIActivityViewController, context: Context) {}
+}
+
 
