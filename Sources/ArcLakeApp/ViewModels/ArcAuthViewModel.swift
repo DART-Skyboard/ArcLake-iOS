@@ -118,6 +118,9 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
     // Bridge into the exportable diagnostic log. Wrapped in a MainActor Task
     // because ArcDiagnostics is MainActor-isolated while these delegate
     // callbacks aren't guaranteed to be.
+    /// Guards the one-shot fallback below so it can't loop.
+    private var didRetryManualApple = false
+
     func diagLog(_ message: String, error: Error? = nil, level: ArcLogLevel = .info) {
         Task { @MainActor in
             if let error { ArcDiagnostics.shared.logError("SIWA", message, error: error) }
@@ -207,6 +210,7 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
             appleUserId = uid; username = display
             isSignedIn  = true; isGuest = false; error = nil
             diagLog("Sign in with Apple SUCCEEDED for user \(uid.prefix(8))…", level: .success)
+            didRetryManualApple = false
             Task { await ArcVaultService.shared.setup(
                 githubUsername: githubConnected ? githubUsername : nil) }
 
@@ -219,6 +223,16 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
                 break  // user tapped Cancel — not an error, stay silent
             case .unknown:
                 diagLog("SignInWithAppleButton failed (.unknown)", error: err)
+                // Fall back once to the manual controller path (different code
+                // path, our own presentation anchor). Distinguishes "SwiftUI
+                // wrapper problem" from "system refuses the request outright".
+                if !didRetryManualApple {
+                    didRetryManualApple = true
+                    diagLog("Retrying via manual ASAuthorizationController…", level: .warning)
+                    signInWithApple()
+                    return
+                }
+                diagLog("Manual ASAuthorizationController ALSO failed — both paths rejected", level: .error)
                 // On TestFlight/device this commonly means iCloud isn't signed in,
                 // two-factor auth is off, or the capability didn't register yet —
                 // surface it instead of swallowing it, since this is a direct

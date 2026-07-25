@@ -139,8 +139,8 @@ public final class ArcDiagnostics: ObservableObject {
     private func inspectProvisioningProfile() {
         guard let path = Bundle.main.path(forResource: "embedded", ofType: "mobileprovision"),
               let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else {
-            log(.warning, "PROFILE", "No embedded.mobileprovision found",
-                detail: "Normal for App Store builds (Apple strips it) and simulator runs. Expected present in TestFlight/ad-hoc builds.")
+            log(.info, "PROFILE", "No embedded.mobileprovision (expected on TestFlight/App Store)",
+                detail: "Apple re-signs builds for TestFlight and App Store distribution and strips the profile — entitlements then come from the re-signed binary plus Apple's own records for the App ID. Its absence here is NORMAL and is not evidence of a signing problem. Entitlements cannot be read back from inside the app without private API, so the practical test is the SIWA attempt itself (below).")
             return
         }
         // The file is CMS-signed; the plist payload sits in plain text inside it.
