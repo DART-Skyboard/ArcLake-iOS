@@ -118,7 +118,28 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
     static func appleDiagnosticMessage(_ error: Error) -> String {
         let ns = error as NSError
         var lines = ["Sign in with Apple couldn't complete."]
-        lines.append("Error: \(ns.domain) code \(ns.code) — \(ns.localizedDescription)")
+        lines.append("Error: \(ns.domain) code \(ns.code)")
+
+        // ASAuthorizationError 1000 (.unknown) is a catch-all wrapper. The
+        // actionable cause is almost always an AKAuthenticationError nested in
+        // NSUnderlyingError — e.g. -7003 (no credential / entitlement not yet
+        // propagated), -7027 (Managed Apple ID barred from third-party sign-in),
+        // -7089 (AppleID + Password providers requested together). Walk the
+        // chain so the real code surfaces instead of just the wrapper.
+        var underlying = ns.userInfo[NSUnderlyingErrorKey] as? NSError
+        var depth = 0
+        while let u = underlying, depth < 4 {
+            lines.append("↳ \(u.domain) code \(u.code)")
+            if let bid = u.userInfo["AKClientBundleID"] as? String {
+                lines.append("↳ AKClientBundleID: \(bid)")
+            }
+            underlying = u.userInfo[NSUnderlyingErrorKey] as? NSError
+            depth += 1
+        }
+        if let bid = ns.userInfo["AKClientBundleID"] as? String {
+            lines.append("AKClientBundleID: \(bid)")
+        }
+
         lines.append("Common causes: iCloud signed out, two-factor auth off, or Settings → Screen Time → Content & Privacy Restrictions → Account Changes set to Don't Allow.")
         return lines.joined(separator: "\n\n")
     }
