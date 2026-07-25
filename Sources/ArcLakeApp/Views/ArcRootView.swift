@@ -874,7 +874,7 @@ struct ArcMusicControls: View {
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .center)
 
-            HStack(spacing: 14) {
+            HStack(spacing: 11) {
                 // Previous
                 musicBtn("backward.end.fill") { audio.prevTrack() }
                 // Skip back  (added per markup)
@@ -887,6 +887,17 @@ struct ArcMusicControls: View {
                 musicBtn("stop.fill") { audio.stop() }
                 // Next
                 musicBtn("forward.end.fill") { audio.nextTrack() }
+                // Shuffle toggle — ON by default (see ArcAudioPlayerViewModel)
+                Button {
+                    audio.isShuffled.toggle()
+                } label: {
+                    Image(systemName: "shuffle")
+                        .font(.system(size: 14))
+                        .foregroundColor(audio.isShuffled ? .black : themeVM.accent.opacity(0.7))
+                        .frame(width: 32, height: 32)
+                        .background(audio.isShuffled ? themeVM.accent : themeVM.accent.opacity(0.08))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
                 // Load music library
                 Button {
                     showFilePicker = true
@@ -907,9 +918,7 @@ struct ArcMusicControls: View {
                     HStack(spacing: 6) {
                         ForEach(Array(audio.library.enumerated()), id: \.offset) { idx, track in
                             Button {
-                                audio.currentIndex = idx
-                                audio.stop()
-                                audio.playPause()
+                                audio.play(at: idx)
                             } label: {
                                 Text(track.title)
                                     .font(.system(size: 8, design: .monospaced))
