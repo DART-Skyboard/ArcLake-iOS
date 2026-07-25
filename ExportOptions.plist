@@ -10,7 +10,7 @@
     <string>manual</string>
     <key>provisioningProfiles</key>
     <dict>
-        <key>com.dartmeadow.arclake</key>
+        <key>DART-Meadow-LLC.Cotharticren</key>
         <string>ArcLakeGitHubFlow</string>
     </dict>
     <key>uploadBitcode</key>
