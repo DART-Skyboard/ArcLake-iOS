@@ -12,6 +12,12 @@ struct NodeEditorView: View {
     @EnvironmentObject var themeVM: ArcThemeViewModel
 
     @State private var nodes:       [EditorNode]       = []
+    // Curves need to see a node's LIVE drag position, not just its
+    // committed one — EditorNodeView's own drag gesture used to be
+    // invisible outside that view, so a connected curve lagged behind an
+    // actively-dragged node and then snapped once the drag ended, which is
+    // what read as "flying off screen" during a fast drag.
+    @State private var liveDragPositions: [UUID: CGPoint] = [:]
     @State private var connections: [NodeConnection]   = []
     // Per-tab node state — each scene tab keeps its own graph
     // Tab state is stored on labVM so it survives sheet dismiss/reopen
@@ -432,7 +438,8 @@ struct NodeEditorView: View {
                     pendingFrom = nil
                 } else { pendingFrom = node.id }
             },
-            canvasScale: canvasScale
+            canvasScale: canvasScale,
+            liveDragPositions: $liveDragPositions
         )
     }
 
@@ -524,12 +531,12 @@ struct NodeEditorView: View {
     /// (CENTER anchor), so convert center → top-left, then add socket offsets
     /// identical to EditorNodeView: x at node edges, y = headerH + row/2.
     private func outSocketPoint(_ n: EditorNode) -> CGPoint {
-        CGPoint(x: n.position.x + 50,
-                y: n.position.y - nodeHeight(n)/2 + 28 + 10)
+        let pos = liveDragPositions[n.id] ?? n.position
+        return CGPoint(x: pos.x + 50, y: pos.y - nodeHeight(n)/2 + 28 + 10)
     }
     private func inSocketPoint(_ n: EditorNode) -> CGPoint {
-        CGPoint(x: n.position.x - 50,
-                y: n.position.y - nodeHeight(n)/2 + 28 + 10)
+        let pos = liveDragPositions[n.id] ?? n.position
+        return CGPoint(x: pos.x - 50, y: pos.y - nodeHeight(n)/2 + 28 + 10)
     }
 
     @ViewBuilder
@@ -561,6 +568,7 @@ struct EditorNodeView: View {
     let onPortTap: (String) -> Void
 
     let canvasScale: CGFloat           // passed in so drag compensates for zoom
+    @Binding var liveDragPositions: [UUID: CGPoint]
     @GestureState private var dragDelta = CGSize.zero
     @State private var dragDeltaBase = CGPoint.zero
 
@@ -665,11 +673,20 @@ struct EditorNodeView: View {
                         width:  val.translation.width  / canvasScale,
                         height: val.translation.height / canvasScale)
                 }
+                .onChanged { val in
+                    // Publish the live position so connected curves can
+                    // track it too, instead of only the parent's stored
+                    // (pre-drag) position.
+                    liveDragPositions[node.id] = CGPoint(
+                        x: node.position.x + val.translation.width  / canvasScale,
+                        y: node.position.y + val.translation.height / canvasScale)
+                }
                 .onEnded { val in
                     node.position = CGPoint(
                         x: node.position.x + val.translation.width  / canvasScale,
                         y: node.position.y + val.translation.height / canvasScale)
                     dragDeltaBase = node.position
+                    liveDragPositions[node.id] = nil
                 }
         )
         .onTapGesture { onTap() }
