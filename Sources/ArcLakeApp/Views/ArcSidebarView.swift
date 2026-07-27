@@ -334,102 +334,14 @@ struct DARTPhysicsRow: View {
 
 // MARK: — Math Panel
 struct DARTMathPanel: View {
-    @EnvironmentObject var labVM: ArcLabViewModel
-    @EnvironmentObject var themeVM: ArcThemeViewModel
-    @State private var customZ: Int = 1
-
-    var element: ArcElement? {
-        labVM.selectedElements.first ??
-        ElementStore.shared.elements.first(where: { $0.protons == customZ })
-    }
-
+    // This used to be its own standalone reference-only panel (Neutron-First
+    // Math / LEATR Formulas / Quantum Socket), completely separate from and
+    // unrelated to MathTabView.swift's equation-builder work — which is WHY
+    // dozens of Algebra Menu changes never appeared: they were all going
+    // into MathTabView, but ArcRootView's .math tab case has always rendered
+    // THIS struct instead. Delegating to the real, actively-maintained view.
     var body: some View {
-        ScrollView {
-            VStack(spacing: 10) {
-
-                DARTPanelCard(title: "Neutron-First Math", icon: "function") {
-                    VStack(spacing: 8) {
-                        // Shell chain
-                        Text("n⁰ → p⁺ → K → L → M → N → O → P → Q")
-                            .font(.system(size: 9, design: .monospaced))
-                            .foregroundColor(themeVM.accent.opacity(0.7))
-
-                        HStack {
-                            Text("Atomic Number Z")
-                                .font(.system(size: 9, design: .monospaced))
-                                .foregroundColor(.white.opacity(0.4))
-                            Spacer()
-                            Stepper("\(customZ)", value: $customZ, in: 1...128)
-                                .labelsHidden()
-                            Text("\(customZ)")
-                                .font(.system(size: 12, weight: .bold, design: .monospaced))
-                                .foregroundColor(themeVM.accent)
-                                .frame(width: 32)
-                        }
-
-                        if let el = element {
-                            Divider().background(themeVM.accent.opacity(0.15))
-
-                            HStack(spacing: 6) {
-                                DARTMathChip("n⁰", value: "\(el.neutrons)", color: .orange)
-                                DARTMathChip("p⁺", value: "\(el.protons)", color: .red)
-                                DARTMathChip("e⁻", value: "\(el.electrons)", color: .cyan)
-                                DARTMathChip("orbits", value: "\(el.orbits)", color: .purple)
-                            }
-
-                            Divider().background(themeVM.accent.opacity(0.15))
-
-                            // Shell distribution
-                            let shells = ["K","L","M","N","O","P","Q"]
-                            ForEach(Array(el.electronOrbits.enumerated()), id: \.0) { idx, count in
-                                HStack(spacing: 8) {
-                                    Text(idx < shells.count ? shells[idx] : "?")
-                                        .font(.system(size: 11, weight: .bold, design: .monospaced))
-                                        .foregroundColor(themeVM.accent)
-                                        .frame(width: 16)
-                                    GeometryReader { g in
-                                        ZStack(alignment: .leading) {
-                                            RoundedRectangle(cornerRadius: 2)
-                                                .fill(themeVM.accent.opacity(0.08))
-                                            RoundedRectangle(cornerRadius: 2)
-                                                .fill(themeVM.accent.opacity(0.6))
-                                                .frame(width: g.size.width * CGFloat(count) /
-                                                       CGFloat(max(el.electronOrbits.max() ?? 1, 1)))
-                                        }
-                                    }
-                                    .frame(height: 6)
-                                    Text("\(count)e⁻")
-                                        .font(.system(size: 8, design: .monospaced))
-                                        .foregroundColor(.white.opacity(0.4))
-                                        .frame(width: 32)
-                                }
-                            }
-
-                            Divider().background(themeVM.accent.opacity(0.15))
-
-                            DARTMathRow("Atomic Mass",    String(format: "%.6f u", el.atomicMass),    .green)
-                            DARTMathRow("n-First Mass",   String(format: "%.6f u", el.neutronFirstMass), .yellow)
-                            DARTMathRow("Arc Edge C",     String(format: "%.4f pm", el.arcEdgeCircumference), themeVM.accent)
-                        }
-                    }
-                }
-
-                DARTPanelCard(title: "LEATR Formulas", icon: "angle") {
-                    VStack(spacing: 5) {
-                        DARTFormulaRow("Arc Edge",       "C = √(d × 3.0)²")
-                        DARTFormulaRow("Quantum Socket", "(b·b)·(p(a²))/r")
-                        DARTFormulaRow("Sigma Meridian", "φ = 1.618...")
-                        DARTFormulaRow("CBS Switch",     "(xa²√xa) ± 1")
-                        DARTFormulaRow("Nucleus Blast",  "F > φ × stable")
-                    }
-                }
-
-                DARTPanelCard(title: "Quantum Socket", icon: "cpu") {
-                    DARTQuantumCalc()
-                }
-            }
-            .padding(10)
-        }
+        MathTabView()
     }
 }
 
