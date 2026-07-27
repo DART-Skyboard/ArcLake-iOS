@@ -1,3 +1,4 @@
+import SwiftUI
 
 // MARK: — Equation Graph Canvas
 // Renders labVM.equationNodes / equationConnections directly — this is the
