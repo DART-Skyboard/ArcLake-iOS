@@ -98,9 +98,12 @@ final class AutumnViewModel: ObservableObject {
                 lower.contains("group") || lower.contains("parenthes") ? .group : .algebra
             let title = symbolForTitle ?? "Node \(labVM.equationNodes.count + 1)"
             let node = labVM.addEquationNode(title: title, role: role, boundAtomId: boundId)
-            return boundId != nil
-                ? "Built a \(role.displayName) equation node bound to \(title)."
-                : "Built a freestanding \(role.displayName) equation node — "\(title)". Bind it to an atom any time from the Algebra Menu."
+            let roleWord = role.displayName
+            if boundId != nil {
+                return "Built a \(roleWord) equation node bound to \(title)."
+            } else {
+                return "Built a freestanding \(roleWord) equation node, \(title). Bind it to an atom any time from the Algebra Menu."
+            }
         }
         if lower.contains("socket") && (lower.contains("add") || lower.contains("connect")) {
             guard let lastNode = labVM.equationNodes.last else {
