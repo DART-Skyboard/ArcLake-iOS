@@ -293,6 +293,21 @@ extension ArcLabViewModel {
         rebuildArcMeasures()
     }
 
+    // Select All / Deselect All for the Arc Edge field-array list — appends
+    // every currently-visible element not already selected, in list order,
+    // preserving whatever partial link-order selection already existed.
+    public func selectAllArcElements() {
+        for el in selectedElements where !arcSeqSelection.contains(el.id) {
+            arcSeqSelection.append(el.id)
+        }
+        rebuildArcMeasures()
+    }
+
+    public func deselectAllArcElements() {
+        arcSeqSelection = []
+        rebuildArcMeasures()
+    }
+
     // ── MATH ENGINE — executeAdvMath 1:1 port ────────────────────────
     // Neutron-first propagation: Neutron(count) → Proton bridge
     // [radian/degree per matter state] → Electron/Shell target value.

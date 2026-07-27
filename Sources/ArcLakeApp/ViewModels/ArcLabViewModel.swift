@@ -758,10 +758,24 @@ public final class ArcLabViewModel: ObservableObject {
     // Archimedean spiral for initial placement
     private func spiralPosition(index: Int, spacing: Float) -> SIMD3<Float> {
         if index == 0 { return SIMD3<Float>(0, 0, 0) }
-        let turns: Float = 0.618  // golden ratio turns
-        let angle = Float(index) * turns * 2 * .pi
-        let radius = sqrt(Float(index)) * spacing * 0.7
-        return SIMD3<Float>(cos(angle) * radius, 0, sin(angle) * radius)
+        // True 3D distribution. The previous version hardcoded Y to 0 for
+        // EVERY atom — combined with physicsPosition's floor clamp
+        // (candidate.y = max(0.6, ...)) downstream, every atom landed at
+        // the exact same Y height: a perfectly flat plane, matching the
+        // reported "physics only plays on a plane" bug precisely. This
+        // spreads atoms across a real 3D volume, biased upward (not
+        // symmetric around zero) so the floor clamp doesn't flatten half
+        // of them straight back down to the same height.
+        let goldenAngle: Float = .pi * (3.0 - sqrt(5.0))  // ≈2.399 rad — same constant already used for electron/point-cluster placement elsewhere in this codebase
+        let i = Float(index)
+        let radius = sqrt(i) * spacing * 0.7
+        let azimuth = i * goldenAngle
+        // Elevation cycles as index grows, scaled by radius, so atoms fan
+        // out vertically as well as outward — further-out atoms also get
+        // more vertical spread, nearer ones stay closer to the floor.
+        let elevationUnit = i.truncatingRemainder(dividingBy: 23) / 23   // 0..<1, cycles
+        let y = elevationUnit * radius * 0.9
+        return SIMD3<Float>(cos(azimuth) * radius, y, sin(azimuth) * radius)
     }
 
     // MARK: — Point cloud atom builder

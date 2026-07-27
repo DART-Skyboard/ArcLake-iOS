@@ -126,6 +126,25 @@ struct ArcFieldArraySection: View {
                     }
                 }
             }
+            HStack(spacing: 8) {
+                Button { labVM.selectAllArcElements() } label: {
+                    Text("Select All")
+                        .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                        .foregroundColor(themeVM.accent)
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(themeVM.accent.opacity(0.12))
+                        .clipShape(Capsule())
+                }
+                Button { labVM.deselectAllArcElements() } label: {
+                    Text("Deselect All")
+                        .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.5))
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(Color.white.opacity(0.06))
+                        .clipShape(Capsule())
+                }
+            }
+
             Text("Tap atoms in link order — N1 → N2 → N3…")
                 .font(.system(size: 8, design: .monospaced))
                 .foregroundColor(.white.opacity(0.3))
