@@ -27,6 +27,8 @@ public struct MathTabView: View {
                 buildNodeSection
                 nodesListSection
 
+                particleSettingsSection
+
                 DisclosureGroup("Neutron-First Reference", isExpanded: $showReference) {
                     referenceSection
                 }
@@ -37,6 +39,37 @@ public struct MathTabView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12))
             }
             .padding(12)
+        }
+    }
+
+    // MARK: — Particle cloud rendering settings (count + pixel size)
+    private var particleSettingsSection: some View {
+        SectionCard(title: "Particle Rendering", icon: "circle.grid.3x3.fill") {
+            particleSlider("Electrons per orbital", value: Binding(
+                get: { Double(labVM.ptsPerElectron) },
+                set: { labVM.ptsPerElectron = Int($0) }
+            ), range: 5...100, format: "%.0f pts")
+            particleSlider("Electron pixel size", value: Binding(
+                get: { Double(labVM.electronPointSize) },
+                set: { labVM.electronPointSize = CGFloat($0) }
+            ), range: 0.005...0.06, format: "%.3f")
+            particleSlider("Neutron/proton pixel size", value: Binding(
+                get: { Double(labVM.nucleonPointSize) },
+                set: { labVM.nucleonPointSize = CGFloat($0) }
+            ), range: 0.005...0.06, format: "%.3f")
+        }
+    }
+
+    private func particleSlider(_ label: String, value: Binding<Double>, range: ClosedRange<Double>, format: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text(label).font(.system(size: 9, design: .monospaced)).foregroundColor(.white.opacity(0.5))
+                Spacer()
+                Text(String(format: format, value.wrappedValue))
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .foregroundColor(themeVM.accent)
+            }
+            Slider(value: value, in: range).tint(themeVM.accent)
         }
     }
 
@@ -323,6 +356,55 @@ private struct EquationNodeCard: View {
         }
     }
 
+    // Real selection, not free text, for the socket kinds that have a
+    // fixed, known set of valid values — matching the same K/L/M/N/O/P/Q
+    // shell-name convention used by the Delta-connection sheet elsewhere.
+    private static let shellNames = ["K","L","M","N","O","P","Q"]
+    private static let mathOperators = ["+", "-", "×", "÷"]
+
+    @ViewBuilder
+    private func socketValueControl(_ socket: EquationSocket) -> some View {
+        switch socket.kind {
+        case .orbitShell:
+            Menu {
+                ForEach(Self.shellNames, id: \.self) { shell in
+                    Button(shell) { labVM.setEquationSocketValue(socket.id, onNode: node.id, to: shell) }
+                }
+            } label: {
+                pickerLabel(labVM.socketDisplayValue(socket), color: socket.kind.color)
+            }
+        case .mathOperator:
+            Menu {
+                ForEach(Self.mathOperators, id: \.self) { op in
+                    Button(op) { labVM.setEquationSocketValue(socket.id, onNode: node.id, to: op) }
+                }
+            } label: {
+                pickerLabel(labVM.socketDisplayValue(socket), color: socket.kind.color)
+            }
+        default:
+            TextField("", text: Binding(
+                get: { labVM.socketDisplayValue(socket) },
+                set: { labVM.setEquationSocketValue(socket.id, onNode: node.id, to: $0) }
+            ))
+            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+            .foregroundColor(Color(uiColor: socket.kind.color))
+            .multilineTextAlignment(.trailing)
+            .frame(width: 60)
+        }
+    }
+
+    private func pickerLabel(_ value: String, color: UIColor) -> some View {
+        HStack(spacing: 2) {
+            Text(value)
+                .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                .foregroundColor(Color(uiColor: color))
+            Image(systemName: "chevron.up.chevron.down")
+                .font(.system(size: 6))
+                .foregroundColor(Color(uiColor: color).opacity(0.6))
+        }
+        .frame(width: 60, alignment: .trailing)
+    }
+
     private func socketRow(_ label: String, _ sockets: [EquationSocket], direction: EquationSocketDirection) -> some View {
         Group {
             if !sockets.isEmpty {
@@ -335,14 +417,7 @@ private struct EquationNodeCard: View {
                                 .font(.system(size: 9, design: .monospaced))
                                 .foregroundColor(.white.opacity(0.6))
                             Spacer()
-                            TextField("", text: Binding(
-                                get: { labVM.socketDisplayValue(socket) },
-                                set: { labVM.setEquationSocketValue(socket.id, onNode: node.id, to: $0) }
-                            ))
-                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                            .foregroundColor(Color(uiColor: socket.kind.color))
-                            .multilineTextAlignment(.trailing)
-                            .frame(width: 60)
+                            socketValueControl(socket)
                             Button { labVM.removeEquationSocket(socket.id, from: node.id) } label: {
                                 Image(systemName: "minus.circle").font(.system(size: 9)).foregroundColor(.red.opacity(0.4))
                             }

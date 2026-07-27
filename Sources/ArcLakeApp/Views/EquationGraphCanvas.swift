@@ -78,7 +78,15 @@ struct EquationGraphCanvas: View {
         .position(pos)
         .gesture(
             DragGesture()
-                .onChanged { val in dragPositions[node.id] = CGPoint(x: pos.x + val.translation.width, y: pos.y + val.translation.height) }
+                .onChanged { val in
+                    // DragGesture reports translation in screen space, but
+                    // pos is in content space — must divide by the current
+                    // zoom so a screen-space finger movement maps to the
+                    // correct content-space distance at any zoom level.
+                    dragPositions[node.id] = CGPoint(
+                        x: pos.x + val.translation.width / canvasScale,
+                        y: pos.y + val.translation.height / canvasScale)
+                }
                 .onEnded { _ in
                     if let final = dragPositions[node.id],
                        let idx = labVM.equationNodes.firstIndex(where: { $0.id == node.id }) {
@@ -128,8 +136,12 @@ struct EquationGraphCanvas: View {
         guard let node = labVM.equationNodes.first(where: { $0.id == nodeId }) else { return nil }
         let list = isOutgoing ? node.outgoingSockets : node.incomingSockets
         guard let idx = list.firstIndex(where: { $0.id == socketId }) else { return nil }
-        let x = node.position.x + (isOutgoing ? nodeWidth/2 - 6 : -nodeWidth/2 + 6)
-        let y = node.position.y - (CGFloat(list.count) * rowHeight)/2 + headerHeight/2 + CGFloat(idx) * rowHeight + rowHeight/2
+        // Use the LIVE drag position while a node is being dragged, not the
+        // committed one — otherwise the curve lags behind and only catches
+        // up once the drag ends.
+        let livePos = dragPositions[nodeId] ?? node.position
+        let x = livePos.x + (isOutgoing ? nodeWidth/2 - 6 : -nodeWidth/2 + 6)
+        let y = livePos.y - (CGFloat(list.count) * rowHeight)/2 + headerHeight/2 + CGFloat(idx) * rowHeight + rowHeight/2
         return CGPoint(x: x, y: y)
     }
 
