@@ -21,6 +21,10 @@ struct NodeEditorView: View {
     @State private var canvasScale: CGFloat = 1.0
     @State private var pendingFrom: UUID? = nil
 
+    // Equation Graph mode — separate, additive canvas (see EquationGraphCanvas)
+    // for labVM.equationNodes/equationConnections, built for the Algebra Menu.
+    @State private var showEquationGraph = false
+
     // Group drawer
     @State private var showGroupDrawer = false
     @State private var nodeGroups:  [NodeGroup]  = []
@@ -67,7 +71,7 @@ struct NodeEditorView: View {
             header
             groupDrawerBanner
             if showGroupDrawer { groupDrawerContent }
-            canvasArea
+            if showEquationGraph { EquationGraphCanvas() } else { canvasArea }
             footer
         }
         .background(Color(red:0.03, green:0.06, blue:0.12))   // opaque — prevents see-through
@@ -148,6 +152,25 @@ struct NodeEditorView: View {
                         .background(themeVM.accent.opacity(0.1))
                         .clipShape(Capsule())
                 }
+            }
+
+            // Equation Graph mode toggle — switches the canvas below between the
+            // generic node system and the Algebra Menu's shared equation graph.
+            Button {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    showEquationGraph.toggle()
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "function")
+                        .font(.system(size: 11))
+                    Text("ALGEBRA")
+                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                }
+                .foregroundColor(showEquationGraph ? .black : themeVM.accent)
+                .padding(.horizontal, 8).padding(.vertical, 4)
+                .background(showEquationGraph ? themeVM.accent : themeVM.accent.opacity(0.1))
+                .clipShape(Capsule())
             }
 
             // Group drawer toggle

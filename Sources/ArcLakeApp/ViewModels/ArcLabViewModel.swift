@@ -806,6 +806,186 @@ public final class ArcLabViewModel: ObservableObject {
         log("Δ: shell \(fromShell)→\(toShell) [\(op)]")
     }
 
+    // MARK: — Equation Node Graph (Algebra Menu ⇄ Node Editor ⇄ Molecule Canvas)
+    // Single source of truth shared by all three UIs, and by Autumn (she
+    // already receives `labVM` directly — see AutumnViewModel.processIntent).
+    // Nothing here is view-local state.
+    @Published public var equationNodes: [EquationNode] = []
+    @Published public var equationConnections: [EquationConnection] = []
+
+    @discardableResult
+    public func addEquationNode(title: String, role: EquationNodeRole = .algebra,
+                                 position: CGPoint = CGPoint(x: 220, y: 220),
+                                 boundAtomId: UUID? = nil) -> EquationNode {
+        var node = EquationNode(title: title, position: position, role: role)
+        node.boundAtomId = boundAtomId
+        if let atomId = boundAtomId, molAtoms.contains(where: { $0.id == atomId }) {
+            var s = EquationSocket(kind: .elementSelection, direction: .incoming)
+            s.linkedAtomId = atomId
+            node.incomingSockets.append(s)
+        }
+        equationNodes.append(node)
+        log("Algebra: built equation node \"\(title)\"")
+        return node
+    }
+
+    public func removeEquationNode(_ id: UUID) {
+        equationNodes.removeAll { $0.id == id }
+        equationConnections.removeAll { $0.fromNodeId == id || $0.toNodeId == id }
+    }
+
+    @discardableResult
+    public func addEquationSocket(to nodeId: UUID, kind: EquationSocketKind,
+                                   direction: EquationSocketDirection, label: String? = nil) -> UUID? {
+        guard let idx = equationNodes.firstIndex(where: { $0.id == nodeId }) else { return nil }
+        var socket = EquationSocket(kind: kind, direction: direction, label: label)
+        // Bond/Delta/Orbit/Operator sockets on a node bound to an atom default
+        // to whatever real bond/delta already connects that atom, if one
+        // exists, rather than starting detached from real data.
+        if let atomId = equationNodes[idx].boundAtomId {
+            switch kind {
+            case .bond:
+                if let b = molBonds.first(where: { $0.fromId == atomId || $0.toId == atomId }) {
+                    socket.linkedBondId = b.id
+                }
+            case .delta, .orbitShell, .mathOperator:
+                if let d = deltaConnections.first(where: { $0.fromAtomId == atomId || $0.toAtomId == atomId }) {
+                    socket.linkedDeltaId = d.id
+                }
+            default: break
+            }
+        }
+        if direction == .incoming { equationNodes[idx].incomingSockets.append(socket) }
+        else { equationNodes[idx].outgoingSockets.append(socket) }
+        return socket.id
+    }
+
+    public func removeEquationSocket(_ socketId: UUID, from nodeId: UUID) {
+        guard let idx = equationNodes.firstIndex(where: { $0.id == nodeId }) else { return }
+        equationNodes[idx].incomingSockets.removeAll { $0.id == socketId }
+        equationNodes[idx].outgoingSockets.removeAll { $0.id == socketId }
+        equationConnections.removeAll { $0.fromSocketId == socketId || $0.toSocketId == socketId }
+    }
+
+    /// Curve connection between two sockets, drawn in the Node Editor. If both
+    /// ends belong to atom-bound nodes and are bond/delta-kind sockets, this
+    /// also creates (or links to) the matching real MolBond/DeltaConnection —
+    /// so wiring a curve in the Node Editor is enough to actually bond the
+    /// atoms on the Molecule Canvas, not just a visual note.
+    @discardableResult
+    public func connectEquationSockets(fromNode: UUID, fromSocket: UUID,
+                                        toNode: UUID, toSocket: UUID, isDelta: Bool = false) -> EquationConnection {
+        let conn = EquationConnection(fromNodeId: fromNode, fromSocketId: fromSocket,
+                                       toNodeId: toNode, toSocketId: toSocket, isDelta: isDelta)
+        equationConnections.append(conn)
+        materializeCanvasLink(for: conn)
+        return conn
+    }
+
+    public func disconnectEquationSockets(_ connectionId: UUID) {
+        equationConnections.removeAll { $0.id == connectionId }
+    }
+
+    private func materializeCanvasLink(for conn: EquationConnection) {
+        guard let fromNode = equationNodes.first(where: { $0.id == conn.fromNodeId }),
+              let toNode   = equationNodes.first(where: { $0.id == conn.toNodeId }),
+              let fromAtom = fromNode.boundAtomId, let toAtom = toNode.boundAtomId,
+              fromAtom != toAtom else { return }
+        let fromSock = (fromNode.outgoingSockets + fromNode.incomingSockets).first(where: { $0.id == conn.fromSocketId })
+        let toSock   = (toNode.outgoingSockets + toNode.incomingSockets).first(where: { $0.id == conn.toSocketId })
+        guard let kind = fromSock?.kind ?? toSock?.kind else { return }
+
+        switch kind {
+        case .bond:
+            if !molBonds.contains(where: { ($0.fromId==fromAtom && $0.toId==toAtom) || ($0.fromId==toAtom && $0.toId==fromAtom) }) {
+                addMolBond(from: fromAtom, to: toAtom)
+            }
+        case .delta, .orbitShell, .mathOperator:
+            if !deltaConnections.contains(where: {
+                ($0.fromAtomId==fromAtom && $0.toAtomId==toAtom) || ($0.fromAtomId==toAtom && $0.toAtomId==fromAtom)
+            }) {
+                addDeltaConnection(from: fromAtom, to: toAtom, fromShell: 0, toShell: 0, op: "+")
+            }
+        default: break
+        }
+    }
+
+    /// The read half of "sockets are live pointers, not copies" — always
+    /// looks the value up fresh rather than trusting anything cached on the
+    /// socket itself, so a change made anywhere (canvas, node editor,
+    /// algebra menu, or Autumn) is visible everywhere immediately.
+    public func socketDisplayValue(_ socket: EquationSocket) -> String {
+        switch socket.kind {
+        case .elementSelection:
+            if let id = socket.linkedAtomId, let a = molAtoms.first(where: { $0.id == id }) { return a.symbol }
+            return socket.localValue.isEmpty ? "—" : socket.localValue
+        case .bond:
+            if let id = socket.linkedBondId, let b = molBonds.first(where: { $0.id == id }) { return "\(b.order)×" }
+            return socket.localValue.isEmpty ? "—" : socket.localValue
+        case .delta:
+            if let id = socket.linkedDeltaId, let d = deltaConnections.first(where: { $0.id == id }) { return d.label }
+            return socket.localValue.isEmpty ? "—" : socket.localValue
+        case .orbitShell:
+            let names = ["K","L","M","N","O","P","Q"]
+            if let id = socket.linkedDeltaId, let d = deltaConnections.first(where: { $0.id == id }) {
+                let shell = socket.direction == .incoming ? d.fromShell : d.toShell
+                return shell < names.count ? names[shell] : "?"
+            }
+            return socket.localValue.isEmpty ? "—" : socket.localValue
+        case .mathOperator:
+            if let id = socket.linkedDeltaId, let d = deltaConnections.first(where: { $0.id == id }) { return d.operator_ }
+            return socket.localValue.isEmpty ? "+" : socket.localValue
+        case .elementComponent:
+            return socket.localValue.isEmpty ? "—" : socket.localValue
+        }
+    }
+
+    /// The write half — edits made in the Algebra Menu or Node Editor go
+    /// through here so they land on the real molBonds/deltaConnections entry
+    /// (or, for a not-yet-linked socket, the local fallback).
+    public func setEquationSocketValue(_ socketId: UUID, onNode nodeId: UUID, to newValue: String) {
+        guard let nIdx = equationNodes.firstIndex(where: { $0.id == nodeId }) else { return }
+
+        func apply(_ socket: inout EquationSocket) {
+            switch socket.kind {
+            case .bond:
+                if let bid = socket.linkedBondId, let bIdx = molBonds.firstIndex(where: { $0.id == bid }) {
+                    molBonds[bIdx].order = max(1, min(3, Int(newValue) ?? molBonds[bIdx].order))
+                } else { socket.localValue = newValue }
+            case .mathOperator:
+                if let did = socket.linkedDeltaId, let dIdx = deltaConnections.firstIndex(where: { $0.id == did }) {
+                    deltaConnections[dIdx].operator_ = newValue
+                } else { socket.localValue = newValue }
+            case .orbitShell:
+                let names = ["K","L","M","N","O","P","Q"]
+                if let did = socket.linkedDeltaId, let dIdx = deltaConnections.firstIndex(where: { $0.id == did }),
+                   let shellIdx = names.firstIndex(of: newValue) {
+                    if socket.direction == .incoming { deltaConnections[dIdx].fromShell = shellIdx }
+                    else { deltaConnections[dIdx].toShell = shellIdx }
+                } else { socket.localValue = newValue }
+            default:
+                socket.localValue = newValue
+            }
+        }
+        if let i = equationNodes[nIdx].incomingSockets.firstIndex(where: { $0.id == socketId }) {
+            apply(&equationNodes[nIdx].incomingSockets[i])
+        } else if let i = equationNodes[nIdx].outgoingSockets.firstIndex(where: { $0.id == socketId }) {
+            apply(&equationNodes[nIdx].outgoingSockets[i])
+        }
+    }
+
+    /// Order-of-operations evaluation order — Neutron (origin) first, then
+    /// Proton (must resolve Radian/Gas-Liquid-Solid state via angle/degree
+    /// congruency before anything downstream evaluates), then Algebra
+    /// (propagates outward from the Neutron once Proton has resolved),
+    /// then outermost parentheses Group nodes last.
+    public func equationEvaluationOrder() -> [EquationNode] {
+        let byRole: (EquationNodeRole) -> [EquationNode] = { role in
+            self.equationNodes.filter { $0.role == role }
+        }
+        return byRole(.neutron) + byRole(.proton) + byRole(.algebra) + byRole(.group)
+    }
+
     public func clearMolCanvas() {
         molAtoms.removeAll(); molBonds.removeAll(); deltaConnections.removeAll()
     }

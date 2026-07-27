@@ -73,6 +73,49 @@ final class AutumnViewModel: ObservableObject {
             withAnimation(.spring()) { labVM.isNodeEditorVisible = true }
             return "Node Editor activated."
         }
+
+        // ── Algebra Menu / Equation Nodes ──────────────────────────
+        // Same calls the Algebra Menu UI and Node Editor make directly on
+        // labVM — Autumn isn't simulating taps, she's a root-level citizen
+        // of the same shared graph (see ArcLabViewModel's equation graph
+        // methods). A connection she makes here is real graph data,
+        // immediately visible in the Algebra Menu, Node Editor, and
+        // Molecule Canvas — same as if a person had wired it by hand.
+        if lower.contains("equation node") || lower.contains("algebra node") {
+            // Bind to a named element's atom on the canvas if one was
+            // mentioned and is present; otherwise build freestanding.
+            var boundId: UUID? = nil
+            var symbolForTitle: String? = nil
+            let words = text.components(separatedBy: .whitespaces)
+            for word in words {
+                if let atom = labVM.molAtoms.first(where: { $0.symbol.lowercased() == word.lowercased() }) {
+                    boundId = atom.id; symbolForTitle = atom.symbol; break
+                }
+            }
+            let role: EquationNodeRole =
+                lower.contains("neutron") ? .neutron :
+                lower.contains("proton")  ? .proton  :
+                lower.contains("group") || lower.contains("parenthes") ? .group : .algebra
+            let title = symbolForTitle ?? "Node \(labVM.equationNodes.count + 1)"
+            let node = labVM.addEquationNode(title: title, role: role, boundAtomId: boundId)
+            return boundId != nil
+                ? "Built a \(role.displayName) equation node bound to \(title)."
+                : "Built a freestanding \(role.displayName) equation node — "\(title)". Bind it to an atom any time from the Algebra Menu."
+        }
+        if lower.contains("socket") && (lower.contains("add") || lower.contains("connect")) {
+            guard let lastNode = labVM.equationNodes.last else {
+                return "No equation nodes yet — say \"build an equation node\" first."
+            }
+            let kind: EquationSocketKind =
+                lower.contains("bond")     ? .bond :
+                lower.contains("delta")    ? .delta :
+                lower.contains("orbit")    ? .orbitShell :
+                lower.contains("operator") ? .mathOperator :
+                lower.contains("component") ? .elementComponent : .elementSelection
+            let direction: EquationSocketDirection = lower.contains("outgoing") ? .outgoing : .incoming
+            labVM.addEquationSocket(to: lastNode.id, kind: kind, direction: direction)
+            return "Added a \(direction == .incoming ? "incoming" : "outgoing") \(kind.displayName) socket to \(lastNode.title)."
+        }
         if lower.contains("close") || lower.contains("dismiss") || lower.contains("hide") {
             if lower.contains("periodic") { labVM.isPeriodicTableVisible = false }
             if lower.contains("canvas")   { labVM.isMolCanvasVisible = false }
