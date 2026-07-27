@@ -1097,6 +1097,37 @@ public final class ArcLabViewModel: ObservableObject {
     /// Math Operator Group Nest" concept from the equation-node spec: a
     /// group node doesn't compute anything itself, it just gives its
     /// children a shared visual boundary and a place for a global label.
+    /// Duplicate an equation node in place (small offset so it's visibly
+    /// distinct) — same role, same element/atom binding, same sockets
+    /// (fresh ids so they're independent), but NO copied connections, since
+    /// the whole point is making new, independent socket connections on the
+    /// copy rather than inheriting the original's wiring.
+    @discardableResult
+    public func duplicateEquationNode(_ nodeId: UUID) -> EquationNode? {
+        guard let original = equationNodes.first(where: { $0.id == nodeId }) else { return nil }
+        var copy = EquationNode(title: original.title + " copy",
+                                 position: CGPoint(x: original.position.x + 40, y: original.position.y + 40),
+                                 role: original.role)
+        copy.boundAtomId = original.boundAtomId
+        copy.boundElementSymbol = original.boundElementSymbol
+        copy.parentGroupId = original.parentGroupId
+        copy.incomingSockets = original.incomingSockets.map { old in
+            var s = EquationSocket(kind: old.kind, direction: old.direction, label: old.label)
+            s.linkedAtomId = old.linkedAtomId; s.linkedBondId = old.linkedBondId
+            s.linkedDeltaId = old.linkedDeltaId; s.localValue = old.localValue
+            return s
+        }
+        copy.outgoingSockets = original.outgoingSockets.map { old in
+            var s = EquationSocket(kind: old.kind, direction: old.direction, label: old.label)
+            s.linkedAtomId = old.linkedAtomId; s.linkedBondId = old.linkedBondId
+            s.linkedDeltaId = old.linkedDeltaId; s.localValue = old.localValue
+            return s
+        }
+        equationNodes.append(copy)
+        log("Duplicated equation node \"\(original.title)\"")
+        return copy
+    }
+
     public func setEquationParentGroup(_ nodeId: UUID, to groupId: UUID?) {
         guard let idx = equationNodes.firstIndex(where: { $0.id == nodeId }) else { return }
         equationNodes[idx].parentGroupId = groupId

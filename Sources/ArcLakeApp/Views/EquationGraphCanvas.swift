@@ -53,6 +53,9 @@ struct EquationGraphCanvas: View {
                     .foregroundColor(.white)
                     .lineLimit(1)
                 Spacer()
+                Button { labVM.duplicateEquationNode(node.id) } label: {
+                    Image(systemName: "doc.on.doc").font(.system(size: 8)).foregroundColor(themeVM.accent.opacity(0.7))
+                }
                 Text(node.role.rawValue.prefix(4))
                     .font(.system(size: 7, design: .monospaced))
                     .foregroundColor(themeVM.accent.opacity(0.6))
