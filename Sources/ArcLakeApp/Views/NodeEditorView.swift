@@ -80,6 +80,14 @@ struct NodeEditorView: View {
             loadTab(shownTab)
             syncFromSceneAtoms()
             syncFromMolCanvas()
+            // Set by the Algebra Menu's Build button — land directly on the
+            // Equation Graph so the node just built is immediately visible,
+            // then clear the flag so opening the editor normally afterward
+            // still remembers whatever mode was last used.
+            if labVM.nodeEditorShouldShowEquationGraph {
+                showEquationGraph = true
+                labVM.nodeEditorShouldShowEquationGraph = false
+            }
         }
         .onChange(of: labVM.molAtoms.count) { _ in syncFromMolCanvas() }
         // Dynamic per-tab graph: switching scene tabs swaps the node graph,

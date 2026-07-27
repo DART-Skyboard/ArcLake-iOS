@@ -126,10 +126,14 @@ public final class ArcRenderViewModel: ObservableObject {
     @Published public var backgroundMode: ArcBackgroundMode = .gradient
     @Published public var backgroundColor: UIColor =
         UIColor(red: 0.013, green: 0.027, blue: 0.065, alpha: 1)
+    // Sky (top of viewport) should read darker, ground/horizon (bottom)
+    // lighter — these were swapped in the previous default, making the sky
+    // the bright color and the ground dark, backwards from how an actual
+    // sky gradient reads.
     @Published public var gradientTopColor: UIColor =
-        UIColor(red: 0.10, green: 0.35, blue: 0.75, alpha: 1)
-    @Published public var gradientBottomColor: UIColor =
         UIColor(red: 0.02, green: 0.05, blue: 0.12, alpha: 1)
+    @Published public var gradientBottomColor: UIColor =
+        UIColor(red: 0.10, green: 0.35, blue: 0.75, alpha: 1)
     @Published public var gradientFactor: CGFloat = 0.5   // blend midpoint, Nomad-style
 
     @Published public var environmentPreset: ArcEnvironmentPreset = .day

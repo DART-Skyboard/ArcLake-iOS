@@ -76,6 +76,11 @@ public struct MathTabView: View {
                 let title = newNodeAtomId.flatMap { id in labVM.molAtoms.first(where: {$0.id==id})?.symbol }
                     ?? "Node \(labVM.equationNodes.count + 1)"
                 labVM.addEquationNode(title: title, role: newNodeRole, boundAtomId: newNodeAtomId)
+                // Open straight into the Node Editor's Equation Graph so the
+                // node just built is immediately visible there, not just
+                // silently added to shared state.
+                labVM.nodeEditorShouldShowEquationGraph = true
+                withAnimation(.spring()) { labVM.isNodeEditorVisible = true }
             } label: {
                 Label("Build Equation Node", systemImage: "plus.diamond.fill")
                     .font(.system(size: 11, weight: .bold, design: .monospaced))
