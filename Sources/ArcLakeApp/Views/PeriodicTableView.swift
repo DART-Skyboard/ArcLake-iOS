@@ -39,6 +39,16 @@ public struct PeriodicTableView: View {
 
     
 
+    // Bulk-add, whichever mode is currently active (Scene or Canvas) — same
+    // per-element call as a single tap, just looped, so placement/physics
+    // for a bulk add matches the existing automatic distribution exactly.
+    private func addBatch<S: Sequence>(_ elements: S) where S.Element == ArcElement {
+        for el in elements {
+            if labVM.periodicTableMode == .addToCanvas { labVM.addToMolCanvas(element: el) }
+            else { labVM.addElement(el) }
+        }
+    }
+
     public var body: some View {
         GeometryReader { geo in
             VStack(spacing: 0) {
@@ -62,6 +72,30 @@ public struct PeriodicTableView: View {
                             .background((labVM.periodicTableMode == .addToCanvas ? Color.purple : themeVM.accent).opacity(0.12))
                             .clipShape(Capsule())
                     }
+
+                    // Batch-add — reuses the exact same per-element placement
+                    // (addElement) already used for a single tap, just called
+                    // repeatedly, so distribution/physics setup for a bulk add
+                    // matches a manual one exactly.
+                    Menu {
+                        Button("Add First Half (1–\(ElementStore.shared.elements.count/2))") {
+                            addBatch(ElementStore.shared.elements.prefix(ElementStore.shared.elements.count/2))
+                        }
+                        Button("Add Second Half (\(ElementStore.shared.elements.count/2 + 1)–\(ElementStore.shared.elements.count))") {
+                            addBatch(ElementStore.shared.elements.suffix(from: ElementStore.shared.elements.count/2))
+                        }
+                        Button("Add All Elements") {
+                            addBatch(ElementStore.shared.elements[...])
+                        }
+                    } label: {
+                        Image(systemName: "square.stack.3d.up.fill")
+                            .font(.system(size: 13))
+                            .foregroundColor(themeVM.accent)
+                            .frame(width: 30, height: 30)
+                            .background(themeVM.accent.opacity(0.1))
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                    }
+
                     Button {
                         withAnimation(.spring()) { labVM.isPeriodicTableVisible = false }
                     } label: {

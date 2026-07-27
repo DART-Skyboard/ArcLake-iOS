@@ -819,16 +819,44 @@ public final class ArcLabViewModel: ObservableObject {
     @Published public var equationConnections: [EquationConnection] = []
 
     @discardableResult
+    @discardableResult
     public func addEquationNode(title: String, role: EquationNodeRole = .algebra,
-                                 position: CGPoint = CGPoint(x: 220, y: 220),
-                                 boundAtomId: UUID? = nil) -> EquationNode {
-        var node = EquationNode(title: title, position: position, role: role)
+                                 position: CGPoint? = nil,
+                                 boundAtomId: UUID? = nil,
+                                 boundElementSymbol: String? = nil) -> EquationNode {
+        // Stagger new nodes instead of stacking every one at the same fixed
+        // point — a simple diagonal cascade that wraps, cheap and always
+        // keeps a fresh node visible and separable from earlier ones.
+        let autoPosition: CGPoint = {
+            let n = equationNodes.count
+            let col = n % 5, row = n / 5
+            return CGPoint(x: 140 + CGFloat(col) * 170, y: 120 + CGFloat(row) * 140)
+        }()
+        var node = EquationNode(title: title, position: position ?? autoPosition, role: role)
         node.boundAtomId = boundAtomId
-        if let atomId = boundAtomId, molAtoms.contains(where: { $0.id == atomId }) {
+        node.boundElementSymbol = boundElementSymbol
+
+        // Element Selection socket — bound either to a specific Molecule
+        // Canvas atom instance (linkedAtomId) or directly to a scene element
+        // by symbol (boundElementSymbol), which is the primary path: "one
+        // node pertains to one element" doesn't require ever touching the
+        // Molecule Canvas.
+        if boundAtomId != nil || boundElementSymbol != nil {
             var s = EquationSocket(kind: .elementSelection, direction: .incoming)
-            s.linkedAtomId = atomId
+            if let atomId = boundAtomId, molAtoms.contains(where: { $0.id == atomId }) {
+                s.linkedAtomId = atomId
+            } else if let symbol = boundElementSymbol {
+                s.localValue = symbol
+            }
             node.incomingSockets.append(s)
         }
+
+        // Bond + Delta are always present on a new node (outgoing) — these
+        // are the attributes that connect to the Molecule Canvas, and
+        // shouldn't require remembering to manually "+" them in every time.
+        node.outgoingSockets.append(EquationSocket(kind: .bond, direction: .outgoing))
+        node.outgoingSockets.append(EquationSocket(kind: .delta, direction: .outgoing))
+
         equationNodes.append(node)
         log("Algebra: built equation node \"\(title)\"")
         return node
@@ -922,6 +950,8 @@ public final class ArcLabViewModel: ObservableObject {
     public func socketDisplayValue(_ socket: EquationSocket) -> String {
         switch socket.kind {
         case .elementSelection:
+            // Molecule Canvas atom binding takes priority if present, else
+            // fall back to a plain scene-element symbol (localValue).
             if let id = socket.linkedAtomId, let a = molAtoms.first(where: { $0.id == id }) { return a.symbol }
             return socket.localValue.isEmpty ? "—" : socket.localValue
         case .bond:

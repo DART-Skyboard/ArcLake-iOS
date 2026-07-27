@@ -14,6 +14,7 @@ public struct MathTabView: View {
     @State private var showReference = false
     @State private var newNodeRole: EquationNodeRole = .algebra
     @State private var newNodeAtomId: UUID? = nil
+    @State private var newNodeElementSymbol: String? = nil
 
     private var element: ArcElement? {
         selectedElement ?? labVM.selectedElements.first ??
@@ -57,14 +58,39 @@ public struct MathTabView: View {
             }
             .pickerStyle(.segmented)
 
+            // Primary binding: elements actually in the scene (the "Active
+            // Elements" list) — this is the main path, always shown, no
+            // Molecule Canvas needed for it.
+            Text("ELEMENT")
+                .font(.system(size: 8, weight: .bold, design: .monospaced))
+                .foregroundColor(.white.opacity(0.4))
+                .padding(.top, 6)
+            if labVM.selectedElements.isEmpty {
+                Text("No elements in the scene yet — add some from the Periodic Table first.")
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.35))
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        elementChip(nil, "Freestanding")
+                        ForEach(labVM.selectedElements, id: \.elementSymbol) { el in
+                            elementChip(el.elementSymbol, el.elementSymbol)
+                        }
+                    }
+                }
+            }
+
+            // Secondary binding: a specific placed Molecule Canvas atom
+            // instance — only relevant once something's actually been put on
+            // the canvas, since that's what it's for (bond/delta sync with a
+            // real placed instance rather than "this element in general").
             if !labVM.molAtoms.isEmpty {
-                Text("BIND TO ATOM (optional)")
+                Text("OR BIND TO A PLACED MOLECULE CANVAS ATOM")
                     .font(.system(size: 8, weight: .bold, design: .monospaced))
                     .foregroundColor(.white.opacity(0.4))
                     .padding(.top, 6)
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
-                        atomChip(nil, "Freestanding")
                         ForEach(labVM.molAtoms) { atom in
                             atomChip(atom.id, atom.symbol)
                         }
@@ -74,8 +100,10 @@ public struct MathTabView: View {
 
             Button {
                 let title = newNodeAtomId.flatMap { id in labVM.molAtoms.first(where: {$0.id==id})?.symbol }
+                    ?? newNodeElementSymbol
                     ?? "Node \(labVM.equationNodes.count + 1)"
-                labVM.addEquationNode(title: title, role: newNodeRole, boundAtomId: newNodeAtomId)
+                labVM.addEquationNode(title: title, role: newNodeRole,
+                                       boundAtomId: newNodeAtomId, boundElementSymbol: newNodeElementSymbol)
                 // Open straight into the Node Editor's Equation Graph so the
                 // node just built is immediately visible there, not just
                 // silently added to shared state.
@@ -93,8 +121,19 @@ public struct MathTabView: View {
         }
     }
 
+    private func elementChip(_ symbol: String?, _ label: String) -> some View {
+        Button { newNodeElementSymbol = symbol; newNodeAtomId = nil } label: {
+            Text(label)
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundColor(newNodeElementSymbol == symbol ? .black : themeVM.accent)
+                .padding(.horizontal, 10).padding(.vertical, 6)
+                .background(newNodeElementSymbol == symbol ? themeVM.accent : themeVM.accent.opacity(0.1))
+                .clipShape(Capsule())
+        }
+    }
+
     private func atomChip(_ id: UUID?, _ label: String) -> some View {
-        Button { newNodeAtomId = id } label: {
+        Button { newNodeAtomId = id; newNodeElementSymbol = nil } label: {
             Text(label)
                 .font(.system(size: 10, weight: .semibold, design: .monospaced))
                 .foregroundColor(newNodeAtomId == id ? .black : themeVM.accent)

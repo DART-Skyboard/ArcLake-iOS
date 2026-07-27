@@ -189,6 +189,14 @@ public struct EquationNode: Identifiable, Codable {
     // free-floating equation node not tied to a placed atom yet.
     public var boundAtomId: UUID? = nil
 
+    // Which SCENE element (by symbol — scene elements are a set, not
+    // individually-placed instances with their own id, unlike Molecule
+    // Canvas atoms) this node is about. This is the primary binding for
+    // the "one node pertains to one element" workflow — molecule-canvas
+    // atom binding (above) is a separate, additional path specifically for
+    // bond/delta sync with the canvas.
+    public var boundElementSymbol: String? = nil
+
     // "Most Outer Parentheses Math Operator Group Nest" — nodes can nest
     // inside a .group-role parent for explicit operator precedence.
     public var parentGroupId: UUID? = nil
