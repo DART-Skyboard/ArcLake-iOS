@@ -819,7 +819,6 @@ public final class ArcLabViewModel: ObservableObject {
     @Published public var equationConnections: [EquationConnection] = []
 
     @discardableResult
-    @discardableResult
     public func addEquationNode(title: String, role: EquationNodeRole = .algebra,
                                  position: CGPoint? = nil,
                                  boundAtomId: UUID? = nil,
