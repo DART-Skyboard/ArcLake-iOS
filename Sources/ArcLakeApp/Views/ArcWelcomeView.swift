@@ -76,17 +76,24 @@ struct ArcWelcomeView: View {
                 // ── Auth buttons ──────────────────────────────────────
                 VStack(spacing: 12) {
 
-                    // ① Sign in with Apple — hidden until the iOS 27 beta
-                    // Sign in with Apple — RE-ENABLED. Everything app-side was
-                    // verified correct (APPLE_ID_AUTH capability on the bundle ID,
-                    // ACTIVE provisioning profile carrying the applesignin
-                    // entitlement, and the implementation matches Apple's own
-                    // reference pattern). It's also required here: per App Review
-                    // Guideline 4.8, offering GitHub as a third-party account login
-                    // means Apple sign-in has to be offered as an equivalent.
-                    // If it fails now, the error surfaced below reports the real
-                    // NSError domain/code rather than a guess, so the actual cause
-                    // is diagnosable instead of assumed.
+                    // ① Sign in with Apple — HIDDEN AGAIN, deliberately, to ship now.
+                    // Everything app-side was verified correct (capability, active
+                    // provisioning profile with the entitlement, code matching
+                    // Apple's own reference pattern) and it still fails on-device
+                    // with an instant, no-network ASAuthorizationError 1000 —
+                    // consistent with an iOS 27 beta issue rather than anything
+                    // fixable here. Hiding it so GitHub-only sign-in can ship to
+                    // the App Store while that gets sorted out separately.
+                    //
+                    // IMPORTANT — this reopens Guideline 4.8 risk: Apple requires
+                    // an equivalent to any third-party login you offer, and GitHub
+                    // is a third-party login with no Apple equivalent visible once
+                    // this is hidden. That's the same rejection reason from
+                    // earlier in this app's review history. Worth deciding
+                    // deliberately whether that's an acceptable risk for this
+                    // submission or whether GitHub should be gated too — not
+                    // something to let ride by default.
+                    if false {
                     if !authVM.savedAppleAccounts.isEmpty {
                         // Saved Apple accounts — show them as quick-resume rows
                         ForEach(authVM.savedAppleAccounts) { account in
@@ -135,6 +142,7 @@ struct ArcWelcomeView: View {
                         .signInWithAppleButtonStyle(.white)
                         .frame(height: 52).cornerRadius(12)
                     }
+                    } // end Apple hide
 
                     // ② Google Sign-In — hidden until Google Cloud paid dev account
                     // is set up with a proper iOS-type OAuth client (Google requires

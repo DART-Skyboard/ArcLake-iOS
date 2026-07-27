@@ -52,7 +52,7 @@ public struct MathTabView: View {
                 .foregroundColor(.white.opacity(0.4))
             Picker("Role", selection: $newNodeRole) {
                 ForEach(EquationNodeRole.allCases, id: \.self) { r in
-                    Text(r.displayName).tag(r)
+                    Text(r.shortLabel).tag(r)
                 }
             }
             .pickerStyle(.segmented)

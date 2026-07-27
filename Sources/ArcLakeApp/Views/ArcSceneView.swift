@@ -22,7 +22,7 @@ public struct ArcSceneView: UIViewRepresentable {
         let v = SCNView()
         v.allowsCameraControl   = false
         v.autoenablesDefaultLighting = false
-        v.backgroundColor = UIColor(red:0.013, green:0.027, blue:0.065, alpha:1)
+        v.backgroundColor = UIColor(red:0.02, green:0.05, blue:0.12, alpha:1) // matches the gradient's bottom tone
         v.antialiasingMode = .multisampling4X
         v.rendersContinuously      = false  // on-demand — renders only on scene change
         v.preferredFramesPerSecond = 60    // cap at 60fps (ProMotion safe)

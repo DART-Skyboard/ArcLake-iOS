@@ -120,13 +120,16 @@ public final class ArcRenderViewModel: ObservableObject {
     // gradient with a blend factor, or an environment map. Environment
     // mode drives BOTH the visible backdrop and the scene's IBL lighting
     // together, same as picking an HDRI in Nomad — they're the same map.
-    @Published public var backgroundMode: ArcBackgroundMode = .color
+    // Gradient is now the default mode (was flat Color), with a blue
+    // top-to-navy-bottom gradient as the new default look — matches the
+    // requested default theme. Still fully user-adjustable from here.
+    @Published public var backgroundMode: ArcBackgroundMode = .gradient
     @Published public var backgroundColor: UIColor =
         UIColor(red: 0.013, green: 0.027, blue: 0.065, alpha: 1)
     @Published public var gradientTopColor: UIColor =
-        UIColor(red: 0.05, green: 0.09, blue: 0.20, alpha: 1)
+        UIColor(red: 0.10, green: 0.35, blue: 0.75, alpha: 1)
     @Published public var gradientBottomColor: UIColor =
-        UIColor(red: 0.01, green: 0.015, blue: 0.03, alpha: 1)
+        UIColor(red: 0.02, green: 0.05, blue: 0.12, alpha: 1)
     @Published public var gradientFactor: CGFloat = 0.5   // blend midpoint, Nomad-style
 
     @Published public var environmentPreset: ArcEnvironmentPreset = .day

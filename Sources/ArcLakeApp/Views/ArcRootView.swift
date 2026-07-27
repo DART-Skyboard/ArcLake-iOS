@@ -218,6 +218,8 @@ struct DARTTopBar: View {
     @EnvironmentObject var themeVM: ArcThemeViewModel
     @EnvironmentObject var labVM: ArcLabViewModel
     @EnvironmentObject var authVM: ArcAuthViewModel
+    @Environment(\.openURL) private var openURL
+    private let helpURL = URL(string: "https://radicaldeepscale.com/arclake-help.html")!
 
     var body: some View {
         HStack(spacing: 0) {
@@ -338,6 +340,11 @@ struct DARTTopBar: View {
                     // Mantis Navigation
                     DARTIconButton(icon: "bubble.left.and.bubble.right", active: false) {
                         showFeedback = true
+                    }
+                    // Help — opens the Arc Lake Help page (templates/arclake-help.html
+                    // in the Ariel repo), placed just left of the profile avatar.
+                    DARTIconButton(icon: "questionmark.circle", active: false) {
+                        openURL(helpURL)
                     }
                     // Avatar
                     Button { showProfile = true } label: {
@@ -576,7 +583,7 @@ struct DARTTabSelector: View {
     private let tabs: [(ArcTab, String, String)] = [
         (.molecule, "Atoms",   "atom"),
         (.physics,  "Physics", "waveform.path"),
-        (.math,     "Math",    "function"),
+        (.math,     "Algebra", "function"),  // renamed from "Math" — this IS the Algebra Menu where equation nodes get built
         (.arc,      "Arc",     "circle.and.line.horizontal"),
         (.log,      "Log",     "list.bullet"),
         (.imports,  "Imports", "square.and.arrow.down"),

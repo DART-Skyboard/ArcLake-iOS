@@ -37,9 +37,12 @@ public final class ArcThemeViewModel: ObservableObject {
         }
     }
 
+    // Default changed from .stealth (cyan) to .day (blue) per request —
+    // still just the fallback for a first launch; the palette button still
+    // cycles through every preset same as before.
     @Published public var current: Theme = Theme(
         rawValue: UserDefaults.standard.string(forKey: "arcLakeTheme") ?? ""
-    ) ?? .stealth {
+    ) ?? .day {
         didSet { UserDefaults.standard.set(current.rawValue, forKey: "arcLakeTheme") }
     }
 

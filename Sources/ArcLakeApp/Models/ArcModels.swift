@@ -163,6 +163,17 @@ public enum EquationNodeRole: String, Codable, CaseIterable {
         case .group:   return "Parentheses Group"
         }
     }
+
+    // Short label for tight spaces (e.g. a 4-way segmented control on a
+    // phone-width screen) — the full displayName wraps/truncates badly there.
+    public var shortLabel: String {
+        switch self {
+        case .neutron: return "n⁰"
+        case .proton:  return "p⁺"
+        case .algebra: return "Algebra"
+        case .group:   return "Group"
+        }
+    }
 }
 
 public struct EquationNode: Identifiable, Codable {

@@ -133,77 +133,76 @@ struct NodeEditorView: View {
     }
 
     // MARK: — Header
+    // Two rows, not one — the previous single HStack tried to fit a title,
+    // four node-type buttons, and two toggles on one line with no wrapping,
+    // which is what produced the squeezed pills and vertically-wrapped
+    // "NODE EDITOR" text (SwiftUI compresses Text below its natural width
+    // under pressure unless told not to — .fixedSize() below stops that).
+    // Row 2 scrolls horizontally instead of forcing everything to compress.
     private var header: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "circle.connected.to.line.below")
-                .font(.system(size: 11)).foregroundColor(themeVM.accent)
-            Text("NODE EDITOR")
-                .font(.custom("Orbitron-Bold", size: 11))
-                .foregroundColor(.white).tracking(2)
-            Spacer()
-
-            // Add node buttons
-            ForEach(NodeType.allCases, id: \.self) { nodeType in
-                Button { addNode(type: nodeType) } label: {
-                    Text("+\(nodeType.rawValue.prefix(3))")
-                        .font(.system(size: 8, weight: .bold, design: .monospaced))
-                        .foregroundColor(themeVM.accent)
-                        .padding(.horizontal, 6).padding(.vertical, 3)
-                        .background(themeVM.accent.opacity(0.1))
-                        .clipShape(Capsule())
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "circle.connected.to.line.below")
+                    .font(.system(size: 11)).foregroundColor(themeVM.accent)
+                Text("NODE EDITOR")
+                    .font(.custom("Orbitron-Bold", size: 11))
+                    .foregroundColor(.white).tracking(2)
+                    .fixedSize()
+                Spacer(minLength: 8)
+                Button { labVM.isNodeEditorVisible = false } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(.white.opacity(0.4))
+                        .frame(width: 24, height: 24)
+                        .background(Color.white.opacity(0.07))
+                        .clipShape(RoundedRectangle(cornerRadius: 5))
                 }
             }
+            .padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 6)
 
-            // Equation Graph mode toggle — switches the canvas below between the
-            // generic node system and the Algebra Menu's shared equation graph.
-            Button {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                    showEquationGraph.toggle()
-                }
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "function")
-                        .font(.system(size: 11))
-                    Text("ALGEBRA")
-                        .font(.system(size: 8, weight: .bold, design: .monospaced))
-                }
-                .foregroundColor(showEquationGraph ? .black : themeVM.accent)
-                .padding(.horizontal, 8).padding(.vertical, 4)
-                .background(showEquationGraph ? themeVM.accent : themeVM.accent.opacity(0.1))
-                .clipShape(Capsule())
-            }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(NodeType.allCases, id: \.self) { nodeType in
+                        Button { addNode(type: nodeType) } label: {
+                            Text("+\(nodeType.rawValue.prefix(3))")
+                                .font(.system(size: 8, weight: .bold, design: .monospaced))
+                                .foregroundColor(themeVM.accent)
+                                .fixedSize()
+                                .padding(.horizontal, 8).padding(.vertical, 5)
+                                .background(themeVM.accent.opacity(0.1))
+                                .clipShape(Capsule())
+                        }
+                    }
 
-            // Group drawer toggle
-            Button {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                    showGroupDrawer.toggle()
+                    headerToggle(icon: "function", label: "ALGEBRA", isOn: showEquationGraph) {
+                        showEquationGraph.toggle()
+                    }
+                    headerToggle(icon: showGroupDrawer ? "folder.fill" : "folder", label: "GROUPS", isOn: showGroupDrawer) {
+                        showGroupDrawer.toggle()
+                    }
                 }
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: showGroupDrawer ? "folder.fill" : "folder")
-                        .font(.system(size: 11))
-                    Text("GROUPS")
-                        .font(.system(size: 8, weight: .bold, design: .monospaced))
-                }
-                .foregroundColor(showGroupDrawer ? .black : themeVM.accent)
-                .padding(.horizontal, 8).padding(.vertical, 4)
-                .background(showGroupDrawer ? themeVM.accent : themeVM.accent.opacity(0.1))
-                .clipShape(Capsule())
+                .padding(.horizontal, 12)
             }
-
-            Button { labVM.isNodeEditorVisible = false } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(.white.opacity(0.4))
-                    .frame(width: 24, height: 24)
-                    .background(Color.white.opacity(0.07))
-                    .clipShape(RoundedRectangle(cornerRadius: 5))
-            }
+            .padding(.bottom, 8)
         }
-        .padding(.horizontal, 12).padding(.vertical, 8)
         .background(themeVM.accent.opacity(0.05))
         .overlay(Rectangle().frame(height: 0.5)
             .foregroundColor(themeVM.accent.opacity(0.15)), alignment: .bottom)
+    }
+
+    private func headerToggle(icon: String, label: String, isOn: Bool, action: @escaping () -> Void) -> some View {
+        Button {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { action() }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: icon).font(.system(size: 11))
+                Text(label).font(.system(size: 8, weight: .bold, design: .monospaced)).fixedSize()
+            }
+            .foregroundColor(isOn ? .black : themeVM.accent)
+            .padding(.horizontal, 9).padding(.vertical, 5)
+            .background(isOn ? themeVM.accent : themeVM.accent.opacity(0.1))
+            .clipShape(Capsule())
+        }
     }
 
     // MARK: — Group Drawer Banner
