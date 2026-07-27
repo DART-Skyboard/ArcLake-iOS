@@ -582,8 +582,8 @@ struct DARTTabSelector: View {
 
     private let tabs: [(ArcTab, String, String)] = [
         (.molecule, "Atoms",   "atom"),
+        (.math,     "Algebra", "function"),  // between Atoms and Physics, per request
         (.physics,  "Physics", "waveform.path"),
-        (.math,     "Algebra", "function"),  // renamed from "Math" — this IS the Algebra Menu where equation nodes get built
         (.arc,      "Arc",     "circle.and.line.horizontal"),
         (.log,      "Log",     "list.bullet"),
         (.imports,  "Imports", "square.and.arrow.down"),
