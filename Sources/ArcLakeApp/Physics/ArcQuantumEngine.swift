@@ -236,6 +236,13 @@ public struct ArcAtomData {
     public var nucleonInitialPositions: [SIMD3<Float>]  // for reset
     // Invisible hit sphere node
     public let hitNode: SCNNode
+
+    // Additive modulation from the Algebra Menu's equation-node graph for
+    // THIS specific atom (summed from Delta/Math-Operator sockets on any
+    // equation node bound to it) — set by ArcLabViewModel right before each
+    // tick() call, read here as a small nudge to the proton bridge angle,
+    // not a replacement for the existing neutron-first propagation math.
+    public var algebraModulation: Float = 0
 }
 
 // MARK: — ArcQuantumAtomBuilder
@@ -491,7 +498,12 @@ public final class ArcQuantumPhysics {
             // State modifier: maps matter state to angle (gas=1.0, liquid=0.85, solid=0.65, plasma=1.2)
             let tempK = (envTempF - 32) * 5 / 9 + 273.15
             let stateModifier: Float = tempK > 3000 ? 1.2 : tempK > 373 ? 1.0 : tempK > 273 ? 0.85 : 0.65
+            // Algebra Menu modulation — an equation node's Delta/Math-Operator
+            // sockets bound to this atom nudge the bridge angle additively.
+            // Kept small and additive so it shapes the existing neutron-
+            // first propagation rather than overriding it.
             let protonBridgeRad = neutronCount * (.pi / protonCount) * stateModifier * devRamp
+                + a.algebraModulation * devRamp
             let protonBridgeDeg = protonBridgeRad * 180 / .pi
             // Proton bridge gives proportionality between nucleus and shells
             let bridgeFactor = cos(protonBridgeRad) * 0.88 + 0.12  // 0.12..1.0

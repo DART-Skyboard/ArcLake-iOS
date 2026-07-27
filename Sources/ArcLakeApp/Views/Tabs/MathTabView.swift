@@ -255,6 +255,8 @@ private struct EquationNodeCard: View {
                 }
             }
 
+            physicsSection
+
             socketRow("Incoming", liveNode.incomingSockets, direction: .incoming)
             socketRow("Outgoing", liveNode.outgoingSockets, direction: .outgoing)
 
@@ -280,6 +282,46 @@ private struct EquationNodeCard: View {
         .background(Color.white.opacity(0.02))
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .padding(.vertical, 2)
+    }
+
+    // Six-input physics (mass/volume/weight/density/temperature/velocity) —
+    // looked up by matching the bound element's symbol against whatever's
+    // actually placed in the scene, since equation nodes bind by symbol, not
+    // a specific placed instance (see computeAlgebraModulation for the same
+    // scoping note). Shows nothing if the bound element isn't placed yet.
+    private var boundPhysics: ArcAtomPhysics? {
+        guard let symbol = liveNode.boundElementSymbol,
+              let el = labVM.selectedElements.first(where: { $0.elementSymbol == symbol }) else { return nil }
+        return labVM.atomPhysics[el.id]
+    }
+
+    @ViewBuilder
+    private var physicsSection: some View {
+        if let p = boundPhysics {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("PHYSICS (Earth default — adjustable)")
+                    .font(.system(size: 7, weight: .bold, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.35))
+                HStack(spacing: 10) {
+                    physicsStat("mass", String(format: "%.2f u", p.massU))
+                    physicsStat("vol", String(format: "%.1f Å³", p.volumeAngstrom3))
+                    physicsStat("wt", String(format: "%.1e N", p.weightN))
+                }
+                HStack(spacing: 10) {
+                    physicsStat("ρ", String(format: "%.0f kg/m³", p.densityKgM3))
+                    physicsStat("T", String(format: "%.0f K", p.temperatureK))
+                    physicsStat("v", String(format: "%.0f m/s", p.velocityMS))
+                }
+            }
+            .padding(.vertical, 2)
+        }
+    }
+
+    private func physicsStat(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(label).font(.system(size: 6, design: .monospaced)).foregroundColor(.white.opacity(0.3))
+            Text(value).font(.system(size: 8, weight: .semibold, design: .monospaced)).foregroundColor(themeVM.accent.opacity(0.85))
+        }
     }
 
     private func socketRow(_ label: String, _ sockets: [EquationSocket], direction: EquationSocketDirection) -> some View {

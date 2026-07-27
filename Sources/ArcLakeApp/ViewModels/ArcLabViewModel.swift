@@ -160,12 +160,14 @@ public final class ArcLabViewModel: ObservableObject {
         var elements: [ArcElement]
         var atomNodes: [Int: SCNNode]
         var atomPositions: [Int: SIMD3<Float>]
+        var atomPhysics: [Int: ArcAtomPhysics]
         var isCFDActive: Bool
         init() {
             scene = SCNScene()
             elements = []
             atomNodes = [:]
             atomPositions = [:]
+            atomPhysics = [:]
             isCFDActive = false
         }
     }
@@ -180,6 +182,14 @@ public final class ArcLabViewModel: ObservableObject {
     private var atomPositions: [Int: SIMD3<Float>] {
         get { tabStates[safe: activeTabIndex]?.atomPositions ?? [:] }
         set { if activeTabIndex < tabStates.count { tabStates[activeTabIndex].atomPositions = newValue } }
+    }
+    // Six-input physics (mass/volume/weight/density/temperature/velocity) —
+    // keyed the same way as atomPositions (element.id, or element.id +
+    // instanceIdx*1000 for repeated instances of the same element), since
+    // ArcElement.id is the atomic number, not a per-instance identity.
+    public var atomPhysics: [Int: ArcAtomPhysics] {
+        get { tabStates[safe: activeTabIndex]?.atomPhysics ?? [:] }
+        set { if activeTabIndex < tabStates.count { tabStates[activeTabIndex].atomPhysics = newValue } }
     }
     private var cfdTimer: Timer?
     private var displayLink: CADisplayLink?
@@ -426,6 +436,8 @@ public final class ArcLabViewModel: ObservableObject {
         }
         let pos = physicsPosition(for: element, index: selectedElements.count - 1)
         atomPositions[element.id] = pos
+        atomPhysics[element.id] = ArcAtomPhysics(
+            element: element, gravityMS2: physics.gravity, temperatureK: physics.activeTab.ambientTempK)
         buildPointCloudAtom(element, at: pos)
         log("Added \(element.elementName) (Z=\(element.protons))")
     }
@@ -446,7 +458,10 @@ public final class ArcLabViewModel: ObservableObject {
             0,
             radius * sin(angle)
         )
-        atomPositions[element.id + instanceIdx * 1000] = pos
+        let key = element.id + instanceIdx * 1000
+        atomPositions[key] = pos
+        atomPhysics[key] = ArcAtomPhysics(
+            element: element, gravityMS2: physics.gravity, temperatureK: physics.activeTab.ambientTempK)
         buildPointCloudAtom(element, at: pos)
         log("Added instance of \(element.elementName) (\(instanceIdx + 1) in scene)")
     }
@@ -609,8 +624,47 @@ public final class ArcLabViewModel: ObservableObject {
         log("Simulation stopped — \(recordedFrameCount) frames")
     }
 
+    // Algebra Menu -> Quantum Engine bridge. An equation node's Delta or
+    // Math-Operator sockets, when bound to an element that's actually placed
+    // in the scene, contribute a small additive nudge to that element's
+    // proton-bridge angle (see ArcQuantumEngine.tick). Scoped honestly: this
+    // matches by ELEMENT SYMBOL, not a specific placed instance, so if
+    // several atoms of the same element are in the scene (e.g. multiple
+    // oxygens), an equation bound to "O" nudges all of them together —
+    // full per-instance targeting would need equation nodes to carry a
+    // specific instance key rather than just a symbol, which is a
+    // reasonable next step but not this one.
+    private func computeAlgebraModulation(forElementSymbol symbol: String) -> Float {
+        var total: Float = 0
+        for node in equationNodes {
+            guard node.boundElementSymbol == symbol else { continue }
+            for socket in node.outgoingSockets + node.incomingSockets {
+                switch socket.kind {
+                case .delta:
+                    if let did = socket.linkedDeltaId, let d = deltaConnections.first(where: { $0.id == did }) {
+                        let shellTerm = Float(d.toShell - d.fromShell) * 0.05
+                        total += (d.operator_ == "-") ? -shellTerm : shellTerm
+                    }
+                case .mathOperator:
+                    if let did = socket.linkedDeltaId, let d = deltaConnections.first(where: { $0.id == did }) {
+                        total += (d.operator_ == "+") ? 0.02 : (d.operator_ == "-") ? -0.02 : 0
+                    }
+                default: break
+                }
+            }
+        }
+        return total
+    }
+
     @objc private func physicsDisplayLinkTick() {
         guard isPhysicsSimulating else { return }
+        // Apply any Algebra Menu modulation before advancing physics.
+        for i in quantumAtoms.indices {
+            let elementId = quantumAtoms[i].elementId
+            if let symbol = selectedElements.first(where: { $0.id == elementId })?.elementSymbol {
+                quantumAtoms[i].algebraModulation = computeAlgebraModulation(forElementSymbol: symbol)
+            }
+        }
         physEngine.tick(atoms: &quantumAtoms, dt: 0.016,
                         envTempF:      physEngine.startEnvTempF,
                         envGravity:    physEngine.gravity,
@@ -664,8 +718,15 @@ public final class ArcLabViewModel: ObservableObject {
         candidate.y = max(0.6, candidate.y + gravityOffset + tempLift)
         // Higher pressure compresses the arrangement
         let pressureFactor = max(0.3, 1.0 - pressure * 0.005)
-        candidate.x *= pressureFactor
-        candidate.z *= pressureFactor
+        // Scene-density term — as the number of placed atoms grows toward
+        // many-molecule scale (hundreds to a thousand), packing tightens
+        // further on top of the environment's own pressure setting, so
+        // scaling up a molecule count reads as increasing density rather
+        // than atoms endlessly spreading outward at a fixed spacing.
+        let sceneCount = Float(selectedElements.count)
+        let densityFactor = max(0.35, 1.0 - min(sceneCount, 1000) * 0.0004)
+        candidate.x *= pressureFactor * densityFactor
+        candidate.z *= pressureFactor * densityFactor
         // Temperature adds thermal jitter
         let thermalJitter = (temp - 72.0) * 0.002
         candidate.x += Float.random(in: -thermalJitter...thermalJitter)
