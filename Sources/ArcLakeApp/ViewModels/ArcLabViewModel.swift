@@ -1078,6 +1078,20 @@ public final class ArcLabViewModel: ObservableObject {
     /// congruency before anything downstream evaluates), then Algebra
     /// (propagates outward from the Neutron once Proton has resolved),
     /// then outermost parentheses Group nodes last.
+    /// Nests a node inside a .group-role node's outer parentheses — or
+    /// clears it (pass nil) to un-nest. This is the "Most Outer Parentheses
+    /// Math Operator Group Nest" concept from the equation-node spec: a
+    /// group node doesn't compute anything itself, it just gives its
+    /// children a shared visual boundary and a place for a global label.
+    public func setEquationParentGroup(_ nodeId: UUID, to groupId: UUID?) {
+        guard let idx = equationNodes.firstIndex(where: { $0.id == nodeId }) else { return }
+        equationNodes[idx].parentGroupId = groupId
+    }
+
+    public func childNodes(ofGroup groupId: UUID) -> [EquationNode] {
+        equationNodes.filter { $0.parentGroupId == groupId }
+    }
+
     public func equationEvaluationOrder() -> [EquationNode] {
         let byRole: (EquationNodeRole) -> [EquationNode] = { role in
             self.equationNodes.filter { $0.role == role }

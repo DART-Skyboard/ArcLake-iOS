@@ -288,6 +288,7 @@ private struct EquationNodeCard: View {
             }
 
             physicsSection
+            groupSection
 
             socketRow("Incoming", liveNode.incomingSockets, direction: .incoming)
             socketRow("Outgoing", liveNode.outgoingSockets, direction: .outgoing)
@@ -321,6 +322,29 @@ private struct EquationNodeCard: View {
     // actually placed in the scene, since equation nodes bind by symbol, not
     // a specific placed instance (see computeAlgebraModulation for the same
     // scoping note). Shows nothing if the bound element isn't placed yet.
+    // "Most Outer Parentheses Math Operator Group Nest" — nest this node
+    // inside any existing .group-role node for a shared visual boundary and
+    // label in the Node Editor. Non-group nodes only; kept to one level.
+    @ViewBuilder
+    private var groupSection: some View {
+        let availableGroups = labVM.equationNodes.filter { $0.role == .group && $0.id != node.id }
+        if liveNode.role != .group, !availableGroups.isEmpty {
+            HStack(spacing: 6) {
+                Text("GROUP").font(.system(size: 7, weight: .bold, design: .monospaced)).foregroundColor(.white.opacity(0.35))
+                Menu {
+                    Button("None") { labVM.setEquationParentGroup(node.id, to: nil) }
+                    ForEach(availableGroups) { g in
+                        Button(g.title) { labVM.setEquationParentGroup(node.id, to: g.id) }
+                    }
+                } label: {
+                    Text(availableGroups.first(where: { $0.id == liveNode.parentGroupId })?.title ?? "None")
+                        .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                        .foregroundColor(themeVM.accent)
+                }
+            }
+        }
+    }
+
     private var boundPhysics: ArcAtomPhysics? {
         guard let symbol = liveNode.boundElementSymbol,
               let el = labVM.selectedElements.first(where: { $0.elementSymbol == symbol }) else { return nil }

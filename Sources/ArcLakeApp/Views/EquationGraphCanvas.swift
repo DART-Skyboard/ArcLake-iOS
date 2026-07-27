@@ -31,6 +31,7 @@ struct EquationGraphCanvas: View {
         // pan/zoom transform via the bindings above so both layers pan and
         // zoom as one.
         ZStack {
+            ForEach(groupBoundaries, id: \.groupId) { g in groupBoundaryView(g) }
             ForEach(labVM.equationConnections) { conn in connectionPath(conn) }
             ForEach(labVM.equationNodes) { node in nodeCard(node) }
         }
@@ -129,6 +130,40 @@ struct EquationGraphCanvas: View {
                     pendingSocket = (node.id, socket.id, isOutgoing)
                 }
             }
+    }
+
+    // MARK: Group boundaries — "Most Outer Parentheses" visual grouping
+    private struct GroupBoundary { let groupId: UUID; let title: String; let rect: CGRect }
+
+    private var groupBoundaries: [GroupBoundary] {
+        labVM.equationNodes.filter { $0.role == .group }.compactMap { group -> GroupBoundary? in
+            let children = labVM.childNodes(ofGroup: group.id)
+            guard !children.isEmpty else { return nil }
+            let positions = children.map { dragPositions[$0.id] ?? $0.position }
+            let minX = (positions.map { $0.x }.min() ?? group.position.x) - nodeWidth/2 - 16
+            let maxX = (positions.map { $0.x }.max() ?? group.position.x) + nodeWidth/2 + 16
+            let minY = (positions.map { $0.y }.min() ?? group.position.y) - 30
+            let maxY = (positions.map { $0.y }.max() ?? group.position.y) + 60
+            return GroupBoundary(groupId: group.id, title: group.title,
+                                  rect: CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY))
+        }
+    }
+
+    private func groupBoundaryView(_ g: GroupBoundary) -> some View {
+        ZStack(alignment: .topLeading) {
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.orange.opacity(0.5), style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
+                .background(RoundedRectangle(cornerRadius: 10).fill(Color.orange.opacity(0.04)))
+                .frame(width: g.rect.width, height: g.rect.height)
+            Text("( \(g.title) )")
+                .font(.system(size: 8, weight: .bold, design: .monospaced))
+                .foregroundColor(.orange.opacity(0.8))
+                .padding(.horizontal, 5).padding(.vertical, 2)
+                .background(Color.black.opacity(0.5))
+                .clipShape(Capsule())
+                .offset(x: 6, y: -8)
+        }
+        .position(x: g.rect.midX, y: g.rect.midY)
     }
 
     // MARK: Connection curves — same visual convention as the generic editor
