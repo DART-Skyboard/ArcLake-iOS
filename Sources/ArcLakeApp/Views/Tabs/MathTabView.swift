@@ -104,10 +104,9 @@ public struct MathTabView: View {
                     ?? "Node \(labVM.equationNodes.count + 1)"
                 labVM.addEquationNode(title: title, role: newNodeRole,
                                        boundAtomId: newNodeAtomId, boundElementSymbol: newNodeElementSymbol)
-                // Open straight into the Node Editor's Equation Graph so the
-                // node just built is immediately visible there, not just
-                // silently added to shared state.
-                labVM.nodeEditorShouldShowEquationGraph = true
+                // Open the Node Editor so the node just built is immediately
+                // visible — it renders directly alongside everything else
+                // there now, no separate mode to switch into.
                 withAnimation(.spring()) { labVM.isNodeEditorVisible = true }
             } label: {
                 Label("Build Equation Node", systemImage: "plus.diamond.fill")

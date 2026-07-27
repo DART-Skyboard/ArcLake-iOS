@@ -23,8 +23,6 @@ struct NodeEditorView: View {
 
     // Equation Graph mode — separate, additive canvas (see EquationGraphCanvas)
     // for labVM.equationNodes/equationConnections, built for the Algebra Menu.
-    @State private var showEquationGraph = false
-
     // Group drawer
     @State private var showGroupDrawer = false
     @State private var nodeGroups:  [NodeGroup]  = []
@@ -71,7 +69,12 @@ struct NodeEditorView: View {
             header
             groupDrawerBanner
             if showGroupDrawer { groupDrawerContent }
-            if showEquationGraph { EquationGraphCanvas() } else { canvasArea }
+            ZStack {
+                canvasArea
+                // Shares canvasArea's own pan/zoom (canvasOffset/canvasScale)
+                // via bindings so both layers move together as one space.
+                EquationGraphCanvas(canvasOffset: $canvasOffset, canvasScale: $canvasScale)
+            }
             footer
         }
         .background(Color(red:0.03, green:0.06, blue:0.12))   // opaque — prevents see-through
@@ -80,14 +83,6 @@ struct NodeEditorView: View {
             loadTab(shownTab)
             syncFromSceneAtoms()
             syncFromMolCanvas()
-            // Set by the Algebra Menu's Build button — land directly on the
-            // Equation Graph so the node just built is immediately visible,
-            // then clear the flag so opening the editor normally afterward
-            // still remembers whatever mode was last used.
-            if labVM.nodeEditorShouldShowEquationGraph {
-                showEquationGraph = true
-                labVM.nodeEditorShouldShowEquationGraph = false
-            }
         }
         .onChange(of: labVM.molAtoms.count) { _ in syncFromMolCanvas() }
         // Dynamic per-tab graph: switching scene tabs swaps the node graph,
@@ -182,9 +177,6 @@ struct NodeEditorView: View {
                         }
                     }
 
-                    headerToggle(icon: "function", label: "ALGEBRA", isOn: showEquationGraph) {
-                        showEquationGraph.toggle()
-                    }
                     headerToggle(icon: showGroupDrawer ? "folder.fill" : "folder", label: "GROUPS", isOn: showGroupDrawer) {
                         showGroupDrawer.toggle()
                     }

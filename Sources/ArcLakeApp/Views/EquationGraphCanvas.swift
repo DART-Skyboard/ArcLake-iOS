@@ -1,11 +1,12 @@
 import SwiftUI
 
 // MARK: — Equation Graph Canvas
-// Renders labVM.equationNodes / equationConnections directly — this is the
-// shared model built for the Algebra Menu redesign, not the generic
-// EditorNode/NodeConnection system above. Kept as a separate, additive mode
-// (toggled in the header) rather than merged into the existing pan/zoom/
-// z-order machinery, so nothing about the existing node system changes.
+// Renders labVM.equationNodes / equationConnections DIRECTLY ALONGSIDE the
+// existing generic EditorNode/NodeConnection canvas — not a separate toggled
+// mode. Equation nodes built from the Algebra Menu appear in the SAME editor
+// as everything else, at the same time, sharing the SAME pan/zoom transform
+// (passed in as bindings from NodeEditorView) so the two layers move
+// together as one space rather than drifting apart during a pan or pinch.
 // Dragging a curve between two sockets here calls
 // labVM.connectEquationSockets(...) directly — the same call the Algebra
 // Menu's own UI can make — so a connection made here is real graph data
@@ -14,9 +15,8 @@ struct EquationGraphCanvas: View {
     @EnvironmentObject var labVM: ArcLabViewModel
     @EnvironmentObject var themeVM: ArcThemeViewModel
 
-    @State private var canvasOffset  = CGSize.zero
-    @State private var canvasPanBase = CGSize.zero
-    @State private var canvasScale: CGFloat = 1.0
+    @Binding var canvasOffset: CGSize
+    @Binding var canvasScale: CGFloat
     @State private var pendingSocket: (nodeId: UUID, socketId: UUID, isOutgoing: Bool)? = nil
     @State private var dragPositions: [UUID: CGPoint] = [:]   // live position while dragging a node
 
@@ -25,41 +25,18 @@ struct EquationGraphCanvas: View {
     private let headerHeight: CGFloat = 28
 
     var body: some View {
-        GeometryReader { geo in
-            ZStack {
-                Canvas { ctx, size in
-                    let spacing: CGFloat = 28 * canvasScale
-                    let ox = canvasOffset.width.truncatingRemainder(dividingBy: spacing)
-                    let oy = canvasOffset.height.truncatingRemainder(dividingBy: spacing)
-                    for x in stride(from: ox, through: size.width, by: spacing) {
-                        for y in stride(from: oy, through: size.height, by: spacing) {
-                            ctx.fill(Path(ellipseIn: CGRect(x: x-1, y: y-1, width: 2, height: 2)),
-                                     with: .color(.white.opacity(0.06)))
-                        }
-                    }
-                }
-
-                ZStack {
-                    ForEach(labVM.equationConnections) { conn in connectionPath(conn) }
-                    ForEach(labVM.equationNodes) { node in nodeCard(node) }
-                }
-                .offset(canvasOffset)
-                .scaleEffect(canvasScale)
-            }
-            .clipped()
-            .gesture(
-                DragGesture(minimumDistance: 4)
-                    .onChanged { val in
-                        canvasOffset = CGSize(width: canvasPanBase.width + val.translation.width,
-                                               height: canvasPanBase.height + val.translation.height)
-                    }
-                    .onEnded { _ in canvasPanBase = canvasOffset }
-            )
-            .gesture(
-                MagnificationGesture()
-                    .onChanged { val in canvasScale = max(0.3, min(3.0, canvasScale * val)) }
-            )
+        // No GeometryReader, no gestures of its own, no background grid —
+        // canvasArea already provides all of that. This view is purely the
+        // equation nodes + their connections, sharing canvasArea's exact
+        // pan/zoom transform via the bindings above so both layers pan and
+        // zoom as one.
+        ZStack {
+            ForEach(labVM.equationConnections) { conn in connectionPath(conn) }
+            ForEach(labVM.equationNodes) { node in nodeCard(node) }
         }
+        .offset(canvasOffset)
+        .scaleEffect(canvasScale)
+        .allowsHitTesting(true)
     }
 
     // MARK: Node card

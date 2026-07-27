@@ -871,11 +871,6 @@ public final class ArcLabViewModel: ObservableObject {
     // Single source of truth shared by all three UIs, and by Autumn (she
     // already receives `labVM` directly — see AutumnViewModel.processIntent).
     // Nothing here is view-local state.
-    // Set by the Algebra Menu's Build button right before opening the Node
-    // Editor, so it lands directly on the Equation Graph instead of the
-    // generic node canvas — closes the "where did my node go" gap.
-    @Published public var nodeEditorShouldShowEquationGraph: Bool = false
-
     @Published public var equationNodes: [EquationNode] = []
     @Published public var equationConnections: [EquationConnection] = []
 
