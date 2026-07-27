@@ -665,7 +665,15 @@ struct EditorNodeView: View {
         .position(CGPoint(
             x: node.position.x + dragDelta.width,
             y: node.position.y + dragDelta.height))
-        .gesture(
+        // highPriorityGesture, not gesture — canvasArea's own pan
+        // DragGesture sits on an ancestor of this node. Without explicit
+        // priority, both could fire on the same touch: the canvas pans by
+        // the full translation AND this node moves by its own translation
+        // on top of that, so the dragged node visibly races ahead of
+        // everything else — that compounding, not the scale math or the
+        // curve lag (both real, both already fixed), is what "shooting off
+        // fast" actually was.
+        .highPriorityGesture(
             DragGesture(minimumDistance: 4)
                 .updating($dragDelta) { val, state, _ in
                     // Compensate translation for canvas scale so node tracks finger 1:1

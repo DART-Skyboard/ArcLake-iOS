@@ -80,7 +80,15 @@ struct EquationGraphCanvas: View {
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(themeVM.accent.opacity(0.3), lineWidth: 1))
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .position(pos)
-        .gesture(
+        // highPriorityGesture, not gesture — the canvas this node sits in
+        // ALSO has its own pan DragGesture. Without explicit priority, both
+        // could fire on the same touch: the canvas pans by the full
+        // translation AND the node moves by its own translation on top of
+        // that, so the dragged node visibly races ahead of everything else
+        // in the canvas. That compounding is what "shooting off fast"
+        // actually was — not (or not only) the scale/curve-lag issues fixed
+        // earlier, which were real but secondary.
+        .highPriorityGesture(
             DragGesture()
                 .onChanged { val in
                     // DragGesture reports translation in screen space, but
