@@ -1081,12 +1081,47 @@ public final class ArcLabViewModel: ObservableObject {
     }
 
     public func addMolCanvasToScene(newTab: Bool) {
+        // Pause any active physics simulation for this bulk mutation — this
+        // function adds several elements and equation nodes in quick
+        // succession, and the display-link-driven physics tick shouldn't be
+        // reading selectedElements/quantumAtoms mid-update. Cheap safety
+        // hardening around the exact path a reported crash pointed to, even
+        // without a fully symbolicated stack trace confirming the precise
+        // line — this can't make things worse and closes off a real class
+        // of mid-mutation read risk.
+        let wasSimulating = isPhysicsSimulating
+        if wasSimulating { stopPhysicsSimulation() }
+
         if newTab { addSceneTab() }
+
         for node in molAtoms {
-            if let el = ElementStore.shared.elements.first(where:{$0.protons==node.atomicNumber}) {
-                addElement(el)
+            guard let el = ElementStore.shared.elements.first(where: { $0.protons == node.atomicNumber }) else { continue }
+            addElement(el)
+            // Surface this atom as an equation node too, so it's immediately
+            // available in the Algebra Menu / Node Editor — previously this
+            // function only added 3D geometry and silently dropped every
+            // Delta/bond the user had already configured on the canvas.
+            addEquationNode(title: el.elementSymbol, role: .algebra, boundElementSymbol: el.elementSymbol)
+        }
+
+        // Carry Delta connections between molecule-canvas atoms over as
+        // equation connections between the matching equation nodes, so
+        // bonds/deltas set up on the canvas are reflected in the Algebra
+        // Menu / Node Editor immediately, not lost.
+        for delta in deltaConnections {
+            guard let fromAtom = molAtoms.first(where: { $0.id == delta.fromAtomId }),
+                  let toAtom   = molAtoms.first(where: { $0.id == delta.toAtomId }),
+                  let fromNode = equationNodes.first(where: { $0.boundElementSymbol == fromAtom.symbol }),
+                  let toNode   = equationNodes.first(where: { $0.boundElementSymbol == toAtom.symbol })
+            else { continue }
+            if let fromSocketId = addEquationSocket(to: fromNode.id, kind: .delta, direction: .outgoing),
+               let toSocketId   = addEquationSocket(to: toNode.id, kind: .delta, direction: .incoming) {
+                connectEquationSockets(fromNode: fromNode.id, fromSocket: fromSocketId,
+                                       toNode: toNode.id, toSocket: toSocketId, isDelta: true)
             }
         }
+
+        if wasSimulating { startPhysicsSimulation() }
         log("Mol Canvas added to \(newTab ? "new":"current") scene")
     }
 
