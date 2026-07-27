@@ -213,7 +213,12 @@ public final class ArcLabViewModel: ObservableObject {
 
     // MARK: — Scene setup
     private func setupSceneBase(_ s: SCNScene) {
-        s.background.contents = UIColor(red:0.015, green:0.03, blue:0.07, alpha:1)
+        // Use the actual current default background (gradient/color/
+        // environment, whatever the theme/render settings say) instead of a
+        // hardcoded flat color — this hardcoded line is why a brand new
+        // scene tab showed the old flat dark background instead of the
+        // blue gradient every other scene has.
+        ArcRenderViewModel.shared.applyBackground(to: s)
         let ambient = SCNLight(); ambient.type = .ambient
         ambient.intensity = 180; ambient.color = UIColor.white
         let an = SCNNode(); an.light = ambient
