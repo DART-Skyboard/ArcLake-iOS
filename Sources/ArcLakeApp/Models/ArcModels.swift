@@ -146,6 +146,10 @@ public struct EquationSocket: Identifiable, Codable {
     // Fallback only for a socket that hasn't been wired to real canvas data
     // yet — never a second source of truth once linked.
     public var localValue: String = ""
+    // Numeric fallback, used specifically by .physicsValue sockets (the
+    // number a person types in for whichever physics attribute the sibling
+    // .physicsAttribute socket on the same node is set to).
+    public var doubleValue: Double = 0
 
     public init(kind: EquationSocketKind, direction: EquationSocketDirection, label: String? = nil) {
         id = UUID(); self.kind = kind; self.direction = direction
