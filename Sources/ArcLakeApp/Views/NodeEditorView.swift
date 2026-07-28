@@ -25,6 +25,25 @@ struct NodeEditorView: View {
     @State private var canvasOffset  = CGSize.zero
     @State private var canvasPanBase = CGSize.zero   // tracks pan start so no drift
     @State private var canvasScale: CGFloat = 1.0
+    // Live, uncommitted magnification for the CURRENT gesture only — the
+    // actual canvasScale commits ONCE when the gesture ends. Multiplying
+    // canvasScale by MagnificationGesture's value on every onChanged frame
+    // (the previous code) was a real bug: that value is cumulative since
+    // the gesture started, not a per-frame delta, so it was being
+    // multiplied in again and again dozens of times per second — genuine
+    // exponential runaway that blew past the 0.3–3.0 clamp almost
+    // instantly. That's exactly "pinch a little, it jumps to a fixed
+    // distance" — the fixed distance was the clamp boundary.
+    @GestureState private var magnifyBy: CGFloat = 1.0
+    // Set while ANY equation-graph node is being dragged, so canvasArea's
+    // own pan gesture can ignore that touch. EquationGraphCanvas is a
+    // SIBLING of canvasArea in the outer ZStack, not a descendant of it —
+    // .highPriorityGesture() only establishes priority within a true
+    // ancestor-descendant chain, so it silently did nothing across this
+    // sibling boundary, which is why equation nodes kept shooting off even
+    // after the generic node system (whose nodes ARE true descendants of
+    // canvasArea) was fixed by the same approach.
+    @State private var isDraggingEquationNode = false
     @State private var pendingFrom: UUID? = nil
 
     // Equation Graph mode — separate, additive canvas (see EquationGraphCanvas)
@@ -79,7 +98,8 @@ struct NodeEditorView: View {
                 canvasArea
                 // Shares canvasArea's own pan/zoom (canvasOffset/canvasScale)
                 // via bindings so both layers move together as one space.
-                EquationGraphCanvas(canvasOffset: $canvasOffset, canvasScale: $canvasScale)
+                EquationGraphCanvas(canvasOffset: $canvasOffset, canvasScale: $canvasScale,
+                                    isDraggingNode: $isDraggingEquationNode)
             }
             footer
         }
@@ -383,13 +403,17 @@ struct NodeEditorView: View {
                     }
                 }
                 .offset(canvasOffset)
-                .scaleEffect(canvasScale)
+                .scaleEffect(canvasScale * magnifyBy)
             }
             .clipped()
-            // Canvas pan
+            // Canvas pan — guarded so it doesn't also move while a node in
+            // the sibling EquationGraphCanvas is being dragged (see
+            // isDraggingEquationNode above for why highPriorityGesture
+            // couldn't fix this on its own).
             .gesture(
                 DragGesture(minimumDistance: 4)
                     .onChanged { val in
+                        guard !isDraggingEquationNode else { return }
                         // Use startLocation to compute delta from start each frame
                         // so cumulative drift doesn't accelerate movement
                         canvasOffset = CGSize(
@@ -397,13 +421,19 @@ struct NodeEditorView: View {
                             height: canvasPanBase.height + val.translation.height)
                     }
                     .onEnded { val in
+                        guard !isDraggingEquationNode else { return }
                         canvasPanBase = canvasOffset
                     }
             )
-            // Canvas pinch-to-zoom
+            // Canvas pinch-to-zoom — magnifyBy provides live visual feedback
+            // during the gesture only; canvasScale itself commits ONCE at
+            // the end, as a single multiplication of the base by the
+            // gesture's total cumulative factor. This is the correct
+            // MagnificationGesture idiom and fixes the exponential runaway.
             .gesture(
                 MagnificationGesture()
-                    .onChanged { val in
+                    .updating($magnifyBy) { val, state, _ in state = val }
+                    .onEnded { val in
                         canvasScale = max(0.3, min(3.0, canvasScale * val))
                     }
             )

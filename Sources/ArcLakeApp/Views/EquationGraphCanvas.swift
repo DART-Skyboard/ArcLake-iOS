@@ -17,6 +17,7 @@ struct EquationGraphCanvas: View {
 
     @Binding var canvasOffset: CGSize
     @Binding var canvasScale: CGFloat
+    @Binding var isDraggingNode: Bool
     @State private var pendingSocket: (nodeId: UUID, socketId: UUID, isOutgoing: Bool)? = nil
     @State private var dragPositions: [UUID: CGPoint] = [:]   // live position while dragging a node
 
@@ -98,6 +99,13 @@ struct EquationGraphCanvas: View {
                     dragPositions[node.id] = CGPoint(
                         x: pos.x + val.translation.width / canvasScale,
                         y: pos.y + val.translation.height / canvasScale)
+                    // Tell the sibling canvasArea's pan gesture to ignore
+                    // this touch — highPriorityGesture alone can't do this
+                    // since EquationGraphCanvas and canvasArea are siblings
+                    // in the same ZStack, not an ancestor-descendant pair,
+                    // so gesture priority never actually applied across
+                    // that boundary.
+                    isDraggingNode = true
                 }
                 .onEnded { _ in
                     if let final = dragPositions[node.id],
@@ -105,6 +113,7 @@ struct EquationGraphCanvas: View {
                         labVM.equationNodes[idx].position = final
                     }
                     dragPositions[node.id] = nil
+                    isDraggingNode = false
                 }
         )
     }
