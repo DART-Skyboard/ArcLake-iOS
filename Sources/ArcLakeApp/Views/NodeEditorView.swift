@@ -537,10 +537,15 @@ struct NodeEditorView: View {
     }
 
     private func eqSocketDot(_ socket: EquationSocket, node: EquationNode, isOutgoing: Bool) -> some View {
+        // Hollow/empty when not connected to anything, filled with the
+        // socket kind's color once a curve actually touches it — this is
+        // how a person tells connected from unconnected at a glance,
+        // matching the same convention across every node type.
+        let connected = labVM.isEquationSocketConnected(socket.id)
         Circle()
-            .fill(Color(uiColor: socket.kind.color))
+            .fill(connected ? Color(uiColor: socket.kind.color) : Color.clear)
             .frame(width: 8, height: 8)
-            .overlay(Circle().stroke(Color.white.opacity(0.4), lineWidth: 0.5))
+            .overlay(Circle().stroke(connected ? Color.white.opacity(0.4) : Color(uiColor: socket.kind.color), lineWidth: connected ? 0.5 : 1.5))
             .onTapGesture {
                 if let pending = eqPendingSocket {
                     if pending.isOutgoing != isOutgoing {
@@ -634,6 +639,7 @@ struct NodeEditorView: View {
                     pendingFrom = nil
                 } else { pendingFrom = node.id }
             },
+            connections: connections,
             canvasScale: canvasScale,
             liveDragPositions: $liveDragPositions
         )
@@ -762,6 +768,9 @@ struct EditorNodeView: View {
     let accent: Color
     let onTap: () -> Void
     let onPortTap: (String) -> Void
+    // For the empty-vs-filled port dot: hollow when nothing connects to
+    // this port yet, filled once a curve actually touches it.
+    let connections: [NodeEditorView.NodeConnection]
 
     let canvasScale: CGFloat           // passed in so drag compensates for zoom
     @Binding var liveDragPositions: [UUID: CGPoint]
@@ -776,6 +785,13 @@ struct EditorNodeView: View {
 
     private func socketY(portIndex: Int) -> CGFloat {
         headerH + CGFloat(portIndex) * portRowH + portRowH / 2
+    }
+
+    private func isPortConnected(_ port: String) -> Bool {
+        connections.contains {
+            ($0.fromNodeId == node.id && $0.fromPort == port) ||
+            ($0.toNodeId   == node.id && $0.toPort   == port)
+        }
     }
 
     var body: some View {
@@ -837,22 +853,24 @@ struct EditorNodeView: View {
 
             // Left-edge sockets (in ports)
             ForEach(Array(inPorts.enumerated()), id: \.offset) { i, _ in
+                let connected = isPortConnected(inPorts[i])
                 Button { onPortTap(inPorts[i]) } label: {
                     Circle()
-                        .fill(node.color)
+                        .fill(connected ? node.color : Color.clear)
                         .frame(width: socketR*2, height: socketR*2)
-                        .overlay(Circle().stroke(Color.black.opacity(0.4), lineWidth: 1))
+                        .overlay(Circle().stroke(connected ? Color.black.opacity(0.4) : node.color, lineWidth: connected ? 1 : 1.5))
                 }
                 .offset(x: -socketR, y: socketY(portIndex: i) - socketR)
             }
 
             // Right-edge sockets (out ports)
             ForEach(Array(outPorts.enumerated()), id: \.offset) { i, _ in
+                let connected = isPortConnected(outPorts[i])
                 Button { onPortTap(outPorts[i]) } label: {
                     Circle()
-                        .fill(node.color)
+                        .fill(connected ? node.color : Color.clear)
                         .frame(width: socketR*2, height: socketR*2)
-                        .overlay(Circle().stroke(Color.black.opacity(0.4), lineWidth: 1))
+                        .overlay(Circle().stroke(connected ? Color.black.opacity(0.4) : node.color, lineWidth: connected ? 1 : 1.5))
                 }
                 .offset(x: nodeWidth - socketR, y: socketY(portIndex: i) - socketR)
             }

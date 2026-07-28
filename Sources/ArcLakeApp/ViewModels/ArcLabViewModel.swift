@@ -1052,10 +1052,47 @@ public final class ArcLabViewModel: ObservableObject {
             return socket.localValue.isEmpty ? "—" : socket.localValue
         case .mathOperator:
             if let id = socket.linkedDeltaId, let d = deltaConnections.first(where: { $0.id == id }) { return d.operator_ }
-            return socket.localValue.isEmpty ? "+" : socket.localValue
+            return socket.localValue.isEmpty ? "N/A" : socket.localValue
         case .elementComponent:
             return socket.localValue.isEmpty ? "—" : socket.localValue
+        case .physicsAttribute:
+            return socket.localValue.isEmpty ? "mass" : socket.localValue
+        case .physicsValue:
+            // Unit-aware: matches whichever physicsAttribute socket sits on
+            // the same node, so "mass" shows "u", "volume" shows "Å³", etc —
+            // the same units ArcAtomPhysics itself uses.
+            let attr = physicsAttributeSibling(of: socket)
+            let unit: String
+            switch attr {
+            case "volume":      unit = "Å³"
+            case "weight":      unit = "N"
+            case "density":     unit = "kg/m³"
+            case "temperature": unit = "K"
+            case "velocity":    unit = "m/s"
+            default:            unit = "u"   // mass
+            }
+            return String(format: "%.3g %@", socket.doubleValue, unit)
         }
+    }
+
+    /// Finds the physicsAttribute socket on the same node as `value` (a
+    /// physicsValue socket), so the value's display can show the right unit
+    /// for whichever attribute it's paired with.
+    private func physicsAttributeSibling(of value: EquationSocket) -> String {
+        for node in equationNodes {
+            let all = node.incomingSockets + node.outgoingSockets
+            guard all.contains(where: { $0.id == value.id }) else { continue }
+            if let attr = all.first(where: { $0.kind == .physicsAttribute }) {
+                return attr.localValue.isEmpty ? "mass" : attr.localValue
+            }
+        }
+        return "mass"
+    }
+
+    /// Whether a given socket currently has any curve connection touching
+    /// it — drives the empty-vs-filled circle in the Node Editor.
+    public func isEquationSocketConnected(_ socketId: UUID) -> Bool {
+        equationConnections.contains { $0.fromSocketId == socketId || $0.toSocketId == socketId }
     }
 
     /// The write half — edits made in the Algebra Menu or Node Editor go
@@ -1081,6 +1118,10 @@ public final class ArcLabViewModel: ObservableObject {
                     if socket.direction == .incoming { deltaConnections[dIdx].fromShell = shellIdx }
                     else { deltaConnections[dIdx].toShell = shellIdx }
                 } else { socket.localValue = newValue }
+            case .physicsValue:
+                // Numeric, not text — parse into doubleValue, which is what
+                // socketDisplayValue actually reads for this kind.
+                socket.doubleValue = Double(newValue) ?? socket.doubleValue
             default:
                 socket.localValue = newValue
             }

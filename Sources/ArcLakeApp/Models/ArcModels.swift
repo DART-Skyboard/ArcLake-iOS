@@ -95,7 +95,9 @@ public enum EquationSocketKind: String, Codable, CaseIterable {
     case elementSelection   // Element Selection/Search List
     case elementComponent   // Element Component List (+/-)
     case orbitShell         // Orbit Shell Selector (+/-)
-    case mathOperator       // Math Operator Selection List (+/-)
+    case physicsAttribute   // which of the 6 physics values (mass/volume/weight/density/temperature/velocity)
+    case physicsValue       // the numeric value assigned to the sibling physicsAttribute socket, unit-aware
+    case mathOperator       // Math Operator Selection List (+/-), includes N/A for terminal daisy-chain nodes
     case bond                // Incoming/Outgoing Bond Sockets (+/-)
     case delta               // Incoming/Outgoing Delta sockets for Orbit Shells (+/-)
 
@@ -104,6 +106,8 @@ public enum EquationSocketKind: String, Codable, CaseIterable {
         case .elementSelection: return "Element"
         case .elementComponent: return "Component"
         case .orbitShell:       return "Orbit Shell"
+        case .physicsAttribute: return "Physics Attr"
+        case .physicsValue:     return "Value"
         case .mathOperator:     return "Operator"
         case .bond:              return "Bond"
         case .delta:             return "Δ Delta"
@@ -114,6 +118,8 @@ public enum EquationSocketKind: String, Codable, CaseIterable {
         case .elementSelection: return .systemCyan
         case .elementComponent: return .systemTeal
         case .orbitShell:       return .systemPurple
+        case .physicsAttribute: return .systemYellow
+        case .physicsValue:     return .systemIndigo
         case .mathOperator:     return .systemOrange
         case .bond:              return .systemGreen
         case .delta:             return .systemPink

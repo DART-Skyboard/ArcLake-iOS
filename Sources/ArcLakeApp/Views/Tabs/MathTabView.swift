@@ -12,6 +12,7 @@ public struct MathTabView: View {
     @State private var newNodeRole: EquationNodeRole = .algebra
     @State private var newNodeAtomId: UUID? = nil
     @State private var newNodeElementSymbol: String? = nil
+    @State private var elementSearch: String = ""
 
     public var body: some View {
         ScrollView {
@@ -73,27 +74,34 @@ public struct MathTabView: View {
             }
             .pickerStyle(.segmented)
 
-            // Primary binding: elements actually in the scene (the "Active
-            // Elements" list) — this is the main path, always shown, no
-            // Molecule Canvas needed for it.
-            Text("ELEMENT")
+            // Element Selection — searches the FULL periodic table (the
+            // same ElementStore data the Periodic Table view itself uses),
+            // not just whatever's already in the scene. Selecting an
+            // element not yet placed adds it to the scene automatically,
+            // so the node's physics/bond sync work immediately.
+            Text("ELEMENT SELECTION")
                 .font(.system(size: 8, weight: .bold, design: .monospaced))
                 .foregroundColor(.white.opacity(0.4))
                 .padding(.top, 6)
-            if labVM.selectedElements.isEmpty {
-                Text("No elements in the scene yet — add some from the Periodic Table first.")
-                    .font(.system(size: 9, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.35))
-            } else {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        elementChip(nil, "Freestanding")
-                        ForEach(labVM.selectedElements, id: \.elementSymbol) { el in
-                            elementChip(el.elementSymbol, el.elementSymbol)
-                        }
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").font(.system(size: 10)).foregroundColor(.white.opacity(0.3))
+                TextField("Search elements...", text: $elementSearch)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(.white)
+            }
+            .padding(.horizontal, 8).padding(.vertical, 6)
+            .background(Color.white.opacity(0.05))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    elementChip(nil, "Freestanding")
+                    ForEach(filteredElements, id: \.elementSymbol) { el in
+                        elementChip(el.elementSymbol, el.elementSymbol)
                     }
                 }
             }
+            .frame(height: 34)
 
             // Secondary binding: a specific placed Molecule Canvas atom
             // instance — only relevant once something's actually been put on
@@ -135,8 +143,31 @@ public struct MathTabView: View {
         }
     }
 
+    // Searches the FULL periodic table by symbol or name, not just the
+    // scene's currently-placed elements. Capped so an empty search doesn't
+    // render 127+ chips in a horizontal scroller — narrows as you type.
+    private var filteredElements: [ArcElement] {
+        let all = ElementStore.shared.elements
+        if elementSearch.isEmpty {
+            return Array(all.prefix(20))
+        }
+        let q = elementSearch.lowercased()
+        return all.filter {
+            $0.elementSymbol.lowercased().contains(q) || $0.elementName.lowercased().contains(q)
+        }
+    }
+
     private func elementChip(_ symbol: String?, _ label: String) -> some View {
-        Button { newNodeElementSymbol = symbol; newNodeAtomId = nil } label: {
+        Button {
+            newNodeElementSymbol = symbol; newNodeAtomId = nil
+            // Auto-place: selecting an element that isn't in the scene yet
+            // adds it, so the node's physics/bond sync work immediately
+            // rather than showing blank data until it's placed separately.
+            if let sym = symbol, !labVM.selectedElements.contains(where: { $0.elementSymbol == sym }),
+               let el = ElementStore.shared.elements.first(where: { $0.elementSymbol == sym }) {
+                labVM.addElement(el)
+            }
+        } label: {
             Text(label)
                 .font(.system(size: 10, weight: .semibold, design: .monospaced))
                 .foregroundColor(newNodeElementSymbol == symbol ? .black : themeVM.accent)
@@ -296,7 +327,9 @@ private struct EquationNodeCard: View {
     // fixed, known set of valid values — matching the same K/L/M/N/O/P/Q
     // shell-name convention used by the Delta-connection sheet elsewhere.
     private static let shellNames = ["K","L","M","N","O","P","Q"]
-    private static let mathOperators = ["+", "-", "×", "÷"]
+    // N/A — for a terminal node in a daisy chain that doesn't need an
+    // operator (the last link doesn't propagate anywhere further).
+    private static let mathOperators = ["+", "-", "×", "÷", "N/A"]
 
     @ViewBuilder
     private func socketValueControl(_ socket: EquationSocket) -> some View {
