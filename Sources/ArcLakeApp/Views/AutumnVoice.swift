@@ -140,8 +140,15 @@ final class AutumnVoice: NSObject, ObservableObject, AVSpeechSynthesizerDelegate
         didFinish utterance: AVSpeechUtterance) {
         Task { @MainActor in
             self.isSpeaking = false
-            try? AVAudioSession.sharedInstance().setActive(
-                false, options: .notifyOthersOnDeactivation)
+            // Deliberately NOT deactivating the shared audio session here.
+            // This session is configured with .mixWithOthers, and it's the
+            // SAME shared session the music player uses — deactivating it
+            // just because one utterance finished pulls the session out
+            // from under any music that's actively playing at the same
+            // time, which is exactly what caused playback to get stuck and
+            // subsequent commands against the now-invalidated player to
+            // crash. Nothing needs explicit deactivation between
+            // individual utterances within the same mixed category.
         }
     }
 
