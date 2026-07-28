@@ -941,7 +941,13 @@ public final class ArcLabViewModel: ObservableObject {
         // was written once already but got lost in an earlier edit that
         // accidentally branched from the wrong intermediate file — fixed
         // directly on the actual current live version this time.
+        // Every attribute gets its OWN independent incoming AND outgoing
+        // socket — not just one direction — so a node can both receive a
+        // value from an upstream node and pass its own result downstream on
+        // the same attribute, matching the daisy-chain evaluation model.
+        node.incomingSockets.append(EquationSocket(kind: .bond, direction: .incoming))
         node.outgoingSockets.append(EquationSocket(kind: .bond, direction: .outgoing))
+        node.incomingSockets.append(EquationSocket(kind: .delta, direction: .incoming))
         node.outgoingSockets.append(EquationSocket(kind: .delta, direction: .outgoing))
 
         var shellIn = EquationSocket(kind: .orbitShell, direction: .incoming)
@@ -951,20 +957,62 @@ public final class ArcLabViewModel: ObservableObject {
         shellOut.localValue = "K"
         node.outgoingSockets.append(shellOut)
 
-        var attrSocket = EquationSocket(kind: .physicsAttribute, direction: .outgoing)
-        attrSocket.localValue = "mass"
-        node.outgoingSockets.append(attrSocket)
+        var attrIn = EquationSocket(kind: .physicsAttribute, direction: .incoming)
+        attrIn.localValue = "mass"
+        node.incomingSockets.append(attrIn)
+        var attrOut = EquationSocket(kind: .physicsAttribute, direction: .outgoing)
+        attrOut.localValue = "mass"
+        node.outgoingSockets.append(attrOut)
+
+        node.incomingSockets.append(EquationSocket(kind: .physicsValue, direction: .incoming))
         var valueSocket = EquationSocket(kind: .physicsValue, direction: .outgoing)
         valueSocket.doubleValue = 0
         node.outgoingSockets.append(valueSocket)
 
-        var opSocket = EquationSocket(kind: .mathOperator, direction: .outgoing)
-        opSocket.localValue = "N/A"
-        node.outgoingSockets.append(opSocket)
+        var opIn = EquationSocket(kind: .mathOperator, direction: .incoming)
+        opIn.localValue = "N/A"
+        node.incomingSockets.append(opIn)
+        var opOut = EquationSocket(kind: .mathOperator, direction: .outgoing)
+        opOut.localValue = "N/A"
+        node.outgoingSockets.append(opOut)
 
         equationNodes.append(node)
         log("Algebra: built equation node \"\(title)\"")
         return node
+    }
+
+    /// Evaluates a node's numeric result respecting order-of-operations:
+    /// unary operators (square, root) bind to THIS node's own value first;
+    /// a binary operator (+, -, x, /) then combines that with whatever
+    /// arrives on this node's incoming Physics Value connection (an
+    /// upstream node's own evaluated result), if one is wired — so square/
+    /// root always apply before combination with an incoming chain, and a
+    /// daisy-chain of connected nodes evaluates recursively the same way
+    /// nested parentheses would.
+    public func evaluateEquationNode(_ nodeId: UUID) -> Double {
+        guard let node = equationNodes.first(where: { $0.id == nodeId }) else { return 0 }
+        var value = node.outgoingSockets.first(where: { $0.kind == .physicsValue })?.doubleValue ?? 0
+
+        let op = node.outgoingSockets.first(where: { $0.kind == .mathOperator })?.localValue ?? "N/A"
+        switch op {
+        case "√":  value = value < 0 ? 0 : value.squareRoot()
+        case "x²": value = value * value
+        default: break
+        }
+
+        if let incomingValueSocket = node.incomingSockets.first(where: { $0.kind == .physicsValue }),
+           let conn = equationConnections.first(where: { $0.toSocketId == incomingValueSocket.id }),
+           let upstreamNode = equationNodes.first(where: { $0.id == conn.fromNodeId }) {
+            let upstream = evaluateEquationNode(upstreamNode.id)
+            switch op {
+            case "+": value = upstream + value
+            case "-": value = upstream - value
+            case "×": value = upstream * value
+            case "÷": value = value != 0 ? upstream / value : upstream
+            default: break   // N/A or a unary op already applied — no combination
+            }
+        }
+        return value
     }
 
     public func removeEquationNode(_ id: UUID) {

@@ -231,6 +231,7 @@ private struct EquationNodeCard: View {
             }
 
             physicsSection
+            resultSection
             groupSection
 
             socketRow("Incoming", liveNode.incomingSockets, direction: .incoming)
@@ -269,6 +270,20 @@ private struct EquationNodeCard: View {
     // inside any existing .group-role node for a shared visual boundary and
     // label in the Node Editor. Non-group nodes only; kept to one level.
     @ViewBuilder
+    // Live computed result — unary square/root applied first, then
+    // combined with whatever's wired in from an upstream node, respecting
+    // order of operations. Updates automatically as sockets/connections
+    // change, since it just re-evaluates the current graph state.
+    private var resultSection: some View {
+        HStack(spacing: 6) {
+            Text("RESULT").font(.system(size: 7, weight: .bold, design: .monospaced)).foregroundColor(.white.opacity(0.35))
+            Text(String(format: "%.4g", labVM.evaluateEquationNode(node.id)))
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .foregroundColor(themeVM.accent)
+        }
+        .padding(.vertical, 1)
+    }
+
     private var groupSection: some View {
         let availableGroups = labVM.equationNodes.filter { $0.role == .group && $0.id != node.id }
         if liveNode.role != .group, !availableGroups.isEmpty {
@@ -328,9 +343,10 @@ private struct EquationNodeCard: View {
     // shell-name convention used by the Delta-connection sheet elsewhere.
     private static let shellNames = ["K","L","M","N","O","P","Q"]
     // N/A — for a terminal node in a daisy chain that doesn't need an
-    // operator (the last link doesn't propagate anywhere further). x² and √
-    // added alongside the basic four for squaring/root operations.
-    private static let mathOperators = ["+", "-", "×", "÷", "x²", "√", "N/A"]
+    // operator (the last link doesn't propagate anywhere further). √ and x²
+    // are unary — they apply to this node's own value before any binary
+    // combination with an incoming chained value (see evaluateEquationNode).
+    private static let mathOperators = ["+", "-", "×", "÷", "√", "x²", "N/A"]
 
     @ViewBuilder
     private func socketValueControl(_ socket: EquationSocket) -> some View {
