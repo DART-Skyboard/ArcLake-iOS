@@ -934,11 +934,33 @@ public final class ArcLabViewModel: ObservableObject {
             node.incomingSockets.append(s)
         }
 
-        // Bond + Delta are always present on a new node (outgoing) — these
-        // are the attributes that connect to the Molecule Canvas, and
-        // shouldn't require remembering to manually "+" them in every time.
+        // Full guided socket sequence, created automatically on Build so
+        // the whole ordered structure (Element -> Bond/Delta -> Orbit Shell
+        // -> Physics Attribute+Value -> Math Operator) exists immediately
+        // rather than needing each one added manually one at a time. This
+        // was written once already but got lost in an earlier edit that
+        // accidentally branched from the wrong intermediate file — fixed
+        // directly on the actual current live version this time.
         node.outgoingSockets.append(EquationSocket(kind: .bond, direction: .outgoing))
         node.outgoingSockets.append(EquationSocket(kind: .delta, direction: .outgoing))
+
+        var shellIn = EquationSocket(kind: .orbitShell, direction: .incoming)
+        shellIn.localValue = "K"
+        node.incomingSockets.append(shellIn)
+        var shellOut = EquationSocket(kind: .orbitShell, direction: .outgoing)
+        shellOut.localValue = "K"
+        node.outgoingSockets.append(shellOut)
+
+        var attrSocket = EquationSocket(kind: .physicsAttribute, direction: .outgoing)
+        attrSocket.localValue = "mass"
+        node.outgoingSockets.append(attrSocket)
+        var valueSocket = EquationSocket(kind: .physicsValue, direction: .outgoing)
+        valueSocket.doubleValue = 0
+        node.outgoingSockets.append(valueSocket)
+
+        var opSocket = EquationSocket(kind: .mathOperator, direction: .outgoing)
+        opSocket.localValue = "N/A"
+        node.outgoingSockets.append(opSocket)
 
         equationNodes.append(node)
         log("Algebra: built equation node \"\(title)\"")
