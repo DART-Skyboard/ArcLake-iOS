@@ -537,7 +537,6 @@ struct NodeEditorView: View {
     }
 
     @ViewBuilder
-    @ViewBuilder
     private func eqSocketDot(_ socket: EquationSocket, node: EquationNode, isOutgoing: Bool) -> some View {
         // Hollow/empty when not connected to anything, filled with the
         // socket kind's color once a curve actually touches it — this is
