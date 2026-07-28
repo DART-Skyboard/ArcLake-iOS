@@ -35,19 +35,19 @@ struct NodeEditorView: View {
     // instantly. That's exactly "pinch a little, it jumps to a fixed
     // distance" — the fixed distance was the clamp boundary.
     @GestureState private var magnifyBy: CGFloat = 1.0
-    // Set while ANY equation-graph node is being dragged, so canvasArea's
-    // own pan gesture can ignore that touch. EquationGraphCanvas is a
-    // SIBLING of canvasArea in the outer ZStack, not a descendant of it —
-    // .highPriorityGesture() only establishes priority within a true
-    // ancestor-descendant chain, so it silently did nothing across this
-    // sibling boundary, which is why equation nodes kept shooting off even
-    // after the generic node system (whose nodes ARE true descendants of
-    // canvasArea) was fixed by the same approach.
-    @State private var isDraggingEquationNode = false
+    // Equation node state — these now render as TRUE CHILDREN inside
+    // canvasArea's own ZStack (same transform group, same gesture-priority
+    // chain as the generic nodes), not as a separate sibling view with its
+    // own coordination flags. That's what actually fixes the drag/zoom
+    // issues for good: there's no longer a sibling boundary for
+    // .highPriorityGesture() to silently fail across.
+    @State private var eqDragPositions: [UUID: CGPoint] = [:]
+    @State private var eqPendingSocket: (nodeId: UUID, socketId: UUID, isOutgoing: Bool)? = nil
+    private let eqNodeWidth: CGFloat = 150
+    private let eqRowHeight: CGFloat = 20
+    private let eqHeaderHeight: CGFloat = 28
     @State private var pendingFrom: UUID? = nil
 
-    // Equation Graph mode — separate, additive canvas (see EquationGraphCanvas)
-    // for labVM.equationNodes/equationConnections, built for the Algebra Menu.
     // Group drawer
     @State private var showGroupDrawer = false
     @State private var nodeGroups:  [NodeGroup]  = []
@@ -94,13 +94,7 @@ struct NodeEditorView: View {
             header
             groupDrawerBanner
             if showGroupDrawer { groupDrawerContent }
-            ZStack {
-                canvasArea
-                // Shares canvasArea's own pan/zoom (canvasOffset/canvasScale)
-                // via bindings so both layers move together as one space.
-                EquationGraphCanvas(canvasOffset: $canvasOffset, canvasScale: $canvasScale,
-                                    isDraggingNode: $isDraggingEquationNode)
-            }
+            canvasArea
             footer
         }
         .background(Color(red:0.03, green:0.06, blue:0.12))   // opaque — prevents see-through
@@ -401,19 +395,22 @@ struct NodeEditorView: View {
                         nodeView(node)
                             .zIndex(node.id == zTop ? 100 : 0)
                     }
+                    // Equation nodes — rendered as true children of THIS
+                    // SAME ZStack, sharing the identical transform and
+                    // gesture-priority chain as the generic nodes above,
+                    // instead of a separate sibling view.
+                    ForEach(eqGroupBoundaries, id: \.groupId) { g in eqGroupBoundaryView(g) }
+                    ForEach(labVM.equationConnections) { conn in eqConnectionPath(conn) }
+                    ForEach(labVM.equationNodes) { node in eqNodeCard(node) }
                 }
                 .offset(canvasOffset)
                 .scaleEffect(canvasScale * magnifyBy)
             }
             .clipped()
-            // Canvas pan — guarded so it doesn't also move while a node in
-            // the sibling EquationGraphCanvas is being dragged (see
-            // isDraggingEquationNode above for why highPriorityGesture
-            // couldn't fix this on its own).
+            // Canvas pan
             .gesture(
                 DragGesture(minimumDistance: 4)
                     .onChanged { val in
-                        guard !isDraggingEquationNode else { return }
                         // Use startLocation to compute delta from start each frame
                         // so cumulative drift doesn't accelerate movement
                         canvasOffset = CGSize(
@@ -421,7 +418,6 @@ struct NodeEditorView: View {
                             height: canvasPanBase.height + val.translation.height)
                     }
                     .onEnded { val in
-                        guard !isDraggingEquationNode else { return }
                         canvasPanBase = canvasOffset
                     }
             )
@@ -448,6 +444,162 @@ struct NodeEditorView: View {
             return false
         }
     }
+
+    // MARK: — Equation nodes (ported from the former standalone
+    // EquationGraphCanvas — now true children of canvasArea's own ZStack,
+    // sharing its exact transform and gesture-priority chain instead of a
+    // separate sibling view with coordination flags)
+
+    @ViewBuilder
+    private func eqNodeCard(_ node: EquationNode) -> some View {
+        let pos = eqDragPositions[node.id] ?? node.position
+        let height = eqHeaderHeight + CGFloat(max(node.incomingSockets.count, node.outgoingSockets.count)) * eqRowHeight + 8
+
+        VStack(spacing: 0) {
+            HStack {
+                Text(node.title)
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+                Spacer()
+                Button { labVM.duplicateEquationNode(node.id) } label: {
+                    Image(systemName: "doc.on.doc").font(.system(size: 8)).foregroundColor(themeVM.accent.opacity(0.7))
+                }
+                Text(node.role.rawValue.prefix(4))
+                    .font(.system(size: 7, design: .monospaced))
+                    .foregroundColor(themeVM.accent.opacity(0.6))
+            }
+            .padding(.horizontal, 8)
+            .frame(height: eqHeaderHeight)
+            .background(themeVM.accent.opacity(0.15))
+
+            HStack(alignment: .top, spacing: 0) {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(node.incomingSockets) { s in eqSocketRow(s, node: node, isOutgoing: false) }
+                }
+                Spacer(minLength: 4)
+                VStack(alignment: .trailing, spacing: 0) {
+                    ForEach(node.outgoingSockets) { s in eqSocketRow(s, node: node, isOutgoing: true) }
+                }
+            }
+            .padding(.vertical, 4)
+        }
+        .frame(width: eqNodeWidth, height: height)
+        .background(Color(red: 0.06, green: 0.09, blue: 0.14))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(themeVM.accent.opacity(0.3), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .position(pos)
+        // Same highPriorityGesture pattern already proven to work for the
+        // generic nodes above — these are now true descendants of the same
+        // ZStack, so priority over the canvas pan actually applies.
+        .highPriorityGesture(
+            DragGesture()
+                .onChanged { val in
+                    eqDragPositions[node.id] = CGPoint(
+                        x: pos.x + val.translation.width / canvasScale,
+                        y: pos.y + val.translation.height / canvasScale)
+                }
+                .onEnded { _ in
+                    if let final = eqDragPositions[node.id],
+                       let idx = labVM.equationNodes.firstIndex(where: { $0.id == node.id }) {
+                        labVM.equationNodes[idx].position = final
+                    }
+                    eqDragPositions[node.id] = nil
+                }
+        )
+    }
+
+    private func eqSocketRow(_ socket: EquationSocket, node: EquationNode, isOutgoing: Bool) -> some View {
+        HStack(spacing: 3) {
+            if !isOutgoing {
+                eqSocketDot(socket, node: node, isOutgoing: false)
+                Text(socket.label).font(.system(size: 7, design: .monospaced)).foregroundColor(.white.opacity(0.55)).lineLimit(1)
+            } else {
+                Text(socket.label).font(.system(size: 7, design: .monospaced)).foregroundColor(.white.opacity(0.55)).lineLimit(1)
+                eqSocketDot(socket, node: node, isOutgoing: true)
+            }
+        }
+        .frame(height: eqRowHeight)
+    }
+
+    private func eqSocketDot(_ socket: EquationSocket, node: EquationNode, isOutgoing: Bool) -> some View {
+        Circle()
+            .fill(Color(uiColor: socket.kind.color))
+            .frame(width: 8, height: 8)
+            .overlay(Circle().stroke(Color.white.opacity(0.4), lineWidth: 0.5))
+            .onTapGesture {
+                if let pending = eqPendingSocket {
+                    if pending.isOutgoing != isOutgoing {
+                        let from = pending.isOutgoing ? pending : (nodeId: node.id, socketId: socket.id, isOutgoing: true)
+                        let to   = pending.isOutgoing ? (nodeId: node.id, socketId: socket.id, isOutgoing: false) : pending
+                        labVM.connectEquationSockets(fromNode: from.nodeId, fromSocket: from.socketId,
+                                                      toNode: to.nodeId, toSocket: to.socketId,
+                                                      isDelta: socket.kind == .delta)
+                    }
+                    eqPendingSocket = nil
+                } else {
+                    eqPendingSocket = (node.id, socket.id, isOutgoing)
+                }
+            }
+    }
+
+    private struct EqGroupBoundary { let groupId: UUID; let title: String; let rect: CGRect }
+
+    private var eqGroupBoundaries: [EqGroupBoundary] {
+        labVM.equationNodes.filter { $0.role == .group }.compactMap { group -> EqGroupBoundary? in
+            let children = labVM.childNodes(ofGroup: group.id)
+            guard !children.isEmpty else { return nil }
+            let positions = children.map { eqDragPositions[$0.id] ?? $0.position }
+            let minX = (positions.map { $0.x }.min() ?? group.position.x) - eqNodeWidth/2 - 16
+            let maxX = (positions.map { $0.x }.max() ?? group.position.x) + eqNodeWidth/2 + 16
+            let minY = (positions.map { $0.y }.min() ?? group.position.y) - 30
+            let maxY = (positions.map { $0.y }.max() ?? group.position.y) + 60
+            return EqGroupBoundary(groupId: group.id, title: group.title,
+                                    rect: CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY))
+        }
+    }
+
+    private func eqGroupBoundaryView(_ g: EqGroupBoundary) -> some View {
+        ZStack(alignment: .topLeading) {
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.orange.opacity(0.5), style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
+                .background(RoundedRectangle(cornerRadius: 10).fill(Color.orange.opacity(0.04)))
+                .frame(width: g.rect.width, height: g.rect.height)
+            Text("( \(g.title) )")
+                .font(.system(size: 8, weight: .bold, design: .monospaced))
+                .foregroundColor(.orange.opacity(0.8))
+                .padding(.horizontal, 5).padding(.vertical, 2)
+                .background(Color.black.opacity(0.5))
+                .clipShape(Capsule())
+                .offset(x: 6, y: -8)
+        }
+        .position(x: g.rect.midX, y: g.rect.midY)
+    }
+
+    private func eqSocketWorldPoint(nodeId: UUID, socketId: UUID, isOutgoing: Bool) -> CGPoint? {
+        guard let node = labVM.equationNodes.first(where: { $0.id == nodeId }) else { return nil }
+        let list = isOutgoing ? node.outgoingSockets : node.incomingSockets
+        guard let idx = list.firstIndex(where: { $0.id == socketId }) else { return nil }
+        let livePos = eqDragPositions[nodeId] ?? node.position
+        let x = livePos.x + (isOutgoing ? eqNodeWidth/2 - 6 : -eqNodeWidth/2 + 6)
+        let y = livePos.y - (CGFloat(list.count) * eqRowHeight)/2 + eqHeaderHeight/2 + CGFloat(idx) * eqRowHeight + eqRowHeight/2
+        return CGPoint(x: x, y: y)
+    }
+
+    @ViewBuilder
+    private func eqConnectionPath(_ conn: EquationConnection) -> some View {
+        if let a = eqSocketWorldPoint(nodeId: conn.fromNodeId, socketId: conn.fromSocketId, isOutgoing: true),
+           let b = eqSocketWorldPoint(nodeId: conn.toNodeId, socketId: conn.toSocketId, isOutgoing: false) {
+            Path { p in
+                p.move(to: a)
+                let midX = (a.x + b.x) / 2
+                p.addCurve(to: b, control1: CGPoint(x: midX, y: a.y), control2: CGPoint(x: midX, y: b.y))
+            }
+            .stroke(conn.isDelta ? Color.pink.opacity(0.7) : themeVM.accent.opacity(0.6),
+                    style: StrokeStyle(lineWidth: 1.5, dash: conn.isDelta ? [4, 3] : []))
+        }
+    }
+
 
     // Extracted node builder to reduce type-checker burden
     @ViewBuilder
