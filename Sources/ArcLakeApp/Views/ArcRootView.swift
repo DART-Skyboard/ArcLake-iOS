@@ -872,17 +872,12 @@ struct ArcMusicControls: View {
     @EnvironmentObject var themeVM: ArcThemeViewModel
     @State private var showFilePicker = false
 
-    // The currently-playing track's own special color, if it has one,
-    // otherwise the app's normal theme accent — this is what makes a track
-    // like "Cutting the Rain" visually take over the player while it's on.
-    private var playerAccent: Color { audio.currentTrackAccent ?? playerAccent }
-
     var body: some View {
         VStack(spacing: 8) {
             // Track name
             Text(audio.currentTitle)
                 .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                .foregroundColor(playerAccent.opacity(0.8))
+                .foregroundColor(themeVM.accent.opacity(0.8))
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .center)
 
@@ -905,9 +900,9 @@ struct ArcMusicControls: View {
                 } label: {
                     Image(systemName: "shuffle")
                         .font(.system(size: 14))
-                        .foregroundColor(audio.isShuffled ? .black : playerAccent.opacity(0.7))
+                        .foregroundColor(audio.isShuffled ? .black : themeVM.accent.opacity(0.7))
                         .frame(width: 32, height: 32)
-                        .background(audio.isShuffled ? playerAccent : playerAccent.opacity(0.08))
+                        .background(audio.isShuffled ? themeVM.accent : themeVM.accent.opacity(0.08))
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                 }
                 // Load music library
@@ -916,9 +911,9 @@ struct ArcMusicControls: View {
                 } label: {
                     Image(systemName: "music.note.list")
                         .font(.system(size: 14))
-                        .foregroundColor(playerAccent.opacity(0.7))
+                        .foregroundColor(themeVM.accent.opacity(0.7))
                         .frame(width: 32, height: 32)
-                        .background(playerAccent.opacity(0.08))
+                        .background(themeVM.accent.opacity(0.08))
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                 }
             }
@@ -936,8 +931,8 @@ struct ArcMusicControls: View {
                                     .font(.system(size: 8, design: .monospaced))
                                     .lineLimit(1)
                                     .padding(.horizontal, 7).padding(.vertical, 3)
-                                    .foregroundColor(idx == audio.currentIndex ? .black : playerAccent.opacity(0.7))
-                                    .background(idx == audio.currentIndex ? playerAccent : playerAccent.opacity(0.1))
+                                    .foregroundColor(idx == audio.currentIndex ? .black : themeVM.accent.opacity(0.7))
+                                    .background(idx == audio.currentIndex ? themeVM.accent : themeVM.accent.opacity(0.1))
                                     .clipShape(Capsule())
                             }
                         }
@@ -950,7 +945,7 @@ struct ArcMusicControls: View {
         .background(Color.white.opacity(0.04))
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10)
-            .stroke(playerAccent.opacity(0.12), lineWidth: 0.7))
+            .stroke(themeVM.accent.opacity(0.12), lineWidth: 0.7))
         .fileImporter(
             isPresented: $showFilePicker,
             allowedContentTypes: [
@@ -976,9 +971,9 @@ struct ArcMusicControls: View {
         Button(action: action) {
             Image(systemName: icon)
                 .font(.system(size: accent ? 16 : 13))
-                .foregroundColor(accent ? .black : playerAccent.opacity(0.75))
+                .foregroundColor(accent ? .black : themeVM.accent.opacity(0.75))
                 .frame(width: 32, height: 32)
-                .background(accent ? playerAccent : playerAccent.opacity(0.08))
+                .background(accent ? themeVM.accent : themeVM.accent.opacity(0.08))
                 .clipShape(RoundedRectangle(cornerRadius: 6))
         }
     }

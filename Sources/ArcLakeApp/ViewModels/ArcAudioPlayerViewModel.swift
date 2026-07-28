@@ -15,12 +15,6 @@ final class ArcAudioPlayerViewModel: NSObject, ObservableObject {
     @Published var currentIndex  = 0
     @Published var library: [ArcTrack] = []
 
-    /// The active track's special-edition accent, if it has one — nil means
-    /// the player should just use the app's normal theme color.
-    var currentTrackAccent: Color? {
-        library.indices.contains(currentIndex) ? library[currentIndex].specialAccent : nil
-    }
-
     /// Shuffle is the default playback mode.
     @Published var isShuffled = true {
         didSet { rebuildShuffleOrder(keeping: currentIndex) }
@@ -40,25 +34,18 @@ final class ArcAudioPlayerViewModel: NSObject, ObservableObject {
         let title: String
         let url: URL
         var isEmbedded: Bool = false
-        // A track can carry its own "special edition" player color scheme —
-        // when it's the active track, the player UI switches to this accent
-        // instead of the app's normal theme color; nil means "use the
-        // normal theme" (every track except specially-styled ones).
-        var specialAccent: Color? = nil
     }
 
     private override init() {
         super.init()
-        // Embedded tracks, in bundle order. "Cutting the Rain" gets its own
-        // special-edition player color — a muted storm-blue, rather than
-        // sharing whatever the app's current theme accent happens to be.
-        let embedded: [(file: String, title: String, accent: Color?)] = [
-            ("arc_lake",         "Arc Lake",         nil),
-            ("cutting_the_rain", "Cutting the Rain", Color(red: 0.42, green: 0.55, blue: 0.68)),
+        // Embedded tracks, in bundle order
+        let embedded: [(file: String, title: String)] = [
+            ("arc_lake",         "Arc Lake"),
+            ("cutting_the_rain", "Cutting the Rain"),
         ]
         for t in embedded {
             if let url = Bundle.main.url(forResource: t.file, withExtension: "mp3") {
-                library.append(ArcTrack(title: t.title, url: url, isEmbedded: true, specialAccent: t.accent))
+                library.append(ArcTrack(title: t.title, url: url, isEmbedded: true))
             }
         }
         rebuildShuffleOrder(keeping: nil)
