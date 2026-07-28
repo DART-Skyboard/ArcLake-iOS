@@ -537,30 +537,45 @@ struct NodeEditorView: View {
     }
 
     @ViewBuilder
+    @ViewBuilder
     private func eqSocketDot(_ socket: EquationSocket, node: EquationNode, isOutgoing: Bool) -> some View {
         // Hollow/empty when not connected to anything, filled with the
         // socket kind's color once a curve actually touches it — this is
         // how a person tells connected from unconnected at a glance,
         // matching the same convention across every node type.
         let connected = labVM.isEquationSocketConnected(socket.id)
-        Circle()
-            .fill(connected ? Color(uiColor: socket.kind.color) : Color.clear)
-            .frame(width: 8, height: 8)
-            .overlay(Circle().stroke(connected ? Color.white.opacity(0.4) : Color(uiColor: socket.kind.color), lineWidth: connected ? 0.5 : 1.5))
-            .onTapGesture {
-                if let pending = eqPendingSocket {
-                    if pending.isOutgoing != isOutgoing {
-                        let from = pending.isOutgoing ? pending : (nodeId: node.id, socketId: socket.id, isOutgoing: true)
-                        let to   = pending.isOutgoing ? (nodeId: node.id, socketId: socket.id, isOutgoing: false) : pending
-                        labVM.connectEquationSockets(fromNode: from.nodeId, fromSocket: from.socketId,
-                                                      toNode: to.nodeId, toSocket: to.socketId,
-                                                      isDelta: socket.kind == .delta)
-                    }
-                    eqPendingSocket = nil
-                } else {
-                    eqPendingSocket = (node.id, socket.id, isOutgoing)
+        // A real Button, not a bare .onTapGesture on the Circle — this is
+        // the actual difference from the generic node system (whose ports
+        // ARE real Buttons and connect correctly). The node card carries
+        // its own .highPriorityGesture() for dragging; a raw .onTapGesture
+        // on a tiny 8pt child shape loses that priority battle far more
+        // easily than a proper Button does, which is very likely why
+        // equation-node connections weren't registering while the generic
+        // system's (Button-based) ports worked fine.
+        Button {
+            if let pending = eqPendingSocket {
+                if pending.isOutgoing != isOutgoing {
+                    let from = pending.isOutgoing ? pending : (nodeId: node.id, socketId: socket.id, isOutgoing: true)
+                    let to   = pending.isOutgoing ? (nodeId: node.id, socketId: socket.id, isOutgoing: false) : pending
+                    labVM.connectEquationSockets(fromNode: from.nodeId, fromSocket: from.socketId,
+                                                  toNode: to.nodeId, toSocket: to.socketId,
+                                                  isDelta: socket.kind == .delta)
                 }
+                eqPendingSocket = nil
+            } else {
+                eqPendingSocket = (node.id, socket.id, isOutgoing)
             }
+        } label: {
+            Circle()
+                .fill(connected ? Color(uiColor: socket.kind.color) : Color.clear)
+                .frame(width: 8, height: 8)
+                .overlay(Circle().stroke(connected ? Color.white.opacity(0.4) : Color(uiColor: socket.kind.color), lineWidth: connected ? 0.5 : 1.5))
+                // Real tap target bigger than the 8pt visual dot — matches
+                // how much more forgiving the generic system's Button-based
+                // ports are to actually hit with a finger.
+                .contentShape(Circle().inset(by: -8))
+        }
+        .buttonStyle(.plain)
     }
 
     private struct EqGroupBoundary { let groupId: UUID; let title: String; let rect: CGRect }
