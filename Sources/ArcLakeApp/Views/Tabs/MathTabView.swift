@@ -328,8 +328,9 @@ private struct EquationNodeCard: View {
     // shell-name convention used by the Delta-connection sheet elsewhere.
     private static let shellNames = ["K","L","M","N","O","P","Q"]
     // N/A — for a terminal node in a daisy chain that doesn't need an
-    // operator (the last link doesn't propagate anywhere further).
-    private static let mathOperators = ["+", "-", "×", "÷", "N/A"]
+    // operator (the last link doesn't propagate anywhere further). x² and √
+    // added alongside the basic four for squaring/root operations.
+    private static let mathOperators = ["+", "-", "×", "÷", "x²", "√", "N/A"]
 
     @ViewBuilder
     private func socketValueControl(_ socket: EquationSocket) -> some View {
