@@ -495,13 +495,27 @@ struct NodeEditorView: View {
         .highPriorityGesture(
             DragGesture()
                 .onChanged { val in
+                    // MUST use node.position (the stable, only-changes-on-
+                    // commit value from the data model) as the base, NOT
+                    // `pos`/eqDragPositions[node.id] — that dictionary
+                    // mutates on every single onChanged call, which
+                    // re-evaluates this view and recomputes `pos` to
+                    // already include the previous frame's movement.
+                    // val.translation is ALWAYS cumulative since the drag
+                    // started, never a per-frame delta, so adding it to an
+                    // already-shifted base compounds every frame — the
+                    // exact same runaway mechanism as the MagnificationGesture
+                    // bug fixed earlier, just in a different spot. This was
+                    // the actual, final cause of "shooting off fast."
                     eqDragPositions[node.id] = CGPoint(
-                        x: pos.x + val.translation.width / canvasScale,
-                        y: pos.y + val.translation.height / canvasScale)
+                        x: node.position.x + val.translation.width  / canvasScale,
+                        y: node.position.y + val.translation.height / canvasScale)
                 }
-                .onEnded { _ in
-                    if let final = eqDragPositions[node.id],
-                       let idx = labVM.equationNodes.firstIndex(where: { $0.id == node.id }) {
+                .onEnded { val in
+                    let final = CGPoint(
+                        x: node.position.x + val.translation.width  / canvasScale,
+                        y: node.position.y + val.translation.height / canvasScale)
+                    if let idx = labVM.equationNodes.firstIndex(where: { $0.id == node.id }) {
                         labVM.equationNodes[idx].position = final
                     }
                     eqDragPositions[node.id] = nil
