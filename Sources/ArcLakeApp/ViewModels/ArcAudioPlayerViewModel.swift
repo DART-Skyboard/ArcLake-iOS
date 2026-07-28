@@ -40,8 +40,7 @@ final class ArcAudioPlayerViewModel: NSObject, ObservableObject {
         super.init()
         // Embedded tracks, in bundle order
         let embedded: [(file: String, title: String)] = [
-            ("arc_lake",         "Arc Lake"),
-            ("cutting_the_rain", "Cutting the Rain"),
+            ("arc_lake", "Arc Lake"),
         ]
         for t in embedded {
             if let url = Bundle.main.url(forResource: t.file, withExtension: "mp3") {
