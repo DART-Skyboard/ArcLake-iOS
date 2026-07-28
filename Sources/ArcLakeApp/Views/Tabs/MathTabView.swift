@@ -269,7 +269,6 @@ private struct EquationNodeCard: View {
     // "Most Outer Parentheses Math Operator Group Nest" — nest this node
     // inside any existing .group-role node for a shared visual boundary and
     // label in the Node Editor. Non-group nodes only; kept to one level.
-    @ViewBuilder
     // Live computed result — unary square/root applied first, then
     // combined with whatever's wired in from an upstream node, respecting
     // order of operations. Updates automatically as sockets/connections
@@ -284,6 +283,7 @@ private struct EquationNodeCard: View {
         .padding(.vertical, 1)
     }
 
+    @ViewBuilder
     private var groupSection: some View {
         let availableGroups = labVM.equationNodes.filter { $0.role == .group && $0.id != node.id }
         if liveNode.role != .group, !availableGroups.isEmpty {
