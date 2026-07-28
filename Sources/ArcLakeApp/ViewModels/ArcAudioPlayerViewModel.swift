@@ -164,6 +164,18 @@ final class ArcAudioPlayerViewModel: NSObject, ObservableObject {
 
     private func loadTrack(at index: Int) {
         guard library.indices.contains(index) else { return }
+        // Explicitly stop and detach the OLD player's delegate before
+        // replacing it. Simply overwriting `player` while the old instance
+        // is still actively playing leaves it as a "zombie" — AVFoundation
+        // can keep it alive and rendering in the background, and its
+        // delegate can still fire "did finish" later, racing with (and
+        // corrupting) the new track's state. That's very likely why
+        // switching tracks got stuck on the old selection and eventually
+        // froze/crashed: the old player's auto-advance callback firing
+        // unexpectedly after a new track had already started loading.
+        player?.delegate = nil
+        player?.stop()
+
         let track = library[index]
         currentTitle = track.title
         do {

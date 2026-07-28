@@ -237,20 +237,27 @@ private struct EquationNodeCard: View {
             socketRow("Incoming", liveNode.incomingSockets, direction: .incoming)
             socketRow("Outgoing", liveNode.outgoingSockets, direction: .outgoing)
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 5) {
-                    ForEach(EquationSocketKind.allCases, id: \.self) { kind in
-                        Menu {
-                            Button("+ Incoming") { labVM.addEquationSocket(to: node.id, kind: kind, direction: .incoming) }
-                            Button("+ Outgoing") { labVM.addEquationSocket(to: node.id, kind: kind, direction: .outgoing) }
-                        } label: {
-                            Text("+ " + kind.displayName)
-                                .font(.system(size: 8, weight: .semibold, design: .monospaced))
-                                .foregroundColor(Color(uiColor: kind.color))
-                                .padding(.horizontal, 7).padding(.vertical, 4)
-                                .background(Color(uiColor: kind.color).opacity(0.1))
-                                .clipShape(Capsule())
-                        }
+            // A wrapping grid, not a horizontal scroller — every attribute
+            // type is visible and tappable at once, with nothing hidden off
+            // to the side undiscovered. This is specifically what makes
+            // re-adding a removed attribute (Orbit Shell, Physics Attribute,
+            // Physics Value, Math Operator, etc.) actually findable, since
+            // the previous single-row scroller only ever showed the first
+            // one or two before running off the edge of the screen.
+            Text("ADD ATTRIBUTE").font(.system(size: 7, weight: .bold, design: .monospaced)).foregroundColor(.white.opacity(0.3))
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 78), spacing: 5)], spacing: 5) {
+                ForEach(EquationSocketKind.allCases, id: \.self) { kind in
+                    Menu {
+                        Button("+ Incoming") { labVM.addEquationSocket(to: node.id, kind: kind, direction: .incoming) }
+                        Button("+ Outgoing") { labVM.addEquationSocket(to: node.id, kind: kind, direction: .outgoing) }
+                    } label: {
+                        Text("+ " + kind.displayName)
+                            .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                            .foregroundColor(Color(uiColor: kind.color))
+                            .frame(maxWidth: .infinity)
+                            .padding(.horizontal, 7).padding(.vertical, 5)
+                            .background(Color(uiColor: kind.color).opacity(0.1))
+                            .clipShape(Capsule())
                     }
                 }
             }
