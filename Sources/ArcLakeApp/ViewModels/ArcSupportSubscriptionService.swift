@@ -274,7 +274,7 @@ public struct ArcSupportSheet: View {
                             .multilineTextAlignment(.center)
                         HStack(spacing:16) {
                             Link("Privacy Policy",
-                                 destination: URL(string:"https://dartmeadow.com/privacy")!)
+                                 destination: URL(string:"https://radicaldeepscale.com/privacy")!)
                             Link("Terms of Use",
                                  destination: URL(string:"https://www.apple.com/legal/internet-services/itunes/dev/stdeula/")!)
                         }
