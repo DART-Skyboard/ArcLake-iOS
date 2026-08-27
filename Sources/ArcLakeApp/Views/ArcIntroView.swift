@@ -24,17 +24,21 @@ struct ArcIntroView: View {
                 .opacity(stage >= 6 ? 1 : 0)
                 .animation(.easeOut(duration: 2), value: stage)
 
+            // Stays visible the whole way through — dims to an ambient
+            // background level once the wordmark settles in, rather than
+            // vanishing outright. The atom is the point of the app; it
+            // shouldn't disappear the moment the logo/wordmark show up.
             OrbitalSystemView(stage: stage)
-                .opacity(stage >= 7 ? 0 : 1)
-                .animation(.easeIn(duration: 1.4), value: stage)
+                .opacity(stage >= 7 ? 0.32 : 1)
+                .animation(.easeOut(duration: 1.6), value: stage)
 
-            Image("ArcLakeLogo")
-                .resizable().scaledToFit()
-                .frame(width: 128, height: 128)
-                .shadow(color: .cyan.opacity(0.55), radius: 20)
+            ArcLakeLogoImage()
+                .frame(width: 210, height: 210)
+                .shadow(color: .cyan.opacity(0.55), radius: 26)
                 .scaleEffect(stage >= 5 ? 1 : 0.7)
                 .rotationEffect(.degrees(stage >= 5 ? 0 : -6))
                 .opacity(stage >= 5 ? 1 : 0)
+                .offset(y: -46)
                 .animation(.spring(response: 0.9, dampingFraction: 0.75), value: stage)
 
             VStack(spacing: 0) {
@@ -95,6 +99,29 @@ struct ArcIntroView: View {
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 8.6) {
             withAnimation(.easeOut(duration: 0.5)) { showNext = true }
+        }
+    }
+}
+
+// MARK: — Real logo asset loader
+// ArcLakeLogo.png lives as a loose file under Resources/, not inside
+// Assets.xcassets — Image("ArcLakeLogo") only searches the asset catalog by
+// name and silently renders nothing for a loose file, which is why the
+// hummingbird mark never actually appeared. Loading it explicitly by path
+// is what actually works for a bundled-but-uncatalogued resource.
+private struct ArcLakeLogoImage: View {
+    private static let cached: UIImage? = {
+        guard let path = Bundle.main.path(forResource: "ArcLakeLogo", ofType: "png"),
+              let image = UIImage(contentsOfFile: path) else { return nil }
+        return image
+    }()
+
+    var body: some View {
+        if let ui = Self.cached {
+            Image(uiImage: ui).resizable().scaledToFit()
+        } else {
+            // Should never hit in practice, but never render a blank gap
+            Image(systemName: "atom").resizable().scaledToFit().foregroundColor(.cyan)
         }
     }
 }
