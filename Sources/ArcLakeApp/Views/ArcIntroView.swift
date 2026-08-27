@@ -137,17 +137,22 @@ private struct OrbitalSystemView: View {
             if active {
                 TimelineView(.animation) { context in
                     let t = context.date.timeIntervalSinceReferenceDate
-                    let angle = (t.truncatingRemainder(dividingBy: period)) / period * 2 * .pi
-                    let rad = tilt * .pi / 180
-                    let ex = cos(angle) * radiusX
-                    let ey = sin(angle) * radiusY
-                    let rx = ex * cos(rad) - ey * sin(rad)
-                    let ry = ex * sin(rad) + ey * cos(rad)
+                    // Keep every term as plain Double through the whole
+                    // calculation — mixing Double and CGFloat operands in
+                    // the same expression is what made cos()/sin() an
+                    // "ambiguous use" for the compiler; only convert to
+                    // CGFloat once, at the very end.
+                    let angle: Double = (t.truncatingRemainder(dividingBy: period)) / period * 2 * .pi
+                    let rad: Double = tilt * .pi / 180
+                    let ex: Double = cos(angle) * Double(radiusX)
+                    let ey: Double = sin(angle) * Double(radiusY)
+                    let rx: Double = ex * cos(rad) - ey * sin(rad)
+                    let ry: Double = ex * sin(rad) + ey * cos(rad)
                     Circle()
                         .fill(color)
                         .frame(width: 7, height: 7)
                         .shadow(color: color.opacity(0.85), radius: 6)
-                        .offset(x: rx, y: ry)
+                        .offset(x: CGFloat(rx), y: CGFloat(ry))
                 }
             }
         }
