@@ -590,19 +590,36 @@ public final class ArcQuantumPhysics {
         if atoms.count > 1 {
             // Genuine attractive+repulsive coupling, crossing over at each
             // pair's own size-scaled equilibrium separation. Confirmed via
-            // screen recording this STILL collapsed everything to one spot
-            // with 13 atoms in the scene — the real cause is a classic
-            // N-body issue this didn't originally account for: with N atoms,
-            // EVERY atom sums a separate attractive contribution from ALL
-            // (N-1) others simultaneously, so the group-wide pull toward
-            // the overall centroid scales up with atom count and easily
-            // overwhelms a force that was only ever tuned by eye for a
-            // single pair. A hard cutoff — atoms farther apart than a few
-            // times their combined size simply don't interact at all —
-            // bounds how many neighbors can meaningfully pull on any one
-            // atom at once, which is also the standard, physically-motivated
-            // way real particle simulations avoid exactly this pileup.
-            let couplingStrength: Float = 0.00035
+            // TWO separate screen recordings this still collapsed everything
+            // toward one spot even after adding a hard cutoff distance —
+            // with enough atoms spread across a modest scene, most pairs
+            // can still fall within any fixed cutoff simultaneously, so the
+            // N-body pileup this is meant to solve wasn't actually fixed,
+            // just needed more atoms to reappear. The robust fix normalizes
+            // by how many neighbors are ACTUALLY in range for each atom —
+            // first pass counts real neighbors per atom, second pass
+            // divides each contribution by that count — so the TOTAL pull
+            // any one atom feels is bounded to roughly one neighbor's worth
+            // of force no matter how many others happen to be nearby,
+            // instead of scaling up with however many atoms are in the
+            // scene.
+            let couplingStrength: Float = 0.00012  // reduced further as a safety
+            // margin — even fully normalized per-neighbor, an instant (near
+            // 1-second) collapse was reported, suggesting the base per-pair
+            // magnitude itself needed to come down too, not just the pileup.
+            let cutoffMultiplier: Float = 3.5
+
+            var neighborCount = [Int: Int](); neighborCount.reserveCapacity(atoms.count)
+            for i in atoms.indices {
+                for j in (i+1)..<atoms.count {
+                    let dist = max(0.3, simd_length(atoms[i].root.simdPosition - atoms[j].root.simdPosition))
+                    let equilibrium = max(1.2, (atoms[i].maxShellR + atoms[j].maxShellR) * 0.9)
+                    guard dist < equilibrium * cutoffMultiplier else { continue }
+                    neighborCount[i, default: 0] += 1
+                    neighborCount[j, default: 0] += 1
+                }
+            }
+
             for i in atoms.indices {
                 for j in (i+1)..<atoms.count {
                     let posI = atoms[i].root.simdPosition
@@ -611,7 +628,7 @@ public final class ArcQuantumPhysics {
                     let dist = max(0.3, simd_length(diff))
 
                     let equilibrium = max(1.2, (atoms[i].maxShellR + atoms[j].maxShellR) * 0.9)
-                    guard dist < equilibrium * 3.5 else { continue }   // outside interaction range — no force at all
+                    guard dist < equilibrium * cutoffMultiplier else { continue }
 
                     let dir  = diff / dist
                     let ratio = equilibrium / dist
@@ -620,7 +637,13 @@ public final class ArcQuantumPhysics {
 
                     let massI = atoms[i].mass; let massJ = atoms[j].mass
                     let reducedMass = (massI * massJ) / max(0.001, massI + massJ)
-                    let netForce = (attractive - repulsive) * reducedMass * couplingStrength
+                    var netForce = (attractive - repulsive) * reducedMass * couplingStrength
+
+                    // Bound the total pull each atom feels to roughly one
+                    // neighbor's worth, regardless of how many are in range.
+                    let nI = max(1, neighborCount[i] ?? 1)
+                    let nJ = max(1, neighborCount[j] ?? 1)
+                    netForce /= Float(max(nI, nJ))
 
                     atoms[i].velocity -= dir * netForce
                     atoms[j].velocity += dir * netForce
