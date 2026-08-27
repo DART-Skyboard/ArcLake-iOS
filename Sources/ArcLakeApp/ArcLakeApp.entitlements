@@ -18,6 +18,14 @@
         <string>appclips:radicaldeepscale.com</string>
     </array>
 
+    <!-- Normally auto-added by Xcode when creating an App Clip target
+         through its own UI, which this project doesn't use — added
+         manually. Declares which App Clip this app is associated with. -->
+    <key>com.apple.developer.associated-appclip-app-identifiers</key>
+    <array>
+        <string>$(AppIdentifierPrefix)DART-Meadow-LLC.Cotharticren.Clip</string>
+    </array>
+
     <!-- iCloud Drive document storage. These were MISSING entirely, which is
          why FileManager.url(forUbiquityContainerIdentifier:) returned nil and
          the vault silently fell back to local-only storage despite the UI
