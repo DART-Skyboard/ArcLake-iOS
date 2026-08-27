@@ -9,6 +9,15 @@
     <key>aps-environment</key>
     <string>production</string>
 
+    <!-- Required on the FULL app too, not just the clip target — Apple
+         verifies both declare the same associated domain to establish the
+         "this App Clip belongs to this app" relationship. appclips: is a
+         distinct service type from applinks: (Universal Links). -->
+    <key>com.apple.developer.associated-domains</key>
+    <array>
+        <string>appclips:radicaldeepscale.com</string>
+    </array>
+
     <!-- iCloud Drive document storage. These were MISSING entirely, which is
          why FileManager.url(forUbiquityContainerIdentifier:) returned nil and
          the vault silently fell back to local-only storage despite the UI

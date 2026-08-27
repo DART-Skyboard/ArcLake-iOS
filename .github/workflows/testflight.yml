@@ -79,6 +79,34 @@ jobs:
           echo "PROFILE_UUID=$PP_UUID" >> $GITHUB_ENV
           echo "Profile UUID: $PP_UUID"
 
+          # Same pattern, second profile — the App Clip target signs with
+          # its own bundle ID and needs its own profile installed alongside
+          # the main app's. xcodebuild picks the right one per target based
+          # on each target's own PROVISIONING_PROFILE_SPECIFIER in project.yml.
+          CLIP_PP_PATH="$RUNNER_TEMP/arclakeclip.mobileprovision"
+          python3 - "$CLIP_PP_PATH" << 'PYEOF'
+          import jwt, time, json, urllib.request, base64, sys
+          key = open(f"{__import__('os').path.expanduser('~')}/.appstoreconnect/private_keys/AuthKey_NQXQ595W59.p8").read()
+          token = jwt.encode({"iss":"90056871-d791-45f6-a770-21399c45e491","iat":int(time.time()),
+              "exp":int(time.time())+1200,"aud":"appstoreconnect-v1"}, key,
+              algorithm="ES256", headers={"kid":"NQXQ595W59"})
+          req = urllib.request.Request(
+              "https://api.appstoreconnect.apple.com/v1/profiles?filter[name]=ArcLakeClipGitHubFlow",
+              headers={"Authorization": f"Bearer {token}"})
+          d = json.loads(urllib.request.urlopen(req).read())
+          prof = d["data"][0]["attributes"]
+          open(sys.argv[1], "wb").write(base64.b64decode(prof["profileContent"]))
+          print(f"Fetched clip profile UUID: {prof['uuid']}")
+          PYEOF
+          CLIP_PP_UUID=$(security cms -D -i "$CLIP_PP_PATH" 2>/dev/null | \
+            plutil -extract UUID raw - 2>/dev/null)
+          if [ -n "$CLIP_PP_UUID" ]; then
+            cp "$CLIP_PP_PATH" ~/Library/MobileDevice/Provisioning\ Profiles/"$CLIP_PP_UUID.mobileprovision"
+            echo "Clip profile UUID: $CLIP_PP_UUID"
+          else
+            echo "Clip profile fetch failed — App Clip target will fail to sign"
+          fi
+
       - name: Install xcodegen 2.42.0
         run: |
           brew install xcodegen 2>/dev/null || brew upgrade xcodegen 2>/dev/null || true
