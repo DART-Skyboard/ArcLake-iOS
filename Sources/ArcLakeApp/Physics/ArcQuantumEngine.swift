@@ -588,25 +588,32 @@ public final class ArcQuantumPhysics {
         // Sigma impulse between neighboring atoms (pairwise, Phi field)
         // Only when multiple atoms in scene
         if atoms.count > 1 {
-            // Genuine attractive+repulsive coupling — the previous formula
-            // was purely attractive at every distance (no repulsive term
-            // despite the comment describing one) and its magnitude was
-            // roughly two orders of magnitude too small to ever be visible
-            // once friction was applied every frame. This crosses over
-            // naturally at each pair's own equilibrium separation (scaled
-            // to their actual sizes), so same-type atoms settle near each
-            // other instead of overlapping OR just silently drifting
-            // nowhere.
-            let couplingStrength: Float = 0.0009
+            // Genuine attractive+repulsive coupling, crossing over at each
+            // pair's own size-scaled equilibrium separation. Confirmed via
+            // screen recording this STILL collapsed everything to one spot
+            // with 13 atoms in the scene — the real cause is a classic
+            // N-body issue this didn't originally account for: with N atoms,
+            // EVERY atom sums a separate attractive contribution from ALL
+            // (N-1) others simultaneously, so the group-wide pull toward
+            // the overall centroid scales up with atom count and easily
+            // overwhelms a force that was only ever tuned by eye for a
+            // single pair. A hard cutoff — atoms farther apart than a few
+            // times their combined size simply don't interact at all —
+            // bounds how many neighbors can meaningfully pull on any one
+            // atom at once, which is also the standard, physically-motivated
+            // way real particle simulations avoid exactly this pileup.
+            let couplingStrength: Float = 0.00035
             for i in atoms.indices {
                 for j in (i+1)..<atoms.count {
                     let posI = atoms[i].root.simdPosition
                     let posJ = atoms[j].root.simdPosition
                     let diff = posI - posJ
                     let dist = max(0.3, simd_length(diff))
-                    let dir  = diff / dist
 
                     let equilibrium = max(1.2, (atoms[i].maxShellR + atoms[j].maxShellR) * 0.9)
+                    guard dist < equilibrium * 3.5 else { continue }   // outside interaction range — no force at all
+
+                    let dir  = diff / dist
                     let ratio = equilibrium / dist
                     let attractive = ratio * ratio                                   // ~1/dist^2 at long range
                     let repulsive  = ratio * ratio * ratio * ratio * ratio * ratio    // ~1/dist^6, dominates once too close
