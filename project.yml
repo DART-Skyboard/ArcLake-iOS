@@ -44,7 +44,7 @@ targets:
       path: Sources/ArcLakeClip/ArcLakeClip.entitlements
     settings:
       base:
-        PRODUCT_NAME: "Arc Lake"
+        PRODUCT_NAME: "ArcLakeClip"
         PRODUCT_BUNDLE_IDENTIFIER: DART-Meadow-LLC.Cotharticren.Clip
         DEVELOPMENT_TEAM: L7AHWS9Q6V
         CODE_SIGN_STYLE: Manual
