@@ -6,6 +6,11 @@ options:
   generateEmptyDirectories: true
   xcodeVersion: "15.4"
   xcodeCompatibilityVersion: "Xcode 14.0"
+  # XcodeGen embeds an on-demand-install-capable dependency like a generic
+  # app extension (PlugIns/) instead of the App-Clip-specific destination
+  # Apple requires (AppClips/) — this patches the generated pbxproj to fix
+  # that specific copy-files phase right after generation.
+  postGenCommand: python3 scripts/fix_appclip_embed.py
 packages:
   swift-markdown-ui:
     url: https://github.com/gonzalezreal/swift-markdown-ui
