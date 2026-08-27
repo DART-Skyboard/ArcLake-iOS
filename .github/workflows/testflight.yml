@@ -150,9 +150,16 @@ jobs:
 
       - name: Upload to TestFlight
         run: |
+          # --apple-id tells altool which app record this whole package
+          # (main app + embedded App Clip) belongs to. Without it, altool
+          # tries to auto-resolve EVERY bundle ID found in the IPA
+          # independently — which fails for the Clip specifically, since an
+          # App Clip is not (and should not be) a standalone "App" record in
+          # App Store Connect; it only exists as part of the parent app.
           RESULT=$(xcrun altool --upload-app \
             --type ios \
             --file "$RUNNER_TEMP/ArcLake.ipa" \
+            --apple-id "1588935826" \
             --apiKey "NQXQ595W59" \
             --apiIssuer "90056871-d791-45f6-a770-21399c45e491" \
             --apiKeyPath ~/.appstoreconnect/private_keys/AuthKey_NQXQ595W59.p8 2>&1)
