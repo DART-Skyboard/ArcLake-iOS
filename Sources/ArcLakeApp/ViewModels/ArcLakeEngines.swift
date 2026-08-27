@@ -574,25 +574,27 @@ extension ArcLabViewModel {
                 bridge: Float(protonBridge(el.id).factor)))    // proton state passage
         }
 
-        // This is the coupling that was ACTUALLY running every time "play"
-        // was pressed — a separate build had gone through several rounds of
-        // fixing an inter-atom force in ArcQuantumEngine.tick(), which
-        // turned out to be dead code never called from any view. This is
-        // the real one. It was purely attractive (Φ = m·m/r², gravity-like)
-        // at every distance beyond a tiny 0.6-unit contact radius, with only
-        // a constant, non-scaling push as "repulsion" — and since it scales
-        // by neutron count SQUARED, heavy elements (the video showed Ba, U,
-        // Rf, Db) hit the min(f, 0.5) force cap almost immediately for any
-        // reasonably close pair. With no per-neighbor normalization, every
-        // atom summed a near-maximum contribution from EVERY other atom in
-        // the scene simultaneously, easily explaining a sub-second total
-        // collapse. Fixed with the same three-part approach that actually
-        // works: a genuine repulsive term that dominates at short range, a
-        // hard interaction cutoff, and normalization by how many neighbors
-        // are actually in range, so the total pull on one atom can't scale
-        // up just because more atoms are in the scene.
+        // Second pass at this — the first fix (repulsion + cutoff +
+        // neighbor normalization) was directionally right but didn't
+        // actually solve it: a FIXED 1.4-unit equilibrium combined with the
+        // force scaling by the FULL PRODUCT of two elements' neutron counts
+        // meant heavy elements (the videos consistently used Ba, U, Rf, Db)
+        // pinned the force at its cap across almost the entire practical
+        // range regardless of distance — verified numerically: two Uranium
+        // atoms (146 neutrons each) still produced a raw force over 16x the
+        // cap even 8 units apart. The repulsive term could only ever matter
+        // at distances far closer than these atoms actually sit, so it was
+        // effectively inert for exactly the elements the videos kept using.
+        // Real fix: mass now scales the EQUILIBRIUM distance (heavier atoms
+        // settle farther apart, which is physically sensible — bigger
+        // electron shells need more room) instead of scaling the raw force
+        // magnitude by the full product of neutron counts. Force magnitude
+        // itself uses sqrt(blueprintA · blueprintB), far gentler than the
+        // full product, plus an explicit flat coefficient — verified
+        // numerically this keeps heavy-element forces in a well-behaved
+        // range at realistic separations instead of pinned at the cap.
         let G: Float = 0.05 * (envG / 9.8)    // env gravity scales the coupling (visible)
-        let interactionCutoff: Float = 9.0
+        let interactionCutoff: Float = 24.0   // wide enough to cover heavy elements' larger equilibrium
         var neighborCount = [Int](repeating: 0, count: bodies.count)
         for i in bodies.indices {
             for j in bodies.indices where j != i {
@@ -613,18 +615,18 @@ extension ArcLabViewModel {
                 guard r > 0.05 else { continue }             // avoid divide-by-near-zero
                 guard r < interactionCutoff else { continue } // outside interaction range — no force at all
 
-                // Φ-gradient: blueprintA·blueprintB / r², passed through BOTH
-                // proton bridges (gas/liquid/solid/plasma congruency) — but
-                // now genuinely repulsive at short range (dominates once
-                // closer than `equilibrium`) and attractive beyond it,
-                // instead of purely attractive everywhere past 0.6 units.
                 let coupling = bodies[i].bridge * bodies[j].bridge
-                let equilibrium: Float = 1.4
+                // Bigger/heavier pairs settle farther apart — grows with the
+                // SUM of blueprints (sub-quadratic), not their product.
+                let equilibrium: Float = 1.2 + (bodies[i].blueprint + bodies[j].blueprint).squareRoot() * 0.55
                 let ratio = equilibrium / max(r, 0.3)
                 let attractive = ratio * ratio
                 let repulsive  = ratio * ratio * ratio * ratio * ratio * ratio
-                let f = G * bodies[i].blueprint * bodies[j].blueprint
-                    * coupling * (attractive - repulsive)
+                // Gentle mass scaling on magnitude — sqrt of the product,
+                // not the full product, so heavy pairs don't dwarf light
+                // ones by orders of magnitude at their own equilibrium.
+                let massScale = (bodies[i].blueprint * bodies[j].blueprint).squareRoot()
+                let f = G * massScale * coupling * (attractive - repulsive) * 0.05
                 let capped = max(-0.5, min(f, 0.5))
                 let n = Float(max(1, max(neighborCount[i], neighborCount[j])))
                 vel += simd_normalize(dvec) * (capped / n) * dt
