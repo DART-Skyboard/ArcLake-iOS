@@ -476,7 +476,7 @@ public final class ArcLabViewModel: ObservableObject {
         atomPositions[key] = pos
         atomPhysics[key] = ArcAtomPhysics(
             element: element, gravityMS2: physics.gravity, temperatureK: physics.activeTab.ambientTempK)
-        buildPointCloudAtom(element, at: pos)
+        buildPointCloudAtom(element, at: pos, instanceKey: key)
         log("Added instance of \(element.elementName) (\(instanceIdx + 1) in scene)")
     }
 
@@ -788,17 +788,26 @@ public final class ArcLabViewModel: ObservableObject {
     // ── Quantum atom builder — replaces legacy SCNTorus + sphere animation ──
     // Matches web app: ψ_nlm CDF orbital clouds, no preset animation,
     // physics driven by element data (Aufbau, Slater Zeff, shell wave propagation)
-    private func buildPointCloudAtom(_ element: ArcElement, at position: SIMD3<Float>) {
-        // Remove existing atom with this Z if present
-        atomNodes[element.id]?.removeFromParentNode()
-        if let idx = quantumAtoms.firstIndex(where: { $0.elementId == element.id }) {
+    // `instanceKey` distinguishes multiple copies of the SAME element type
+    // in the scene at once. Defaults to element.id (the element TYPE, not a
+    // per-copy id) for addElement()'s single-atom-per-type case, where
+    // replacing an existing node for the same element is correct. When
+    // addElementInstance() passes its own unique per-copy key, this must
+    // NOT remove any existing node/entry for the plain element.id — doing
+    // so is exactly what silently deleted every earlier copy each time the
+    // same element was tapped again, leaving only the most recent one
+    // visible despite the sidebar list correctly showing all of them.
+    private func buildPointCloudAtom(_ element: ArcElement, at position: SIMD3<Float>, instanceKey: Int? = nil) {
+        let key = instanceKey ?? element.id
+        atomNodes[key]?.removeFromParentNode()
+        if let idx = quantumAtoms.firstIndex(where: { $0.elementId == key }) {
             quantumAtoms.remove(at: idx)
         }
 
         ArcQuantumAtomBuilder.ptsPerElectron = ptsPerElectron
         let atomData = ArcQuantumAtomBuilder.build(element: element, at: position, scene: scene)
         quantumAtoms.append(atomData)
-        atomNodes[element.id] = atomData.root
+        atomNodes[key] = atomData.root
     }
 
 

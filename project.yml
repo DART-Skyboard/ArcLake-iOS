@@ -126,15 +126,7 @@ targets:
       - sdk: ARKit.framework
       - sdk: RealityKit.framework
       - sdk: ModelIO.framework
-      # ArcLakeClip embedding intentionally removed for now — the target,
-      # its Swift code, entitlements, and App Store Connect registration
-      # (bundle ID, capability, profile) all still exist and remain ready.
-      # A profile/Xcode-validation mismatch specific to App Clip signing
-      # (confirmed NOT caused by missing entitlements or capabilities —
-      # both were verified present via direct profile decode) is blocking
-      # it from archiving cleanly, and needs Xcode itself or further
-      # investigation to resolve. Re-add this dependency plus the
-      # ArcLakeClip scheme entry below once that's sorted out.
+
     settings:
       base:
         PRODUCT_NAME: "Arc Lake"
@@ -163,9 +155,6 @@ schemes:
         ArcLakeApp: all
     archive:
       config: Release
-  # Kept as its own independent scheme so the App Clip target can still be
-  # built/tested in isolation later without needing the main app's archive
-  # to touch it at all.
   ArcLakeClip:
     build:
       targets:
