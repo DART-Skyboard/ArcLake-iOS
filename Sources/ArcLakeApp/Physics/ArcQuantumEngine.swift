@@ -173,6 +173,33 @@ let _ArcShellColors: [(Float,Float,Float)] = [
 
 // MARK: — Point cloud geometry helper (SCNGeometry vertex source)
 
+// Per-particle thermal jitter — displaces each electron point individually
+// along its own local outward direction using a per-vertex pseudo-random
+// phase (derived from the vertex's own baked-in position, since the point
+// cloud geometry has no separate custom attribute for this), driven by a
+// uniform the physics tick sets every frame from that ATOM's own current
+// temperature + velocity. This runs entirely on the GPU per-vertex, so it
+// scales to many electrons/atoms without a CPU-side per-particle loop —
+// the previous behavior only ever rotated the whole orbital cloud as one
+// rigid unit, which is why individual particles looked static/"still"
+// even while the cloud itself was technically animating.
+private func applyThermalJitterShader(to geometry: SCNGeometry?) {
+    guard let geometry = geometry else { return }
+    geometry.shaderModifiers = [
+        .geometry: """
+        #pragma arguments
+        float u_thermalAmplitude;
+        #pragma body
+        float seed = fract(sin(dot(_geometry.position.xyz, vec3(12.9898, 78.233, 45.164))) * 43758.5453);
+        float phase = seed * 6.28318530718;
+        vec3 jitterDir = normalize(_geometry.position.xyz + vec3(0.0001));
+        float jitter = sin(u_time * 3.0 + phase) * u_thermalAmplitude;
+        _geometry.position.xyz += jitterDir * jitter;
+        """
+    ]
+    geometry.setValue(0.0 as Float, forKey: "u_thermalAmplitude")
+}
+
 func arcMakePointCloud(positions: [SIMD3<Float>], colors: [SIMD3<Float>], ptSize: CGFloat) -> SCNNode {
     guard !positions.isEmpty else { return SCNNode() }
     let n = positions.count
@@ -351,6 +378,7 @@ public final class ArcQuantumAtomBuilder {
         let orbitalCloud = arcMakePointCloud(positions: ePositions, colors: eColors,
                                               ptSize: elecPtSize)
         orbitalCloud.name = "_orbitalCloud:\(Z)"
+        applyThermalJitterShader(to: orbitalCloud.geometry)
         root.addChildNode(orbitalCloud)
 
         // ── Nucleus glow (subtle, like web version) ───────────────────────
@@ -541,6 +569,18 @@ public final class ArcQuantumPhysics {
                 cur.y + orbitalCloudRotY,
                 cur.z + orbitalCloudRotZ)
 
+            // ── PER-PARTICLE THERMAL JITTER ──────────────────────────────
+            // Distinct from the whole-cloud rotation above: this individually
+            // displaces each electron point via the GPU shader modifier set
+            // up at build time, driven by THIS atom's own local temperature
+            // and velocity — not just the shared environment value — so
+            // atoms moving faster or sitting in a hotter region visibly show
+            // more energetic electrons than a slow/cool one, matching each
+            // atom's own nucleus-level physics rather than one global look.
+            let localSpeed = simd_length(a.velocity)
+            let thermalAmplitude = (tempFactor * 0.035 + localSpeed * 1.8) * devRamp
+            a.orbitalCloudNode.geometry?.setValue(thermalAmplitude, forKey: "u_thermalAmplitude")
+
             atoms[i] = a
         }
 
@@ -548,20 +588,35 @@ public final class ArcQuantumPhysics {
         // Sigma impulse between neighboring atoms (pairwise, Phi field)
         // Only when multiple atoms in scene
         if atoms.count > 1 {
+            // Genuine attractive+repulsive coupling — the previous formula
+            // was purely attractive at every distance (no repulsive term
+            // despite the comment describing one) and its magnitude was
+            // roughly two orders of magnitude too small to ever be visible
+            // once friction was applied every frame. This crosses over
+            // naturally at each pair's own equilibrium separation (scaled
+            // to their actual sizes), so same-type atoms settle near each
+            // other instead of overlapping OR just silently drifting
+            // nowhere.
+            let couplingStrength: Float = 0.0009
             for i in atoms.indices {
                 for j in (i+1)..<atoms.count {
                     let posI = atoms[i].root.simdPosition
                     let posJ = atoms[j].root.simdPosition
                     let diff = posI - posJ
-                    let dist = max(0.5, simd_length(diff))
-                    // LJ-style coupling: attractive at medium range, repulsive close
+                    let dist = max(0.3, simd_length(diff))
+                    let dir  = diff / dist
+
+                    let equilibrium = max(1.2, (atoms[i].maxShellR + atoms[j].maxShellR) * 0.9)
+                    let ratio = equilibrium / dist
+                    let attractive = ratio * ratio                                   // ~1/dist^2 at long range
+                    let repulsive  = ratio * ratio * ratio * ratio * ratio * ratio    // ~1/dist^6, dominates once too close
+
                     let massI = atoms[i].mass; let massJ = atoms[j].mass
-                    let sigma = 0.05 * (massI * massJ / (massI + massJ)) / (dist * dist)
-                    let dir   = diff / dist
-                    // Apply through proton bridge proportionality
-                    let coupling = sigma * 0.001
-                    atoms[i].velocity -= dir * coupling
-                    atoms[j].velocity += dir * coupling
+                    let reducedMass = (massI * massJ) / max(0.001, massI + massJ)
+                    let netForce = (attractive - repulsive) * reducedMass * couplingStrength
+
+                    atoms[i].velocity -= dir * netForce
+                    atoms[j].velocity += dir * netForce
                 }
             }
         }

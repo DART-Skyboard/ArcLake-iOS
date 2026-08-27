@@ -463,10 +463,20 @@ public final class ArcLabViewModel: ObservableObject {
         if activeTabIndex < tabStates.count {
             tabStates[activeTabIndex].elements = selectedElements
         }
-        // Offset each instance slightly so they don't stack on top
+        // Spacing scales with the element's own size (more electron shells
+        // = a physically larger atom) instead of a fixed 2.5-unit radius —
+        // the fixed radius was small enough relative to larger atoms'
+        // actual electron-cloud extent that several instances visually
+        // merged into what looked like one blob, even though each one is a
+        // genuinely separate node at a distinct position. Actual settling
+        // distance still comes from the tick() coupling physics; this only
+        // sets a sane starting point so physics has real room to work with
+        // instead of starting everything overlapped.
         let instanceIdx = selectedElements.count - 1
+        let sizeEstimate: Float = 1.4 + Float(element.electronOrbits.count) * 0.9
         let angle = Float(instanceIdx) * 0.618 * .pi * 2   // golden angle spread
-        let radius = Float(instanceIdx / 6 + 1) * 2.5
+        let ringIdx = instanceIdx / 6
+        let radius = sizeEstimate * (Float(ringIdx) * 1.6 + 1.4)
         let pos = SIMD3<Float>(
             radius * cos(angle),
             0,
