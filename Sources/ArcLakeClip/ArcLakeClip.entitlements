@@ -6,5 +6,11 @@
     <array>
         <string>appclips:radicaldeepscale.com</string>
     </array>
+    <key>com.apple.developer.on-demand-install-capable</key>
+    <true/>
+    <key>com.apple.developer.parent-application-identifiers</key>
+    <array>
+        <string>$(AppIdentifierPrefix)DART-Meadow-LLC.Cotharticren</string>
+    </array>
 </dict>
 </plist>
