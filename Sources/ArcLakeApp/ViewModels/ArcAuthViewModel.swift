@@ -495,6 +495,10 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
         deviceFlowCode = nil; error = nil
         // Keep: arc_github_pat, arc_github_username — enables instant re-login
         // Keep: Apple keychainKey / displayNameKey — Fruta restore handles those
+        // Clear the intro-shown flag so the welcome animation plays again
+        // the next time someone signs back in on this device, regardless of
+        // whether the app version has changed since.
+        UserDefaults.standard.removeObject(forKey: "arc_lastIntroVersionShown")
     }
 
     // MARK: — Account Deletion (App Review Guideline 5.1.1(v))

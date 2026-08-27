@@ -51,6 +51,8 @@ targets:
         NSPhotoLibraryAddUsageDescription: Save GLB exports and screenshots
         NSMicrophoneUsageDescription: Voice commands for the ArcLake lab assistant
         NSSpeechRecognitionUsageDescription: Autumn uses speech recognition to understand your voice commands for the ArcLake molecular lab
+        UIAppFonts:
+          - Orbitron-Regular.ttf
     entitlements:
       path: Sources/ArcLakeApp/ArcLakeApp.entitlements
     dependencies:
@@ -78,7 +80,7 @@ targets:
         ENABLE_USER_SCRIPT_SANDBOXING: NO
         SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
         TARGETED_DEVICE_FAMILY: "1,2"
-        CURRENT_PROJECT_VERSION: "348"
+        CURRENT_PROJECT_VERSION: "349"
         MARKETING_VERSION: "1.5.6"
       configs:
         Debug:

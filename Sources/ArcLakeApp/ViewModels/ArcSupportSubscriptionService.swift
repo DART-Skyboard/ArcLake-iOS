@@ -162,7 +162,7 @@ public struct ArcSupportSheet: View {
                                     endPoint: .bottomTrailing))
                         }
                         Text("Support \(appName)")
-                            .font(.custom("Orbitron-Bold", size:20))
+                            .font(.custom("Orbitron-Regular", size:20))
                             .foregroundColor(.white)
                         Text("Help keep \(appName) in active development")
                             .font(.system(size:12, design:.monospaced))
