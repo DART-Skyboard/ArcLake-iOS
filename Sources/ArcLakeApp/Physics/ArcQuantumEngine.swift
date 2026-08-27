@@ -282,8 +282,14 @@ public final class ArcQuantumAtomBuilder {
 
     // Build full quantum orbital point-cloud atom, returns ArcAtomData
     public static func build(element: ArcElement, at pos: SIMD3<Float>,
-                             scene: SCNScene) -> ArcAtomData {
+                             scene: SCNScene, instanceKey: Int? = nil) -> ArcAtomData {
         let Z = element.id
+        // The returned ArcAtomData's own identity — instanceKey when a
+        // specific copy is being built (so each duplicate of the same
+        // element gets a genuinely distinct elementId in quantumAtoms,
+        // matching its actual SCNNode), falling back to the plain atomic
+        // number Z for the ordinary single-atom-per-type case.
+        let identity = instanceKey ?? Z
         let protons = element.protons
         let neutrons = element.neutrons
         let shells = element.electronOrbits
@@ -431,7 +437,7 @@ public final class ArcQuantumAtomBuilder {
         }
 
         let atomData = ArcAtomData(
-            elementId: Z,
+            elementId: identity,
             root: root,
             nucleusCloudNode: nucleusCloud,
             orbitalCloudNode: orbitalCloud,

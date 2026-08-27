@@ -563,15 +563,26 @@ extension ArcLabViewModel {
         let wind = windDirection.vector * Float(windVelocity) * 0.002
         let envG = Float(physics.gravity)
 
-        // Snapshot positions + per-atom neutron blueprint & bridge factor
-        struct Body { let id: Int; let pos: SIMD3<Float>
+        // Snapshot positions + per-atom neutron blueprint & bridge factor.
+        // Body.key is the atomNodes/atomVelocities key for THIS SPECIFIC
+        // instance — NOT necessarily el.id. This is the actual root cause
+        // of the collapse: with duplicate-element support, several entries
+        // in selectedElements can share the same el.id, but only the FIRST
+        // copy of each element type was ever stored under its plain id;
+        // every duplicate lives under its own instance key. Looking things
+        // up by el.id alone (the previous code) meant every duplicate was
+        // invisible to the simulation — never found, never moved — while
+        // whatever WAS found under the plain id kept receiving force
+        // contributions computed as if it represented all of them.
+        struct Body { let key: Int; let pos: SIMD3<Float>
                       let blueprint: Float; let bridge: Float }
         var bodies: [Body] = []
-        for el in selectedElements {
-            guard let n = atomNode(for: el.id) else { continue }
-            bodies.append(Body(id: el.id, pos: n.simdPosition,
+        for (idx, el) in selectedElements.enumerated() {
+            let key = idx < selectedElementKeys.count ? selectedElementKeys[idx] : el.id
+            guard let n = atomNode(for: key) else { continue }
+            bodies.append(Body(key: key, pos: n.simdPosition,
                 blueprint: Float(max(el.neutrons, 1)),         // neutron blueprint (≥1: H interacts)
-                bridge: Float(protonBridge(el.id).factor)))    // proton state passage
+                bridge: Float(protonBridge(el.id).factor)))    // proton state passage — chemistry is per TYPE, so el.id is correct here
         }
 
         // Second pass at this — the first fix (repulsion + cutoff +
@@ -605,8 +616,8 @@ extension ArcLabViewModel {
         }
 
         for i in bodies.indices {
-            guard let node = atomNode(for: bodies[i].id) else { continue }
-            var vel = atomVelocities[bodies[i].id] ?? .zero
+            guard let node = atomNode(for: bodies[i].key) else { continue }
+            var vel = atomVelocities[bodies[i].key] ?? .zero
 
             // ── pairwise velocity-potential forces, bridge-modulated ──
             for j in bodies.indices where j != i {
@@ -654,7 +665,7 @@ extension ArcLabViewModel {
                               Float.random(in: -jitter...jitter),
                               Float.random(in: -jitter...jitter))
             node.simdPosition = p
-            atomVelocities[bodies[i].id] = vel
+            atomVelocities[bodies[i].key] = vel
         }
 
         if isRecording {

@@ -6,6 +6,17 @@ import simd
 @MainActor
 public final class ArcLabViewModel: ObservableObject {
     @Published public var selectedElements: [ArcElement] = []
+    // Parallel to selectedElements (same length, same order) — tracks each
+    // entry's actual atomNodes/atomPositions/atomPhysics key. Needed because
+    // addElementInstance lets multiple copies of the same element share an
+    // .id, so that id alone can no longer identify which SCNNode a specific
+    // entry corresponds to. This is what was missing when duplicate-element
+    // support was added: atomNode(for:) and engineTick() kept looking things
+    // up by plain element.id, which only ever resolves to the FIRST copy of
+    // each element type — every duplicate after that was invisible to the
+    // simulation entirely, never moved, while whatever the plain-id lookup
+    // did find kept receiving force contributions meant for all of them.
+    @Published public var selectedElementKeys: [Int] = []
     @Published public var activeTab: ArcTab = .molecule
     @Published public var isPeriodicTableVisible = false
     @Published public var isMolCanvasVisible = false
@@ -444,6 +455,7 @@ public final class ArcLabViewModel: ObservableObject {
     public func addElement(_ element: ArcElement) {
         guard !selectedElements.contains(where: { $0.id == element.id }) else { return }
         selectedElements.append(element)
+        selectedElementKeys.append(element.id)
         // Sync to tab state
         if activeTabIndex < tabStates.count {
             tabStates[activeTabIndex].elements = selectedElements
@@ -483,6 +495,7 @@ public final class ArcLabViewModel: ObservableObject {
             radius * sin(angle)
         )
         let key = element.id + instanceIdx * 1000
+        selectedElementKeys.append(key)
         atomPositions[key] = pos
         atomPhysics[key] = ArcAtomPhysics(
             element: element, gravityMS2: physics.gravity, temperatureK: physics.activeTab.ambientTempK)
@@ -506,10 +519,30 @@ public final class ArcLabViewModel: ObservableObject {
     }
 
     public func removeElement(_ element: ArcElement) {
-        selectedElements.removeAll { $0.id == element.id }
-        atomNodes[element.id]?.removeFromParentNode()
-        atomNodes.removeValue(forKey: element.id)
-        atomPositions.removeValue(forKey: element.id)
+        // Clean up EVERY instance of this element type, not just whichever
+        // one happened to be stored under the plain element.id — with
+        // duplicates, that used to leave every other copy's SCNNode
+        // orphaned in the scene (still visually present, no longer tracked
+        // anywhere) and its quantumAtoms entry never removed either.
+        var keysToRemove: [Int] = []
+        var indicesToRemove: [Int] = []
+        for (i, el) in selectedElements.enumerated() where el.id == element.id {
+            indicesToRemove.append(i)
+            if i < selectedElementKeys.count { keysToRemove.append(selectedElementKeys[i]) }
+        }
+        for key in keysToRemove {
+            atomNodes[key]?.removeFromParentNode()
+            atomNodes.removeValue(forKey: key)
+            atomPositions.removeValue(forKey: key)
+            atomPhysics.removeValue(forKey: key)
+            if let qi = quantumAtoms.firstIndex(where: { $0.elementId == key }) {
+                quantumAtoms.remove(at: qi)
+            }
+        }
+        for i in indicesToRemove.sorted(by: >) {
+            selectedElements.remove(at: i)
+            if i < selectedElementKeys.count { selectedElementKeys.remove(at: i) }
+        }
         log("Removed \(element.elementName)")
     }
 
@@ -815,7 +848,12 @@ public final class ArcLabViewModel: ObservableObject {
         }
 
         ArcQuantumAtomBuilder.ptsPerElectron = ptsPerElectron
-        let atomData = ArcQuantumAtomBuilder.build(element: element, at: position, scene: scene)
+        // Pass the same key through so the returned ArcAtomData's own
+        // elementId matches what atomNodes uses — without this, every
+        // quantumAtoms entry for a duplicate element reported the same
+        // plain elementId as every other copy, making them indistinguishable
+        // even though each had a genuinely separate SCNNode.
+        let atomData = ArcQuantumAtomBuilder.build(element: element, at: position, scene: scene, instanceKey: key)
         quantumAtoms.append(atomData)
         atomNodes[key] = atomData.root
     }
