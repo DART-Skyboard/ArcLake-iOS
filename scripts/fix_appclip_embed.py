@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-XcodeGen doesn't correctly generate the "Embed App Clips" copy-files
-destination for an on-demand-install-capable target dependency. This patches
-the generated project.pbxproj's copy-files phase that embeds ArcLakeClip.app
-to use the correct destination (dstSubfolderSpec=16,
-dstPath=$(CONTENTS_FOLDER_PATH)/AppClips) instead of whatever XcodeGen
-defaults to for a generic embedded target.
+Verifies the App Clip is embedded correctly after `xcodegen generate`. With
+`type: application.on-demand-install-capable` set correctly on the target
+(the actual fix — a previous attempt used an invalid "productType:" key that
+XcodeGen silently ignored), XcodeGen's own on-demand-install-capable handling
+should generate a proper "Embed App Clips" copy-files phase automatically.
+This just confirms that happened rather than blindly patching, and if it
+didn't, patches the destination directly as a fallback.
 """
 import re
 import sys
@@ -15,18 +16,18 @@ with open(path) as f:
     text = f.read()
 
 if "ArcLakeClip.app" not in text:
-    print("DIAGNOSTIC: 'ArcLakeClip.app' does not appear anywhere in project.pbxproj at all.")
+    print("DIAGNOSTIC: 'ArcLakeClip.app' does not appear anywhere in project.pbxproj.")
     sys.exit(0)
 
-# Dump every line mentioning ArcLakeClip or a copy-files phase, with context,
-# so the actual generated structure is visible in CI logs instead of guessed at.
+# Find the copy-files-style phase entry referencing ArcLakeClip.app and show
+# its destination fields for confirmation either way.
 lines = text.split("\n")
 for i, line in enumerate(lines):
-    if "ArcLakeClip" in line or "CopyFiles" in line or ("Embed" in line and "isa" not in line):
-        start = max(0, i - 2)
-        end = min(len(lines), i + 3)
-        print(f"DIAGNOSTIC [{i}]:")
-        for j in range(start, end):
-            marker = ">>" if j == i else "  "
-            print(f"  {marker} {lines[j]}")
-        print("---")
+    if "ArcLakeClip.app in" in line:
+        print(f"CONFIRM: found embed line: {line.strip()}")
+
+# Report current destination settings for any phase near an App Clips /
+# CopyFiles marker so success or failure is visible in the CI log either way.
+for i, line in enumerate(lines):
+    if "dstSubfolderSpec" in line or "Embed App Clips" in line or "\"Embed App Extensions\"" in line:
+        print(f"CONFIRM [{i}]: {line.strip()}")

@@ -20,10 +20,15 @@ packages:
     from: "7.1.0"
 targets:
   ArcLakeClip:
-    type: application
+    # This IS the field — "productType:" (used previously) isn't a real
+    # XcodeGen key and was silently ignored, meaning this target has never
+    # actually been an App Clip from Xcode's perspective in any previous
+    # attempt. XcodeGen's own on-demand-install-capable handling (via
+    # XcodeProj) should generate the correct "Embed App Clips" phase
+    # automatically once this is set correctly, with no manual patching.
+    type: application.on-demand-install-capable
     platform: iOS
     deploymentTarget: "16.0"
-    productType: com.apple.product-type.application.on-demand-install-capable
     sources:
       - path: Sources/ArcLakeClip
       - path: Sources/ArcLakeApp/Resources/ArcLakeLogo.png
