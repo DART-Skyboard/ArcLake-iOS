@@ -574,7 +574,34 @@ extension ArcLabViewModel {
                 bridge: Float(protonBridge(el.id).factor)))    // proton state passage
         }
 
+        // This is the coupling that was ACTUALLY running every time "play"
+        // was pressed — a separate build had gone through several rounds of
+        // fixing an inter-atom force in ArcQuantumEngine.tick(), which
+        // turned out to be dead code never called from any view. This is
+        // the real one. It was purely attractive (Φ = m·m/r², gravity-like)
+        // at every distance beyond a tiny 0.6-unit contact radius, with only
+        // a constant, non-scaling push as "repulsion" — and since it scales
+        // by neutron count SQUARED, heavy elements (the video showed Ba, U,
+        // Rf, Db) hit the min(f, 0.5) force cap almost immediately for any
+        // reasonably close pair. With no per-neighbor normalization, every
+        // atom summed a near-maximum contribution from EVERY other atom in
+        // the scene simultaneously, easily explaining a sub-second total
+        // collapse. Fixed with the same three-part approach that actually
+        // works: a genuine repulsive term that dominates at short range, a
+        // hard interaction cutoff, and normalization by how many neighbors
+        // are actually in range, so the total pull on one atom can't scale
+        // up just because more atoms are in the scene.
         let G: Float = 0.05 * (envG / 9.8)    // env gravity scales the coupling (visible)
+        let interactionCutoff: Float = 9.0
+        var neighborCount = [Int](repeating: 0, count: bodies.count)
+        for i in bodies.indices {
+            for j in bodies.indices where j != i {
+                if simd_length(bodies[j].pos - bodies[i].pos) < interactionCutoff {
+                    neighborCount[i] += 1
+                }
+            }
+        }
+
         for i in bodies.indices {
             guard let node = atomNode(for: bodies[i].id) else { continue }
             var vel = atomVelocities[bodies[i].id] ?? .zero
@@ -583,17 +610,24 @@ extension ArcLabViewModel {
             for j in bodies.indices where j != i {
                 let dvec = bodies[j].pos - bodies[i].pos
                 let r = simd_length(dvec)
-                guard r > 0.6 else {
-                    // contact repulsion — atoms never collapse into each other
-                    if r > 1e-4 { vel -= simd_normalize(dvec) * 0.02 }
-                    continue
-                }
+                guard r > 0.05 else { continue }             // avoid divide-by-near-zero
+                guard r < interactionCutoff else { continue } // outside interaction range — no force at all
+
                 // Φ-gradient: blueprintA·blueprintB / r², passed through BOTH
-                // proton bridges (gas/liquid/solid/plasma congruency)
+                // proton bridges (gas/liquid/solid/plasma congruency) — but
+                // now genuinely repulsive at short range (dominates once
+                // closer than `equilibrium`) and attractive beyond it,
+                // instead of purely attractive everywhere past 0.6 units.
                 let coupling = bodies[i].bridge * bodies[j].bridge
+                let equilibrium: Float = 1.4
+                let ratio = equilibrium / max(r, 0.3)
+                let attractive = ratio * ratio
+                let repulsive  = ratio * ratio * ratio * ratio * ratio * ratio
                 let f = G * bodies[i].blueprint * bodies[j].blueprint
-                    * coupling / (r * r)
-                vel += simd_normalize(dvec) * min(f, 0.5) * dt
+                    * coupling * (attractive - repulsive)
+                let capped = max(-0.5, min(f, 0.5))
+                let n = Float(max(1, max(neighborCount[i], neighborCount[j])))
+                vel += simd_normalize(dvec) * (capped / n) * dt
             }
 
             // ── environment ──
