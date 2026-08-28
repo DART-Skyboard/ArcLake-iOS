@@ -39,6 +39,13 @@ public final class ArcLabViewModel: ObservableObject {
         [.group, .neutron, .proton, .electron]
     @Published public var arcSeqSelection: [Int] = []      // atoms in LINK ORDER
     @Published public var arcSameKindFilter = false
+    // How finely each Arc Measure curve is sampled between two atoms —
+    // higher values trace a smoother, more detailed curve; lower values
+    // give a coarser, more angular one. Was a hardcoded constant (20) in
+    // rebuildArcMeasures() before, with no way to adjust it.
+    @Published public var arcMeasureResolution: Int = 20 {
+        didSet { rebuildArcMeasures() }
+    }
     @Published public var arcMeasureResults: [ArcMeasureResult] = []
     @Published public var arcEdgeLengthSum: Double = 0
     @Published public var arcMeasureMode: ArcMeasureMode = .distance

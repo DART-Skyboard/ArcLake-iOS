@@ -57,6 +57,22 @@ struct ArcFieldArraySection: View {
                 .font(.system(size: 8.5, design: .monospaced))
                 .foregroundColor(.white.opacity(0.35))
 
+            // Curve resolution — how finely each measured arc is sampled
+            HStack {
+                Text("Curve resolution")
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.5))
+                Spacer()
+                Slider(value: Binding(
+                    get: { Double(labVM.arcMeasureResolution) },
+                    set: { labVM.arcMeasureResolution = Int($0) }
+                ), in: 4...200)
+                    .frame(width: 100)
+                Text("\(labVM.arcMeasureResolution) pts")
+                    .font(.system(size: 8, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.6))
+            }
+
             // Mode 2 — Sequential selection
             Text("SEQUENTIAL SELECTION (MULTI-SELECT)")
                 .font(.system(size: 9, weight: .bold, design: .monospaced))

@@ -131,23 +131,45 @@ extension ArcLabViewModel {
     // Default iteration = STRAIGHT arc (no pulse animation); the only
     // deviation comes from the velocity/gravity-potential flux of other
     // elements near the link — exactly the physics the user asked for.
+    // Matches nodeIDs entries against actual (element, key) pairs — works
+    // whether the id is an instance key (the fixed default "All-Scene"
+    // path) or came from arcSeqSelection (whatever that stores), instead of
+    // matching purely by element.id, which is exactly what silently broke
+    // every link after the first copy of any duplicated element.
+    private func arcElementAndKey(for id: Int) -> (ArcElement, Int)? {
+        for (idx, el) in selectedElements.enumerated() {
+            let key = idx < selectedElementKeys.count ? selectedElementKeys[idx] : el.id
+            if key == id || el.id == id { return (el, key) }
+        }
+        return nil
+    }
+
     public func rebuildArcMeasures() {
         scene.rootNode.childNode(withName: "arc_measures", recursively: false)?
             .removeFromParentNode()
 
-        // MODE 1: All-Scene (all-to-all link type) — nodes in scene order
-        // MODE 2: Sequential selection — atoms in tap order
+        // This is the actual function behind the visible Arc Edge curves —
+        // a completely separate, never-before-examined function from
+        // ArcEdgeExtended.swift's computeDomainArcs(), which only ever fed
+        // a text summary list in the sidebar. Every previous "fix" to Arc
+        // Edge lookups was made to that unrelated function; this is the one
+        // that actually builds the arc_measures SceneKit node, and it had
+        // the exact same plain-element-id lookup bug throughout, never
+        // caught until now. atomNode(for:) only ever resolves the FIRST
+        // copy of any element type once duplicates exist, so any selection
+        // touching a duplicated element could silently fail to find a node
+        // and skip that link entirely — producing no visible curve at all.
         var nodeIDs: [Int]
         var fields: [ArcComponentField]
         if let comp = arcAllSceneComponent {
-            nodeIDs = selectedElements.map { $0.id }
+            nodeIDs = selectedElementKeys
             fields = [comp]
         } else {
             nodeIDs = arcSeqSelection
             if arcSameKindFilter {
                 // Keep only atoms whose element symbol appears more than once
                 nodeIDs = nodeIDs.filter { id in
-                    guard let el = selectedElements.first(where: { $0.id == id }) else { return false }
+                    guard let (el, _) = arcElementAndKey(for: id) else { return false }
                     return selectedElements.filter { $0.elementSymbol == el.elementSymbol }.count > 1
                 }
             }
@@ -165,11 +187,14 @@ extension ArcLabViewModel {
         var lengthSum = 0.0
 
         // Flux: all atoms in the scene influence the arc except the
-        // measured pair itself (excluded per link below)
+        // measured pair itself (excluded per link below) — keyed by
+        // instance now, so duplicates of the same element each keep their
+        // own separate entry instead of overwriting each other.
         var fluxSources: [Int: (pos: SIMD3<Float>, mass: Float)] = [:]
-        for el in selectedElements {
-            if let n = atomNode(for: el.id) {
-                fluxSources[el.id] = (n.presentation.simdWorldPosition, Float(el.atomicMass))
+        for (idx, el) in selectedElements.enumerated() {
+            let key = idx < selectedElementKeys.count ? selectedElementKeys[idx] : el.id
+            if let n = atomNode(for: key) {
+                fluxSources[key] = (n.presentation.simdWorldPosition, Float(el.atomicMass))
             }
         }
 
@@ -186,13 +211,13 @@ extension ArcLabViewModel {
 
         // Sequential links: N1→N2, N2→N3, …
         for li in 0..<(nodeIDs.count - 1) {
-            guard let elA = selectedElements.first(where: { $0.id == nodeIDs[li] }),
-                  let elB = selectedElements.first(where: { $0.id == nodeIDs[li+1] }),
-                  let nA = atomNode(for: elA.id),
-                  let nB = atomNode(for: elB.id) else { continue }
+            guard let (elA, keyA) = arcElementAndKey(for: nodeIDs[li]),
+                  let (elB, keyB) = arcElementAndKey(for: nodeIDs[li+1]),
+                  let nA = atomNode(for: keyA),
+                  let nB = atomNode(for: keyB) else { continue }
             let pStart = nA.presentation.simdWorldPosition
             let pEnd   = nB.presentation.simdWorldPosition
-            let linkPair = Set([elA.id, elB.id])
+            let linkPair = Set([keyA, keyB])
 
             let arcDir = simd_normalize(pEnd - pStart)
             var arcUpV = SIMD3<Float>(0, 1, 0)
@@ -206,7 +231,7 @@ extension ArcLabViewModel {
                 let offset = arcPerp * sep
 
                 // Sample the arc — 20 segments, straight default + flux bend
-                let segs = 20
+                let segs = max(4, min(200, arcMeasureResolution))
                 var pts: [SIMD3<Float>] = []
                 var phis: [Double] = []
                 for i in 0...segs {
