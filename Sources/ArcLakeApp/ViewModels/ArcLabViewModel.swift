@@ -491,7 +491,11 @@ public final class ArcLabViewModel: ObservableObject {
         let radius = sizeEstimate * (Float(ringIdx) * 1.6 + 1.4)
         let pos = SIMD3<Float>(
             radius * cos(angle),
-            0,
+            0.6,   // matches engineTick()'s floor exactly — spawning at 0
+                   // while the simulation clamps to 0.6 meant every atom
+                   // visibly jumped up the instant play was pressed.
+                   // addElement()'s own spawn path (physicsPosition) already
+                   // got this right; this path never matched it.
             radius * sin(angle)
         )
         let key = element.id + instanceIdx * 1000

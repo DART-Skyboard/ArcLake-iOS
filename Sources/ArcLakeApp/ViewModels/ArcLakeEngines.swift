@@ -637,7 +637,7 @@ extension ArcLabViewModel {
                 // not the full product, so heavy pairs don't dwarf light
                 // ones by orders of magnitude at their own equilibrium.
                 let massScale = (bodies[i].blueprint * bodies[j].blueprint).squareRoot()
-                let f = G * massScale * coupling * (attractive - repulsive) * 0.6
+                let f = G * massScale * coupling * (attractive - repulsive) * 1.4
                 // Bumped from 0.05 — verified numerically the previous
                 // coefficient produced forces of ~0.02-0.03 for heavy
                 // elements even near their own crossover distance, which
@@ -678,28 +678,38 @@ extension ArcLabViewModel {
             node.simdPosition = p
             atomVelocities[bodies[i].key] = vel
 
-            // Per-particle electron jitter — the shader modifier itself is
-            // attached once at atom-build time (ArcQuantumAtomBuilder), but
-            // nothing was ever driving its amplitude here, in the function
-            // that's actually running every frame; it was being set from
-            // ArcQuantumEngine.tick(), which is dead code never called from
-            // any view — the exact same mistake as the collapse bug, just
-            // in a different corner of the physics. Each atom's own
-            // orbital cloud child gets its amplitude from THIS atom's own
-            // local speed and the shared environment temperature, so
-            // faster-moving or hotter atoms show visibly more energetic
-            // electrons than a slow/cool one.
-            let tempFactor = max(0, Float(physics.temperature) - 32) / 212.0
-            let localSpeed = simd_length(vel)
-            let thermalAmplitude = tempFactor * 0.09 + localSpeed * 4.5
-            // node is already THIS specific atom's root (correctly
-            // resolved above via the instance key) — its orbital cloud
-            // child is named "_orbitalCloud:<plain element id>" regardless
-            // of instance, so match by prefix rather than trying to rebuild
-            // an exact name from bodies[i].key, which would only ever match
-            // the first copy of any element type.
-            node.childNodes.first(where: { $0.name?.hasPrefix("_orbitalCloud:") == true })?
-                .geometry?.setValue(thermalAmplitude, forKey: "u_thermalAmplitude")
+            // Real orbital rotation instead of a shader-driven jitter —
+            // the shader modifier approach could never be visually verified
+            // (no way to test-render it from here) and per the latest
+            // report still wasn't producing anything visible. Standard
+            // SceneKit eulerAngles rotation is ordinary, well-understood
+            // code, and matches what was actually being asked for: the
+            // electron shell itself sweeping around the nucleus, not
+            // particles jittering in place. Speed is driven by this atom's
+            // own temperature, its own current velocity (kinetic energy),
+            // AND how many other atoms are nearby right now — genuinely
+            // reacting to the local environment and neighboring atoms, not
+            // just a fixed spin. Axis direction is randomized once per atom
+            // via a stable per-node phase, so many atoms in a scene don't
+            // all spin in visible lockstep.
+            if let orbitalCloud = node.childNodes.first(where: { $0.name?.hasPrefix("_orbitalCloud:") == true }) {
+                let tempFactor = max(0, Float(physics.temperature) - 32) / 212.0
+                let localSpeed = simd_length(vel)
+                let crowding = Float(neighborCount[i])
+                let spinRate = 0.008 + tempFactor * 0.05 + localSpeed * 2.2 + crowding * 0.004
+                // Stable per-atom phase (from its own key) picks a consistent
+                // tilt axis so this atom's spin direction doesn't change
+                // erratically frame to frame, while still differing atom to
+                // atom.
+                let seed = Float(bodies[i].key % 360) * (.pi / 180)
+                let axis = SIMD3<Float>(sin(seed), cos(seed * 1.3), sin(seed * 0.7))
+                let normAxis = simd_normalize(axis)
+                let cur = orbitalCloud.eulerAngles
+                orbitalCloud.eulerAngles = SCNVector3(
+                    cur.x + spinRate * normAxis.x,
+                    cur.y + spinRate * normAxis.y,
+                    cur.z + spinRate * normAxis.z)
+            }
         }
 
         if isRecording {
