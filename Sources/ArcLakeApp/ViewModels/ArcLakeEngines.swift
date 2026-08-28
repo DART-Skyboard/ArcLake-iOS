@@ -559,7 +559,7 @@ extension ArcLabViewModel {
         guard isPlaying else { return }
         let dt: Float = 1.0 / 30.0
         let tempK = Float(max(0, (physics.temperature - 32) * 5/9 + 273.15))
-        let jitter = (tempK / 293.0) * 0.004          // Brownian by temperature
+        let jitter = (tempK / 293.0) * 0.018          // Brownian by temperature
         let wind = windDirection.vector * Float(windVelocity) * 0.002
         let envG = Float(physics.gravity)
 
@@ -665,6 +665,15 @@ extension ArcLabViewModel {
             vel *= Float(min(0.995, max(0.90, 1.0 - 0.015 * physics.viscosity)))
             // soft boundary — fold back inside the grid extent
             let limit: Float = Float(gridDivisions) * 0.75 + 6
+            // Continuous Brownian perturbation as VELOCITY, not a fixed
+            // position offset — sustains real, evolving motion driven by
+            // temperature indefinitely, instead of a wobble that's the only
+            // thing left once the coupling force naturally settles near
+            // equilibrium.
+            vel += SIMD3<Float>(Float.random(in: -jitter...jitter),
+                                Float.random(in: -jitter...jitter),
+                                Float.random(in: -jitter...jitter)) * 6.0
+
             var p = bodies[i].pos + vel
             for k in 0..<3 where abs(p[k]) > limit {
                 p[k] = p[k].sign == .minus ? -limit : limit
@@ -672,9 +681,6 @@ extension ArcLabViewModel {
             }
             // grid floor — atoms rest on the plane instead of sinking
             if p.y < 0.6 { p.y = 0.6; if vel.y < 0 { vel.y = 0 } }
-            p += SIMD3<Float>(Float.random(in: -jitter...jitter),
-                              Float.random(in: -jitter...jitter),
-                              Float.random(in: -jitter...jitter))
             node.simdPosition = p
             atomVelocities[bodies[i].key] = vel
 
@@ -696,7 +702,15 @@ extension ArcLabViewModel {
                 let tempFactor = max(0, Float(physics.temperature) - 32) / 212.0
                 let localSpeed = simd_length(vel)
                 let crowding = Float(neighborCount[i])
-                let spinRate = 0.008 + tempFactor * 0.05 + localSpeed * 2.2 + crowding * 0.004
+                // Base rate raised significantly and made less dependent
+                // on this atom's own translational velocity — that velocity
+                // naturally decays toward zero once atoms settle near their
+                // coupling-force equilibrium (correct behavior for the
+                // atoms themselves), which was also silently starving the
+                // electron rotation of any driving signal once things
+                // calmed down, even though electron motion shouldn't stop
+                // just because the atom itself isn't drifting anymore.
+                let spinRate = 0.05 + tempFactor * 0.14 + localSpeed * 2.2 + crowding * 0.006
                 // Stable per-atom phase (from its own key) picks a consistent
                 // tilt axis so this atom's spin direction doesn't change
                 // erratically frame to frame, while still differing atom to
