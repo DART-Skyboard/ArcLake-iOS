@@ -112,9 +112,18 @@ struct ArcFieldArraySection: View {
                         .foregroundColor(.white.opacity(0.3))
                         .frame(maxWidth: .infinity).padding(.vertical, 22)
                 } else {
-                    ForEach(labVM.selectedElements, id: \.id) { el in
-                        let order = labVM.arcSeqSelection.firstIndex(of: el.id)
-                        Button { labVM.toggleArcSelection(el.id) } label: {
+                    // Iterating with each atom's actual instance key now,
+                    // not el.id — with duplicate elements, every row for the
+                    // same element type used to share one identity in this
+                    // list, meaning tapping (or Select All including) any
+                    // copy toggled the exact same shared entry as every
+                    // other copy of that element, visibly confirmed by a
+                    // screenshot showing six duplicate Tantalum rows all
+                    // displaying the identical link-order badge.
+                    ForEach(Array(labVM.selectedElements.enumerated()), id: \.offset) { idx, el in
+                        let key = idx < labVM.selectedElementKeys.count ? labVM.selectedElementKeys[idx] : el.id
+                        let order = labVM.arcSeqSelection.firstIndex(of: key)
+                        Button { labVM.toggleArcSelection(key) } label: {
                             HStack {
                                 ZStack {
                                     Circle()

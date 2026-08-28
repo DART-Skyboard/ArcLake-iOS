@@ -321,9 +321,17 @@ extension ArcLabViewModel {
     // Select All / Deselect All for the Arc Edge field-array list — appends
     // every currently-visible element not already selected, in list order,
     // preserving whatever partial link-order selection already existed.
+    // Fixed to use each atom's own instance key instead of el.id: with
+    // duplicate elements, the previous version added the FIRST copy's
+    // plain id, then skipped every subsequent duplicate because that same
+    // id already "existed" in the selection — visibly confirmed by a
+    // screenshot showing six duplicate Tantalum rows all displaying the
+    // identical link-order badge, since they were all really just querying
+    // the one shared id.
     public func selectAllArcElements() {
-        for el in selectedElements where !arcSeqSelection.contains(el.id) {
-            arcSeqSelection.append(el.id)
+        for (idx, el) in selectedElements.enumerated() {
+            let key = idx < selectedElementKeys.count ? selectedElementKeys[idx] : el.id
+            if !arcSeqSelection.contains(key) { arcSeqSelection.append(key) }
         }
         rebuildArcMeasures()
     }
