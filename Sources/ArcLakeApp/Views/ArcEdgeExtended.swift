@@ -281,6 +281,11 @@ public final class ArcEdgeExtEngine: ObservableObject {
     @Published public var showGridOverlay: Bool = true
     @Published public var gridInfluence: Float = 0.8
     @Published public var docCircReadout: [String: Double] = [:]  // atomSymbol → C value
+    // How finely each velocity-potential curve is sampled — higher values
+    // trace a smoother, more detailed curve between two atoms; lower values
+    // give a coarser, more angular one. Was a hardcoded constant (24)
+    // before, with no way to adjust it.
+    @Published public var curveResolution: Int = 24
 
     private let DOC: Double = 3.0
     private let gridOverlay = ArcGridVectorOverlay.shared
@@ -379,17 +384,27 @@ public final class ArcEdgeExtEngine: ObservableObject {
 
     private func computeDomainArcs(domain: ArcMeasureDomain,
                                     labVM: ArcLabViewModel) -> [ArcEdgeExtResult] {
+        // Default path now uses each atom's actual instance key, not its
+        // plain element.id — atomNode(for:) only ever resolves the FIRST
+        // copy of any element type once duplicates exist, so with any
+        // duplicate elements selected, this used to silently fail to find
+        // a node for every copy after the first, skip that pair entirely,
+        // and produce no line at all — exactly matching "selected all the
+        // atoms... didn't see the lines turn on."
         let nodeIDs = labVM.arcSeqSelection.isEmpty
-            ? labVM.selectedElements.map { $0.id }
+            ? labVM.selectedElementKeys
             : labVM.arcSeqSelection
         guard nodeIDs.count >= 2 else { return [] }
 
-        // Flux sources — weighted by domain
+        // Flux sources — weighted by domain, keyed by instance so duplicates
+        // of the same element each keep their own separate entry instead of
+        // overwriting each other under a shared plain element.id.
         var fluxSources: [Int: (pos: SIMD3<Float>, weight: Float)] = [:]
-        for el in labVM.selectedElements {
-            guard let n = labVM.atomNode(for: el.id) else { continue }
+        for (idx, el) in labVM.selectedElements.enumerated() {
+            let key = idx < labVM.selectedElementKeys.count ? labVM.selectedElementKeys[idx] : el.id
+            guard let n = labVM.atomNode(for: key) else { continue }
             let weight = domainWeight(el: el, domain: domain)
-            fluxSources[el.id] = (n.presentation.simdWorldPosition, weight)
+            fluxSources[key] = (n.presentation.simdWorldPosition, weight)
         }
 
         func phi(_ p: SIMD3<Float>, excluding: Set<Int>) -> Double {
@@ -404,15 +419,29 @@ public final class ArcEdgeExtEngine: ObservableObject {
         var results = [ArcEdgeExtResult]()
         let fluxGain: Float = labVM.arcMeasureMode == .velocityPotential ? 0.42 : 0
 
+        // Match each nodeID against the actual (element, key) pairing —
+        // works correctly whether nodeIDs came from the now-fixed default
+        // path (instance keys) or from an explicit arcSeqSelection,
+        // instead of matching purely by element.id, which is exactly what
+        // silently broke every pair after the first copy of any duplicated
+        // element.
+        func elementAndKey(for id: Int) -> (ArcElement, Int)? {
+            for (idx, el) in labVM.selectedElements.enumerated() {
+                let key = idx < labVM.selectedElementKeys.count ? labVM.selectedElementKeys[idx] : el.id
+                if key == id || el.id == id { return (el, key) }
+            }
+            return nil
+        }
+
         for li in 0..<(nodeIDs.count - 1) {
-            guard let elA = labVM.selectedElements.first(where: { $0.id == nodeIDs[li] }),
-                  let elB = labVM.selectedElements.first(where: { $0.id == nodeIDs[li+1] }),
-                  let nA = labVM.atomNode(for: elA.id),
-                  let nB = labVM.atomNode(for: elB.id) else { continue }
+            guard let (elA, keyA) = elementAndKey(for: nodeIDs[li]),
+                  let (elB, keyB) = elementAndKey(for: nodeIDs[li+1]),
+                  let nA = labVM.atomNode(for: keyA),
+                  let nB = labVM.atomNode(for: keyB) else { continue }
 
             let pStart = nA.presentation.simdWorldPosition
             let pEnd   = nB.presentation.simdWorldPosition
-            let linkPair = Set([elA.id, elB.id])
+            let linkPair = Set([keyA, keyB])
 
             let arcDir = simd_normalize(pEnd - pStart)
             var arcUp = SIMD3<Float>(0, 1, 0)
@@ -424,7 +453,7 @@ public final class ArcEdgeExtEngine: ObservableObject {
             let sep = (Float(domIdx) - Float(ArcMeasureDomain.allCases.count - 1) / 2) * 0.22
             let offset = arcPerp * sep
 
-            let segs = 24
+            let segs = max(4, min(200, curveResolution))
             var pts = [SIMD3<Float>]()
             var phis = [Double]()
             for i in 0...segs {
@@ -605,6 +634,23 @@ struct ArcEdgeExtPanel: View {
                             .frame(width: 80)
                             .onChange(of: engine.gridInfluence) { _ in engine.compute(labVM: labVM) }
                         Text(String(format: "%.1f", engine.gridInfluence))
+                            .font(.system(size: 8, design: .monospaced))
+                            .foregroundColor(themeVM.accent)
+                    }
+
+                    HStack {
+                        Text("Curve resolution")
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.5))
+                        Spacer()
+                        Slider(value: Binding(
+                            get: { Double(engine.curveResolution) },
+                            set: { engine.curveResolution = Int($0) }
+                        ), in: 4...200)
+                            .tint(themeVM.accent)
+                            .frame(width: 100)
+                            .onChange(of: engine.curveResolution) { _ in engine.compute(labVM: labVM) }
+                        Text("\(engine.curveResolution) pts")
                             .font(.system(size: 8, design: .monospaced))
                             .foregroundColor(themeVM.accent)
                     }

@@ -574,7 +574,13 @@ public final class ArcLabViewModel: ObservableObject {
 
     public func clearElements() {
         selectedElements.removeAll()
+        selectedElementKeys.removeAll()
         atomNodes.values.forEach { $0.removeFromParentNode() }
+        atomNodes.removeAll()
+        atomPositions.removeAll()
+        atomPhysics.removeAll()
+        quantumAtoms.removeAll()
+        atomVelocities.removeAll()
         if activeTabIndex < tabStates.count {
             tabStates[activeTabIndex].elements = []
             tabStates[activeTabIndex].atomNodes = [:]
@@ -647,10 +653,37 @@ public final class ArcLabViewModel: ObservableObject {
     }
 
     public func rebuildAllAtoms() {
-        let elements = selectedElements
+        // Looping addElement() per element (the previous version) silently
+        // collapsed every duplicate of the same element type down to just
+        // one — addElement explicitly refuses to add a second copy of any
+        // element already present, which is correct for its OWN normal use
+        // (the Algebra Menu's single-atom binding), but wrong here, since
+        // this needs to restore EXACTLY what was there before, duplicates
+        // included. This is exactly what was happening every time particle
+        // resolution changed (or anything else triggered a rebuild) in a
+        // scene with more than one copy of the same element: the atom count
+        // would silently drop, and most atoms would end up frozen —
+        // whatever internal bookkeeping existed for the collapsed
+        // duplicates went stale and was never cleaned up or restored.
+        // Capturing the actual (element, key, position) triples first and
+        // rebuilding each one directly through its own preserved key avoids
+        // addElement's one-per-type restriction entirely.
+        let pairs = Array(zip(selectedElements, selectedElementKeys))
+        let oldPositions = atomPositions
         clearElements()
-        for el in elements { addElement(el) }
-        log("Rebuilt \(elements.count) atoms @ \(ptsPerComponent) pts/component")
+        for (element, key) in pairs {
+            let pos = oldPositions[key] ?? physicsPosition(for: element, index: selectedElements.count)
+            selectedElements.append(element)
+            selectedElementKeys.append(key)
+            atomPositions[key] = pos
+            atomPhysics[key] = ArcAtomPhysics(
+                element: element, gravityMS2: physics.gravity, temperatureK: physics.activeTab.ambientTempK)
+            buildPointCloudAtom(element, at: pos, instanceKey: key)
+        }
+        if activeTabIndex < tabStates.count {
+            tabStates[activeTabIndex].elements = selectedElements
+        }
+        log("Rebuilt \(pairs.count) atoms @ \(ptsPerComponent) pts/component")
     }
 
     // MARK: — Quantum physics simulation (web app applyNewPhysics parity)
