@@ -40,6 +40,10 @@ public struct MathTabView: View {
                 get: { Double(labVM.nucleonPointSize) },
                 set: { labVM.nucleonPointSize = CGFloat($0) }
             ), range: 0.005...0.06, format: "%.3f")
+            particleSlider("Neutrons/protons per nucleon", value: Binding(
+                get: { Double(labVM.ptsPerNucleon) },
+                set: { labVM.ptsPerNucleon = Int($0) }
+            ), range: 5...100, format: "%.0f pts")
         }
     }
 

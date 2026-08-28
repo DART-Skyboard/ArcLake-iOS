@@ -75,6 +75,9 @@ public final class ArcLabViewModel: ObservableObject {
     @Published public var ptsPerElectron: Int = 30 {
         didSet { ArcQuantumAtomBuilder.ptsPerElectron = ptsPerElectron; rebuildAllAtoms() }
     }
+    @Published public var ptsPerNucleon: Int = 30 {
+        didSet { ArcQuantumAtomBuilder.ptsPerNucleon = ptsPerNucleon; rebuildAllAtoms() }
+    }
     // Pixel size of each particle point — was engine-internal only (no UI,
     // no @Published bridge), unlike ptsPerElectron right above which already
     // had both. Bridged the same way for consistency.
@@ -852,6 +855,7 @@ public final class ArcLabViewModel: ObservableObject {
         }
 
         ArcQuantumAtomBuilder.ptsPerElectron = ptsPerElectron
+        ArcQuantumAtomBuilder.ptsPerNucleon = ptsPerNucleon
         // Pass the same key through so the returned ArcAtomData's own
         // elementId matches what atomNodes uses — without this, every
         // quantumAtoms entry for a duplicate element reported the same

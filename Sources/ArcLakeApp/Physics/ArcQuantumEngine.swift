@@ -161,14 +161,19 @@ struct ArcQuantumMath {
 }
 
 // MARK: — Shell color palette (matches web app _skyBlues)
+// A vibrant purple family — every electron reads clearly as "electron"
+// (distinct from the new green protons / blue neutrons) while shells still
+// vary by shade so different layers remain visually distinguishable, rather
+// than the previous per-shell rainbow (cyan/violet/green/yellow/pink/teal/
+// orange) which made electrons hard to identify as one consistent category.
 let _ArcShellColors: [(Float,Float,Float)] = [
-    (0.10, 0.85, 1.00),  // K — cyan
-    (0.55, 0.20, 1.00),  // L — violet
-    (0.20, 1.00, 0.60),  // M — green
-    (1.00, 0.85, 0.10),  // N — yellow
-    (1.00, 0.30, 0.70),  // O — pink
-    (0.30, 1.00, 1.00),  // P — teal
-    (1.00, 0.60, 0.20),  // Q — orange
+    (0.72, 0.35, 1.00),  // K — bright violet-purple
+    (0.62, 0.22, 0.98),  // L
+    (0.52, 0.15, 0.92),  // M
+    (0.78, 0.40, 1.00),  // N
+    (0.58, 0.10, 0.85),  // O
+    (0.68, 0.30, 1.00),  // P
+    (0.48, 0.08, 0.80),  // Q
 ]
 
 // MARK: — Point cloud geometry helper (SCNGeometry vertex source)
@@ -277,6 +282,7 @@ public struct ArcAtomData {
 public final class ArcQuantumAtomBuilder {
 
     public static var ptsPerElectron: Int = 30
+    public static var ptsPerNucleon: Int = 30   // protons/neutrons now get their own multi-particle cloud too, matching electrons
     public static var nucPtSize: CGFloat  = 0.018
     public static var elecPtSize: CGFloat = 0.022
 
@@ -303,26 +309,46 @@ public final class ArcQuantumAtomBuilder {
         let nucleusR = max(0.18, pow(Float(max(1,totalNucleons)), 1.0/3.0) * 0.12)
 
         // ── Nucleus point cloud ───────────────────────────────────────────
+        // Each individual proton/neutron now gets its own small multi-
+        // particle cluster (defaulting to 30, same adjustable count as
+        // electrons) instead of a single point each — the same point-cloud
+        // method already used for electrons, applied consistently here too.
         var nucPositions = [SIMD3<Float>]()
         var nucColors    = [SIMD3<Float>]()
+        let nucleonPts = max(1, min(500, ptsPerNucleon))
 
-        // Protons — Fibonacci sphere, orange-red
-        let pRGB: SIMD3<Float> = [1.0, 0.30, 0.10]
+        func randomOffsetInSphere(_ radius: Float) -> SIMD3<Float> {
+            while true {
+                let v = SIMD3<Float>(Float.random(in: -1...1), Float.random(in: -1...1), Float.random(in: -1...1))
+                if simd_length_squared(v) <= 1 { return v * radius }
+            }
+        }
+
+        // Protons — Fibonacci sphere placement per proton, green
+        let pRGB: SIMD3<Float> = [0.20, 0.85, 0.35]
+        let protonClusterR = nucleusR * 0.16
         for i in 0..<protons {
             let phi = acos(-1.0 + 2.0*Float(i)/Float(max(1,protons-1)))
             let theta = sqrt(Float(protons) * .pi) * phi
             let r = nucleusR * 0.78
-            nucPositions.append(SIMD3<Float>(r*sin(phi)*cos(theta), r*sin(phi)*sin(theta), r*cos(phi)))
-            nucColors.append(pRGB)
+            let center = SIMD3<Float>(r*sin(phi)*cos(theta), r*sin(phi)*sin(theta), r*cos(phi))
+            for _ in 0..<nucleonPts {
+                nucPositions.append(center + randomOffsetInSphere(protonClusterR))
+                nucColors.append(pRGB)
+            }
         }
-        // Neutrons — Fibonacci sphere, cyan-grey
-        let nRGB: SIMD3<Float> = [0.47, 0.69, 0.76]
+        // Neutrons — Fibonacci sphere placement per neutron, blue
+        let nRGB: SIMD3<Float> = [0.25, 0.55, 1.00]
+        let neutronClusterR = nucleusR * 0.16
         for i in 0..<neutrons {
             let phi = acos(-1.0 + 2.0*Float(i)/Float(max(1,neutrons-1)))
             let theta = sqrt(Float(neutrons) * .pi) * phi
             let r = nucleusR * 0.88
-            nucPositions.append(SIMD3<Float>(r*sin(phi)*cos(theta), r*sin(phi)*sin(theta), r*cos(phi)))
-            nucColors.append(nRGB)
+            let center = SIMD3<Float>(r*sin(phi)*cos(theta), r*sin(phi)*sin(theta), r*cos(phi))
+            for _ in 0..<nucleonPts {
+                nucPositions.append(center + randomOffsetInSphere(neutronClusterR))
+                nucColors.append(nRGB)
+            }
         }
 
         let nucleusCloud = arcMakePointCloud(positions: nucPositions, colors: nucColors,
