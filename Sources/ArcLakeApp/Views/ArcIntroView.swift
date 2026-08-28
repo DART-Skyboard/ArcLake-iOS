@@ -32,8 +32,18 @@ struct ArcIntroView: View {
                 .opacity(stage >= 7 ? 0.32 : 1)
                 .animation(.easeOut(duration: 1.6), value: stage)
 
-            ArcLakeLogoImage()
-                .frame(width: 210, height: 210)
+            // The same hummingbird mark used in the app's own toolbar
+            // (Image(systemName: "bird.fill") with this exact gradient) —
+            // replacing the circular ArcLakeLogo.png badge, which showed a
+            // second, unrelated illustration (a woman's profile) alongside
+            // the bird. This is the actual, real in-app mark.
+            Image(systemName: "bird.fill")
+                .font(.system(size: 108))
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [.cyan, Color(red: 0.4, green: 0.9, blue: 0.6)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing))
                 .shadow(color: .cyan.opacity(0.55), radius: 26)
                 .scaleEffect(stage >= 5 ? 1 : 0.7)
                 .rotationEffect(.degrees(stage >= 5 ? 0 : -6))
@@ -103,29 +113,6 @@ struct ArcIntroView: View {
     }
 }
 
-// MARK: — Real logo asset loader
-// ArcLakeLogo.png lives as a loose file under Resources/, not inside
-// Assets.xcassets — Image("ArcLakeLogo") only searches the asset catalog by
-// name and silently renders nothing for a loose file, which is why the
-// hummingbird mark never actually appeared. Loading it explicitly by path
-// is what actually works for a bundled-but-uncatalogued resource.
-private struct ArcLakeLogoImage: View {
-    private static let cached: UIImage? = {
-        guard let path = Bundle.main.path(forResource: "ArcLakeLogo", ofType: "png"),
-              let image = UIImage(contentsOfFile: path) else { return nil }
-        return image
-    }()
-
-    var body: some View {
-        if let ui = Self.cached {
-            Image(uiImage: ui).resizable().scaledToFit()
-        } else {
-            // Should never hit in practice, but never render a blank gap
-            Image(systemName: "atom").resizable().scaledToFit().foregroundColor(.cyan)
-        }
-    }
-}
-
 // MARK: — Orbital system (nucleus + three tilted electron shells)
 private struct OrbitalSystemView: View {
     let stage: Int
@@ -141,11 +128,15 @@ private struct OrbitalSystemView: View {
                 .opacity(stage >= 1 ? 1 : 0)
                 .animation(.spring(response: 0.7, dampingFraction: 0.6), value: stage)
 
-            shell(radiusX: 96,  radiusY: 96, tilt: 0,   color: .cyan,
+            // Scaled down from the original 96/168/240 radii — the
+            // outermost ring, combined with its tilt, was extending past
+            // both screen edges on a typical phone width instead of
+            // staying comfortably within view.
+            shell(radiusX: 62,  radiusY: 62, tilt: 0,   color: .cyan,
                   active: stage >= 2, period: 3.4)
-            shell(radiusX: 168, radiusY: 70, tilt: 18,  color: Color(red: 1, green: 0.31, blue: 0.62),
+            shell(radiusX: 108, radiusY: 45, tilt: 18,  color: Color(red: 1, green: 0.31, blue: 0.62),
                   active: stage >= 3, period: 4.6)
-            shell(radiusX: 240, radiusY: 88, tilt: -24, color: Color(red: 1, green: 0.72, blue: 0.31),
+            shell(radiusX: 154, radiusY: 57, tilt: -24, color: Color(red: 1, green: 0.72, blue: 0.31),
                   active: stage >= 4, period: 5.8)
         }
     }
