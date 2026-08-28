@@ -181,6 +181,14 @@ public final class ArcLabViewModel: ObservableObject {
     private struct TabState {
         var scene: SCNScene
         var elements: [ArcElement]
+        // Added alongside elements — was missing entirely, so switching
+        // scene tabs restored `elements` correctly but left
+        // selectedElementKeys holding whatever the PREVIOUS tab had,
+        // completely out of sync in both length and content with the
+        // newly-restored elements array. Every instance-key lookup added
+        // for the collapse/Arc-Edge fixes (which zip elements with keys by
+        // index) would then silently mismatch after any tab switch.
+        var elementKeys: [Int]
         var atomNodes: [Int: SCNNode]
         var atomPositions: [Int: SIMD3<Float>]
         var atomPhysics: [Int: ArcAtomPhysics]
@@ -188,6 +196,7 @@ public final class ArcLabViewModel: ObservableObject {
         init() {
             scene = SCNScene()
             elements = []
+            elementKeys = []
             atomNodes = [:]
             atomPositions = [:]
             atomPhysics = [:]
@@ -462,6 +471,7 @@ public final class ArcLabViewModel: ObservableObject {
         // Sync to tab state
         if activeTabIndex < tabStates.count {
             tabStates[activeTabIndex].elements = selectedElements
+            tabStates[activeTabIndex].elementKeys = selectedElementKeys
         }
         let pos = physicsPosition(for: element, index: selectedElements.count - 1)
         atomPositions[element.id] = pos
@@ -475,9 +485,6 @@ public final class ArcLabViewModel: ObservableObject {
     // (unlike addElement which blocks duplicates)
     public func addElementInstance(_ element: ArcElement) {
         selectedElements.append(element)
-        if activeTabIndex < tabStates.count {
-            tabStates[activeTabIndex].elements = selectedElements
-        }
         // Spacing scales with the element's own size (more electron shells
         // = a physically larger atom) instead of a fixed 2.5-unit radius —
         // the fixed radius was small enough relative to larger atoms'
@@ -503,6 +510,16 @@ public final class ArcLabViewModel: ObservableObject {
         )
         let key = element.id + instanceIdx * 1000
         selectedElementKeys.append(key)
+        // Sync to tab state — moved here, after the key is actually
+        // appended, rather than right after selectedElements.append()
+        // above. Syncing too early saved elementKeys one entry short of
+        // elements for every new instance, which (combined with tab-switch
+        // never touching elementKeys at all, fixed separately) contributed
+        // to the elements/elementKeys mismatch that broke Arc Edge lookups.
+        if activeTabIndex < tabStates.count {
+            tabStates[activeTabIndex].elements = selectedElements
+            tabStates[activeTabIndex].elementKeys = selectedElementKeys
+        }
         atomPositions[key] = pos
         atomPhysics[key] = ArcAtomPhysics(
             element: element, gravityMS2: physics.gravity, temperatureK: physics.activeTab.ambientTempK)
@@ -583,6 +600,7 @@ public final class ArcLabViewModel: ObservableObject {
         atomVelocities.removeAll()
         if activeTabIndex < tabStates.count {
             tabStates[activeTabIndex].elements = []
+            tabStates[activeTabIndex].elementKeys = []
             tabStates[activeTabIndex].atomNodes = [:]
             tabStates[activeTabIndex].atomPositions = [:]
         }
@@ -621,6 +639,7 @@ public final class ArcLabViewModel: ObservableObject {
         // Restore tab scene + elements
         scene = tabStates[index].scene
         selectedElements = tabStates[index].elements
+        selectedElementKeys = tabStates[index].elementKeys
 
         // Restore CFD if this tab had it active
         if tabStates[index].isCFDActive {
@@ -682,6 +701,7 @@ public final class ArcLabViewModel: ObservableObject {
         }
         if activeTabIndex < tabStates.count {
             tabStates[activeTabIndex].elements = selectedElements
+            tabStates[activeTabIndex].elementKeys = selectedElementKeys
         }
         log("Rebuilt \(pairs.count) atoms @ \(ptsPerComponent) pts/component")
     }
