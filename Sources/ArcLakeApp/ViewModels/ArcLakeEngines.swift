@@ -637,7 +637,18 @@ extension ArcLabViewModel {
                 // not the full product, so heavy pairs don't dwarf light
                 // ones by orders of magnitude at their own equilibrium.
                 let massScale = (bodies[i].blueprint * bodies[j].blueprint).squareRoot()
-                let f = G * massScale * coupling * (attractive - repulsive) * 0.05
+                let f = G * massScale * coupling * (attractive - repulsive) * 0.6
+                // Bumped from 0.05 — verified numerically the previous
+                // coefficient produced forces of ~0.02-0.03 for heavy
+                // elements even near their own crossover distance, which
+                // combined with per-frame viscosity damping and gravity
+                // already settling atoms to the floor, was too weak to
+                // produce any visible lateral movement — what looked like
+                // "stuttering in place" was just the harmless, separate
+                // Brownian jitter term with no real drift underneath it.
+                // This keeps the same safety mechanisms (repulsion, cutoff,
+                // neighbor normalization, mass-scaled equilibrium) that
+                // prevent collapse, just strong enough to actually see.
                 let capped = max(-0.5, min(f, 0.5))
                 let n = Float(max(1, max(neighborCount[i], neighborCount[j])))
                 vel += simd_normalize(dvec) * (capped / n) * dt
@@ -666,6 +677,29 @@ extension ArcLabViewModel {
                               Float.random(in: -jitter...jitter))
             node.simdPosition = p
             atomVelocities[bodies[i].key] = vel
+
+            // Per-particle electron jitter — the shader modifier itself is
+            // attached once at atom-build time (ArcQuantumAtomBuilder), but
+            // nothing was ever driving its amplitude here, in the function
+            // that's actually running every frame; it was being set from
+            // ArcQuantumEngine.tick(), which is dead code never called from
+            // any view — the exact same mistake as the collapse bug, just
+            // in a different corner of the physics. Each atom's own
+            // orbital cloud child gets its amplitude from THIS atom's own
+            // local speed and the shared environment temperature, so
+            // faster-moving or hotter atoms show visibly more energetic
+            // electrons than a slow/cool one.
+            let tempFactor = max(0, Float(physics.temperature) - 32) / 212.0
+            let localSpeed = simd_length(vel)
+            let thermalAmplitude = tempFactor * 0.09 + localSpeed * 4.5
+            // node is already THIS specific atom's root (correctly
+            // resolved above via the instance key) — its orbital cloud
+            // child is named "_orbitalCloud:<plain element id>" regardless
+            // of instance, so match by prefix rather than trying to rebuild
+            // an exact name from bodies[i].key, which would only ever match
+            // the first copy of any element type.
+            node.childNodes.first(where: { $0.name?.hasPrefix("_orbitalCloud:") == true })?
+                .geometry?.setValue(thermalAmplitude, forKey: "u_thermalAmplitude")
         }
 
         if isRecording {
