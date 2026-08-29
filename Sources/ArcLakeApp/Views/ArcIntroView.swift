@@ -115,7 +115,9 @@ struct ArcIntroView: View {
 // ArcLakeLogo.png badge never appeared before it was fixed). Loading it
 // explicitly by path is what actually works for a bundled-but-uncatalogued
 // resource.
-private struct HummingbirdImage: View {
+// Not private — reused in ArcRootView.swift's toolbar too, so both the
+// intro reveal and the in-app header show the exact same artwork.
+struct HummingbirdImage: View {
     private static let cached: UIImage? = {
         guard let path = Bundle.main.path(forResource: "ArcLakeHummingbird", ofType: "png"),
               let image = UIImage(contentsOfFile: path) else { return nil }

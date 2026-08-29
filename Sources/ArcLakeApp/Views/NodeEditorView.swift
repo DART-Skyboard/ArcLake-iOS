@@ -654,6 +654,19 @@ struct NodeEditorView: View {
                 pendingFrom = nil
                 return
             }
+            // Same cross-type mechanism, extended to the Bond socket — a
+            // real, separate feature from Element binding, not the same
+            // fix: this places both atoms on the Molecule Canvas (creating
+            // each only once) and creates a genuine MolBond between them,
+            // confirmed by design as the correct behavior rather than a
+            // Node-Editor-only cosmetic link.
+            if socket.kind == .bond, let fromNodeId = pendingFrom,
+               let elNode = nodes.first(where: { $0.id == fromNodeId }),
+               let key = elNode.elementKey {
+                labVM.connectElementToBondSocket(key: key, socketId: socket.id, onEquationNode: node.id)
+                pendingFrom = nil
+                return
+            }
             if let pending = eqPendingSocket {
                 if pending.isOutgoing != isOutgoing {
                     let from = pending.isOutgoing ? pending : (nodeId: node.id, socketId: socket.id, isOutgoing: true)
@@ -774,12 +787,21 @@ struct NodeEditorView: View {
                 if let pending = eqPendingSocket,
                    let eqNode = labVM.equationNodes.first(where: { $0.id == pending.nodeId }),
                    let socket = (pending.isOutgoing ? eqNode.outgoingSockets : eqNode.incomingSockets)
-                       .first(where: { $0.id == pending.socketId }),
-                   socket.kind == .elementSelection,
-                   let key = node.elementKey {
-                    labVM.assignElement(key: key, toEquationNode: pending.nodeId)
-                    eqPendingSocket = nil
-                    return
+                       .first(where: { $0.id == pending.socketId }) {
+                    if socket.kind == .elementSelection, let key = node.elementKey {
+                        labVM.assignElement(key: key, toEquationNode: pending.nodeId)
+                        eqPendingSocket = nil
+                        return
+                    }
+                    // Same real Bond feature as the other tap order — see
+                    // connectElementToBondSocket for what this actually
+                    // does (Molecule Canvas atoms + a genuine MolBond, not
+                    // a cosmetic line).
+                    if socket.kind == .bond, let key = node.elementKey {
+                        labVM.connectElementToBondSocket(key: key, socketId: socket.id, onEquationNode: pending.nodeId)
+                        eqPendingSocket = nil
+                        return
+                    }
                 }
                 if let from = pendingFrom {
                     if from != node.id {

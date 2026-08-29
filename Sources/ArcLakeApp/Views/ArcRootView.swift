@@ -225,16 +225,12 @@ struct DARTTopBar: View {
         HStack(spacing: 0) {
             // DART wordmark
             HStack(spacing: 6) {
-                // Hummingbird accent mark
-                Image(systemName: "bird.fill")
-                    .font(.system(size: 13))
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [themeVM.accent, Color(red:0.4, green:0.9, blue:0.6)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
+                // Hummingbird accent mark — the same custom illustration
+                // used in the intro reveal now, not the generic Apple
+                // bird.fill symbol, so every hummingbird mark in the app is
+                // visually consistent with one source image.
+                HummingbirdImage()
+                    .frame(width: 13, height: 13)
                 Text("ArcLake")
                     .font(.custom("Orbitron-Bold", size: 12))
                     .foregroundColor(.white)

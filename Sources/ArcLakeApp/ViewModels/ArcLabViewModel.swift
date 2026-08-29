@@ -1221,6 +1221,73 @@ public final class ArcLabViewModel: ObservableObject {
         log("Assigned element to equation node")
     }
 
+    // Maps a scene atom's instance key to its Molecule Canvas counterpart,
+    // creating one the first time it's needed and reusing it on every
+    // later connection — so connecting the same scene atom to a second
+    // Bond socket later doesn't create a duplicate canvas atom for it.
+    @Published public var elementKeyToCanvasAtomId: [Int: UUID] = [:]
+
+    private func getOrCreateCanvasAtom(forElementKey key: Int) -> UUID? {
+        if let existing = elementKeyToCanvasAtomId[key],
+           molAtoms.contains(where: { $0.id == existing }) {
+            return existing
+        }
+        guard let elIdx = selectedElementKeys.firstIndex(of: key) else { return nil }
+        let element = selectedElements[elIdx]
+        let pos = CGPoint(x: 80 + Double(molAtoms.count % 4) * 80, y: 120 + Double(molAtoms.count / 4) * 80)
+        let atom = MolAtomNode(symbol: element.elementSymbol, z: element.protons,
+                                color: element.category.color, at: pos)
+        molAtoms.append(atom)
+        elementKeyToCanvasAtomId[key] = atom.id
+        isMolCanvasVisible = true
+        return atom.id
+    }
+
+    // The other half of "math nodes don't connect to element nodes" — this
+    // one for the Bond socket specifically, confirmed as its own real
+    // feature (not the same fix as Element): connecting a plain scene
+    // element node to an equation node's Bond socket should place both
+    // atoms on the Molecule Canvas (creating each one only once, reusing
+    // it on later connections) and create a REAL MolBond between them, not
+    // just a cosmetic line in the Node Editor. Requires the equation node
+    // to already have its own element assigned first — a bond fundamentally
+    // needs two actual atoms, so binding one to an undefined node isn't
+    // meaningful. Once created, the existing socketDisplayValue/
+    // setEquationSocketValue machinery (already fully working) reads and
+    // writes this same real MolBond directly — bond order changes here
+    // immediately reflect on the Molecule Canvas and vice versa, since
+    // both sides always read the live molBonds array rather than a cached
+    // copy, and disconnecting the bond on the canvas simply makes this
+    // socket fall back to showing "—" rather than pointing at a deleted
+    // entry.
+    @discardableResult
+    public func connectElementToBondSocket(key: Int, socketId: UUID, onEquationNode nodeId: UUID) -> Bool {
+        guard let idx = equationNodes.firstIndex(where: { $0.id == nodeId }),
+              let ownKey = equationNodes[idx].boundElementKey,
+              let ownAtomId = getOrCreateCanvasAtom(forElementKey: ownKey),
+              let otherAtomId = getOrCreateCanvasAtom(forElementKey: key),
+              ownAtomId != otherAtomId else {
+            log("Can't connect Bond — assign this node's own element first")
+            return false
+        }
+        if equationNodes[idx].boundAtomId == nil {
+            equationNodes[idx].boundAtomId = ownAtomId
+        }
+        addMolBond(from: ownAtomId, to: otherAtomId)
+        guard let bond = molBonds.first(where: {
+            ($0.fromId == ownAtomId && $0.toId == otherAtomId) || ($0.fromId == otherAtomId && $0.toId == ownAtomId)
+        }) else { return false }
+
+        func apply(_ socket: inout EquationSocket) { socket.linkedBondId = bond.id }
+        if let i = equationNodes[idx].incomingSockets.firstIndex(where: { $0.id == socketId }) {
+            apply(&equationNodes[idx].incomingSockets[i])
+        } else if let i = equationNodes[idx].outgoingSockets.firstIndex(where: { $0.id == socketId }) {
+            apply(&equationNodes[idx].outgoingSockets[i])
+        }
+        log("Connected Bond — real Molecule Canvas bond created")
+        return true
+    }
+
     private func materializeCanvasLink(for conn: EquationConnection) {
         guard let fromNode = equationNodes.first(where: { $0.id == conn.fromNodeId }),
               let toNode   = equationNodes.first(where: { $0.id == conn.toNodeId }),
@@ -1322,6 +1389,15 @@ public final class ArcLabViewModel: ObservableObject {
             n.incomingSockets.contains(where: { $0.id == socketId && $0.kind == .elementSelection })
         }) {
             return node.boundElementKey != nil
+        }
+        // Same reasoning, for Bond — connectElementToBondSocket sets
+        // linkedBondId directly rather than creating an EquationConnection,
+        // so this socket would otherwise show hollow even once a real
+        // MolBond exists for it.
+        for node in equationNodes {
+            for s in node.incomingSockets + node.outgoingSockets where s.id == socketId && s.kind == .bond {
+                return s.linkedBondId != nil
+            }
         }
         return false
     }
