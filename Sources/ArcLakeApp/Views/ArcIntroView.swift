@@ -32,18 +32,12 @@ struct ArcIntroView: View {
                 .opacity(stage >= 7 ? 0.32 : 1)
                 .animation(.easeOut(duration: 1.6), value: stage)
 
-            // The same hummingbird mark used in the app's own toolbar
-            // (Image(systemName: "bird.fill") with this exact gradient) —
-            // replacing the circular ArcLakeLogo.png badge, which showed a
-            // second, unrelated illustration (a woman's profile) alongside
-            // the bird. This is the actual, real in-app mark.
-            Image(systemName: "bird.fill")
-                .font(.system(size: 108))
-                .foregroundStyle(
-                    LinearGradient(
-                        colors: [.cyan, Color(red: 0.4, green: 0.9, blue: 0.6)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing))
+            // Replaced the generic Apple-default bird.fill symbol with the
+            // user's own hummingbird illustration — a real, custom-designed
+            // vector-style artwork (matching what's used on the website),
+            // not a system glyph standing in for it.
+            HummingbirdImage()
+                .frame(width: 130, height: 130)
                 .shadow(color: .cyan.opacity(0.55), radius: 26)
                 .scaleEffect(stage >= 5 ? 1 : 0.7)
                 .rotationEffect(.degrees(stage >= 5 ? 0 : -6))
@@ -114,6 +108,32 @@ struct ArcIntroView: View {
 }
 
 // MARK: — Orbital system (nucleus + three tilted electron shells)
+// MARK: — Hummingbird artwork loader
+// ArcLakeHummingbird.png lives as a loose file under Resources/, not inside
+// Assets.xcassets — Image("name") only searches the asset catalog by name
+// and silently renders nothing for a loose file (the same reason the old
+// ArcLakeLogo.png badge never appeared before it was fixed). Loading it
+// explicitly by path is what actually works for a bundled-but-uncatalogued
+// resource.
+private struct HummingbirdImage: View {
+    private static let cached: UIImage? = {
+        guard let path = Bundle.main.path(forResource: "ArcLakeHummingbird", ofType: "png"),
+              let image = UIImage(contentsOfFile: path) else { return nil }
+        return image
+    }()
+
+    var body: some View {
+        if let ui = Self.cached {
+            Image(uiImage: ui).resizable().scaledToFit()
+        } else {
+            // Should never hit in practice, but never render a blank gap
+            Image(systemName: "bird.fill")
+                .resizable().scaledToFit()
+                .foregroundColor(.cyan)
+        }
+    }
+}
+
 private struct OrbitalSystemView: View {
     let stage: Int
 
