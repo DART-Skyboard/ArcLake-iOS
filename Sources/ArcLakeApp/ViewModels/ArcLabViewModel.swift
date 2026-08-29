@@ -1197,6 +1197,22 @@ public final class ArcLabViewModel: ObservableObject {
         equationConnections.removeAll { $0.id == connectionId }
     }
 
+    // Binds a specific scene atom (by its real instance key, not just which
+    // element type it is) to an equation node's Element socket. This is the
+    // actual missing piece that made "math nodes don't connect to element
+    // nodes" true — dragging/tapping between a plain element node and an
+    // equation node's Element socket had no code path leading here at all;
+    // the two node systems used completely separate connection state and
+    // never recognized each other as valid endpoints.
+    public func assignElement(key: Int, toEquationNode nodeId: UUID) {
+        guard let idx = equationNodes.firstIndex(where: { $0.id == nodeId }) else { return }
+        equationNodes[idx].boundElementKey = key
+        if let elIdx = selectedElementKeys.firstIndex(of: key) {
+            equationNodes[idx].boundElementSymbol = selectedElements[elIdx].elementSymbol
+        }
+        log("Assigned element to equation node")
+    }
+
     private func materializeCanvasLink(for conn: EquationConnection) {
         guard let fromNode = equationNodes.first(where: { $0.id == conn.fromNodeId }),
               let toNode   = equationNodes.first(where: { $0.id == conn.toNodeId }),
@@ -1287,7 +1303,19 @@ public final class ArcLabViewModel: ObservableObject {
     /// Whether a given socket currently has any curve connection touching
     /// it — drives the empty-vs-filled circle in the Node Editor.
     public func isEquationSocketConnected(_ socketId: UUID) -> Bool {
-        equationConnections.contains { $0.fromSocketId == socketId || $0.toSocketId == socketId }
+        if equationConnections.contains(where: { $0.fromSocketId == socketId || $0.toSocketId == socketId }) {
+            return true
+        }
+        // An Element socket bound via assignElement(key:toEquationNode:)
+        // doesn't create an EquationConnection at all — it sets
+        // boundElementKey directly — so without this it would show hollow
+        // (looking unconnected) even after a successful binding.
+        if let node = equationNodes.first(where: { n in
+            n.incomingSockets.contains(where: { $0.id == socketId && $0.kind == .elementSelection })
+        }) {
+            return node.boundElementKey != nil
+        }
+        return false
     }
 
     /// The write half — edits made in the Algebra Menu or Node Editor go

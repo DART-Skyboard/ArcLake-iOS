@@ -66,6 +66,12 @@ struct NodeEditorView: View {
         var color: Color
         var ports: [String]
         var groupId: UUID? = nil
+        // The specific scene atom this card represents, when type == .element
+        // — its real instance key (matching labVM.selectedElementKeys), not
+        // just which element type it is. Needed to correctly bind a
+        // specific atom (not just "some Tantalum") to an equation node's
+        // Element socket when duplicates of the same element exist.
+        var elementKey: Int? = nil
     }
 
     struct NodeConnection: Identifiable {
@@ -133,25 +139,35 @@ struct NodeEditorView: View {
         selectedForGroup = []
     }
 
-    // Atoms in the ACTIVE scene tab → element nodes (added when atoms add)
+    // Atoms in the ACTIVE scene tab → element nodes (added when atoms add).
+    // Keyed by each atom's actual instance key now, not a title string built
+    // from its plain element id — with duplicate elements (e.g. six
+    // Tantalum atoms, all sharing the same el.id), the old title-based
+    // dedup check meant every copy after the first was silently skipped,
+    // since "Ta (73)" already "existed" as a title regardless of which
+    // specific atom it was meant to represent.
     private func syncFromSceneAtoms() {
-        for el in labVM.selectedElements {
-            let title = "\(el.elementSymbol) (\(el.id))"
-            if !nodes.contains(where: { $0.title == title }) {
-                nodes.append(EditorNode(
-                    type: .element, title: title,
-                    position: CGPoint(
-                        x: 50 + CGFloat(nodes.count % 5) * 90,
-                        y: 50 + CGFloat(nodes.count / 5) * 80),
-                    color: Color(el.category.color),
-                    ports: ["in","out"]))
-            }
+        for (idx, el) in labVM.selectedElements.enumerated() {
+            let key = idx < labVM.selectedElementKeys.count ? labVM.selectedElementKeys[idx] : el.id
+            guard !nodes.contains(where: { $0.elementKey == key }) else { continue }
+            let title = "\(el.elementSymbol) (\(key))"
+            nodes.append(EditorNode(
+                type: .element, title: title,
+                position: CGPoint(
+                    x: 50 + CGFloat(nodes.count % 5) * 90,
+                    y: 50 + CGFloat(nodes.count / 5) * 80),
+                color: Color(el.category.color),
+                ports: ["in","out"],
+                elementKey: key))
         }
-        // Remove nodes for atoms no longer in the scene (scene-pattern titles only)
-        let valid = Set(labVM.selectedElements.map { "\($0.elementSymbol) (\($0.id))" })
+        // Remove nodes for atoms no longer in the scene, matched by key —
+        // not by re-deriving a title string, which broke the moment two
+        // atoms could share a symbol.
+        let validKeys = Set((0..<labVM.selectedElements.count).map { i in
+            i < labVM.selectedElementKeys.count ? labVM.selectedElementKeys[i] : labVM.selectedElements[i].id
+        })
         nodes.removeAll { n in
-            n.type == .element && n.title.hasSuffix(")") && n.title.contains(" (")
-                && !valid.contains(n.title)
+            n.type == .element && n.elementKey != nil && !validKeys.contains(n.elementKey!)
         }
     }
 
@@ -401,6 +417,14 @@ struct NodeEditorView: View {
                     // instead of a separate sibling view.
                     ForEach(eqGroupBoundaries, id: \.groupId) { g in eqGroupBoundaryView(g) }
                     ForEach(labVM.equationConnections) { conn in eqConnectionPath(conn) }
+                    // The actual new connection type — a plain element
+                    // node bound to an equation node's Element socket.
+                    // Drawn for every equation node with boundElementKey
+                    // set, from that specific atom's own node card (not
+                    // just "some node of the same element") to the socket.
+                    ForEach(labVM.equationNodes.filter { $0.boundElementKey != nil }) { node in
+                        elementBindingPath(node)
+                    }
                     ForEach(labVM.equationNodes) { node in eqNodeCard(node) }
                 }
                 .offset(canvasOffset)
@@ -552,6 +576,19 @@ struct NodeEditorView: View {
         // equation-node connections weren't registering while the generic
         // system's (Button-based) ports worked fine.
         Button {
+            // Cross-type connection, other direction: a plain element
+            // node's port was tapped first (pendingFrom set), and now
+            // THIS equation node's Element socket is tapped — bind that
+            // element. Checked before the equation-to-equation path so an
+            // in-flight plain-node tap always resolves here when this
+            // socket is the Element kind, regardless of tap order.
+            if socket.kind == .elementSelection, let fromNodeId = pendingFrom,
+               let elNode = nodes.first(where: { $0.id == fromNodeId }),
+               let key = elNode.elementKey {
+                labVM.assignElement(key: key, toEquationNode: node.id)
+                pendingFrom = nil
+                return
+            }
             if let pending = eqPendingSocket {
                 if pending.isOutgoing != isOutgoing {
                     let from = pending.isOutgoing ? pending : (nodeId: node.id, socketId: socket.id, isOutgoing: true)
@@ -621,6 +658,22 @@ struct NodeEditorView: View {
     }
 
     @ViewBuilder
+    private func elementBindingPath(_ eqNode: EquationNode) -> some View {
+        if let key = eqNode.boundElementKey,
+           let elNode = nodes.first(where: { $0.elementKey == key }),
+           let socket = eqNode.incomingSockets.first(where: { $0.kind == .elementSelection }),
+           let b = eqSocketWorldPoint(nodeId: eqNode.id, socketId: socket.id, isOutgoing: false) {
+            let a = outSocketPoint(elNode)
+            Path { p in
+                p.move(to: a)
+                let midX = (a.x + b.x) / 2
+                p.addCurve(to: b, control1: CGPoint(x: midX, y: a.y), control2: CGPoint(x: midX, y: b.y))
+            }
+            .stroke(Color.cyan.opacity(0.6), style: StrokeStyle(lineWidth: 1.5))
+        }
+    }
+
+    @ViewBuilder
     private func eqConnectionPath(_ conn: EquationConnection) -> some View {
         if let a = eqSocketWorldPoint(nodeId: conn.fromNodeId, socketId: conn.fromSocketId, isOutgoing: true),
            let b = eqSocketWorldPoint(nodeId: conn.toNodeId, socketId: conn.toSocketId, isOutgoing: false) {
@@ -644,6 +697,25 @@ struct NodeEditorView: View {
             accent: themeVM.accent,
             onTap: { zTop = node.id },
             onPortTap: { port in
+                // Cross-type connection: an equation node's Element socket
+                // was tapped first (eqPendingSocket set), and now a plain
+                // element node's port is tapped — bind that specific atom
+                // to the equation node. This is the actual missing link:
+                // the two systems previously used entirely separate pending-
+                // connection state and never checked each other at all, so
+                // an element node could never be wired to an equation
+                // node's Element socket no matter what was tapped in what
+                // order.
+                if let pending = eqPendingSocket,
+                   let eqNode = labVM.equationNodes.first(where: { $0.id == pending.nodeId }),
+                   let socket = (pending.isOutgoing ? eqNode.outgoingSockets : eqNode.incomingSockets)
+                       .first(where: { $0.id == pending.socketId }),
+                   socket.kind == .elementSelection,
+                   let key = node.elementKey {
+                    labVM.assignElement(key: key, toEquationNode: pending.nodeId)
+                    eqPendingSocket = nil
+                    return
+                }
                 if let from = pendingFrom {
                     if from != node.id {
                         connections.append(NodeConnection(

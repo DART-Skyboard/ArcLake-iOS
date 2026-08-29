@@ -199,12 +199,15 @@ public struct EquationNode: Identifiable, Codable {
     // free-floating equation node not tied to a placed atom yet.
     public var boundAtomId: UUID? = nil
 
-    // Which SCENE element (by symbol — scene elements are a set, not
-    // individually-placed instances with their own id, unlike Molecule
-    // Canvas atoms) this node is about. This is the primary binding for
-    // the "one node pertains to one element" workflow — molecule-canvas
-    // atom binding (above) is a separate, additional path specifically for
-    // bond/delta sync with the canvas.
+    // Which SCENE element this node is about. boundElementKey is the real
+    // binding now — it's each specific atom's actual instance key (matching
+    // selectedElementKeys elsewhere), not just its symbol. Binding by symbol
+    // alone was ambiguous the moment a scene had more than one copy of the
+    // same element (e.g. six Tantalum atoms) — there was no way to tell
+    // which specific one a node meant. boundElementSymbol is kept only for
+    // display/backward-compatibility, never as the source of truth for
+    // which atom this node actually refers to.
+    public var boundElementKey: Int? = nil
     public var boundElementSymbol: String? = nil
 
     // "Most Outer Parentheses Math Operator Group Nest" — nodes can nest
