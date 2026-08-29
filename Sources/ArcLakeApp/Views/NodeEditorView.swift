@@ -555,7 +555,7 @@ struct NodeEditorView: View {
         // logic already working in the Algebra Menu sidebar
         // (MathTabView's socketValueControl), just laid out for this
         // node's much narrower row.
-        HStack(spacing: 3) {
+        HStack(spacing: 6) {
             if !isOutgoing {
                 eqSocketDot(socket, node: node, isOutgoing: false)
                 eqValueControl(socket, node: node)
@@ -684,10 +684,15 @@ struct NodeEditorView: View {
                 .fill(connected ? Color(uiColor: socket.kind.color) : Color.clear)
                 .frame(width: 8, height: 8)
                 .overlay(Circle().stroke(connected ? Color.white.opacity(0.4) : Color(uiColor: socket.kind.color), lineWidth: connected ? 0.5 : 1.5))
-                // Real tap target bigger than the 8pt visual dot — matches
-                // how much more forgiving the generic system's Button-based
-                // ports are to actually hit with a finger.
-                .contentShape(Circle().inset(by: -8))
+                // Reduced from -8 to -4 — the wider 24pt hit circle was
+                // overlapping eqValueControl's Menu/TextField sitting right
+                // next to it in this same narrow ~75pt-wide row (added in a
+                // later build), which almost certainly explains why only
+                // Element's socket (a plain, non-interactive Text label,
+                // with nothing nearby competing for the gesture) kept
+                // working while every socket with a real picker or text
+                // field next to it stopped registering taps at all.
+                .contentShape(Circle().inset(by: -4))
         }
         .buttonStyle(.plain)
     }
