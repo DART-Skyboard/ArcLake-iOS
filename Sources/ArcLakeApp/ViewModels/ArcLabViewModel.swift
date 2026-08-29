@@ -31,7 +31,22 @@ public final class ArcLabViewModel: ObservableObject {
 
     // ── Particle resolution — pts per component (proton/neutron/electron)
     // Default 30, user-adjustable in Physics tab
-    @Published public var ptsPerComponent: Int = 30   // range 1…3000 (web parity)
+    // Was completely disconnected from actual rendering — had no didSet
+    // at all, unlike ptsPerElectron/ptsPerNucleon below, which both
+    // correctly propagate to ArcQuantumAtomBuilder and trigger a rebuild.
+    // Changing this slider or tapping a preset updated only its own
+    // displayed value and did nothing to the real particle count, exactly
+    // matching "the particle count remains the same, the default" — this
+    // is the one property the Physics tab's UI actually binds to, driving
+    // both nucleus and electron density together per its own on-screen
+    // label ("(p+n) x ptsPerComponent nucleus + electrons x ptsPerComponent
+    // shells").
+    @Published public var ptsPerComponent: Int = 30 {   // range 1…3000 (web parity)
+        didSet {
+            ptsPerElectron = ptsPerComponent
+            ptsPerNucleon = ptsPerComponent
+        }
+    }
 
     // ── Arc Edge Field Array state ───────────────────────────────────
     @Published public var arcAllSceneComponent: ArcComponentField? = nil

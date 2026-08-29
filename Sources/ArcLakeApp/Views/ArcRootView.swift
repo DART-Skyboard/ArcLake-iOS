@@ -229,8 +229,16 @@ struct DARTTopBar: View {
                 // used in the intro reveal now, not the generic Apple
                 // bird.fill symbol, so every hummingbird mark in the app is
                 // visually consistent with one source image.
+                // Increased from 13x13 — the source PNG has its own
+                // transparent padding around the bird shape (unlike an SF
+                // Symbol glyph, which fills most of its bounding box), so
+                // matching the old symbol's frame size made the actual
+                // visible artwork look noticeably smaller than the mark it
+                // replaced. This doesn't change the header bar's own
+                // height — the HStack simply centers a taller icon
+                // alongside the text.
                 HummingbirdImage()
-                    .frame(width: 13, height: 13)
+                    .frame(width: 22, height: 22)
                 Text("ArcLake")
                     .font(.custom("Orbitron-Bold", size: 12))
                     .foregroundColor(.white)
