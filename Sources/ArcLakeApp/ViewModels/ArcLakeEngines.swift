@@ -210,9 +210,19 @@ extension ArcLabViewModel {
         }
 
         // Sequential links: N1→N2, N2→N3, …
-        for li in 0..<(nodeIDs.count - 1) {
+        // Sequential N1->N2->N3... links, plus one extra closing link
+        // (last -> first) when arcClosedLoop is on. Recomputed fresh every
+        // call, so it always reflects whichever atoms are CURRENTLY first
+        // and last in nodeIDs — adding or removing a selection updates
+        // which pair the closing arc spans automatically, no separate
+        // bookkeeping needed.
+        var linkPairs: [(Int, Int)] = (0..<(nodeIDs.count - 1)).map { ($0, $0 + 1) }
+        if arcClosedLoop && nodeIDs.count >= 2 {
+            linkPairs.append((nodeIDs.count - 1, 0))
+        }
+        for (li, liNext) in linkPairs {
             guard let (elA, keyA) = arcElementAndKey(for: nodeIDs[li]),
-                  let (elB, keyB) = arcElementAndKey(for: nodeIDs[li+1]),
+                  let (elB, keyB) = arcElementAndKey(for: nodeIDs[liNext]),
                   let nA = atomNode(for: keyA),
                   let nB = atomNode(for: keyB) else { continue }
             let pStart = nA.presentation.simdWorldPosition

@@ -548,16 +548,81 @@ struct NodeEditorView: View {
     }
 
     private func eqSocketRow(_ socket: EquationSocket, node: EquationNode, isOutgoing: Bool) -> some View {
+        // Previously just a static label with no way to see or change the
+        // socket's actual value — Bond, Orbit Shell, Physics Attr, Value,
+        // and Operator all looked identical regardless of what was
+        // actually set. eqValueControl below is the same real picker
+        // logic already working in the Algebra Menu sidebar
+        // (MathTabView's socketValueControl), just laid out for this
+        // node's much narrower row.
         HStack(spacing: 3) {
             if !isOutgoing {
                 eqSocketDot(socket, node: node, isOutgoing: false)
-                Text(socket.label).font(.system(size: 7, design: .monospaced)).foregroundColor(.white.opacity(0.55)).lineLimit(1)
+                eqValueControl(socket, node: node)
             } else {
-                Text(socket.label).font(.system(size: 7, design: .monospaced)).foregroundColor(.white.opacity(0.55)).lineLimit(1)
+                eqValueControl(socket, node: node)
                 eqSocketDot(socket, node: node, isOutgoing: true)
             }
         }
         .frame(height: eqRowHeight)
+    }
+
+    // Same fixed option sets as the Algebra Menu sidebar — kept identical
+    // so a shell/operator picked in one place reads the same way in the
+    // other.
+    private static let eqShellNames = ["K","L","M","N","O","P","Q"]
+    private static let eqMathOperators = ["+", "-", "×", "÷", "√", "x²", "N/A"]
+    private static let eqBondOrders = ["1", "2", "3"]
+
+    @ViewBuilder
+    private func eqValueControl(_ socket: EquationSocket, node: EquationNode) -> some View {
+        switch socket.kind {
+        case .elementSelection:
+            // Handled entirely by the cross-type connection (assignElement)
+            // — no separate value control needed here.
+            Text(socket.label).font(.system(size: 7, design: .monospaced)).foregroundColor(.white.opacity(0.55)).lineLimit(1)
+        case .orbitShell:
+            Menu {
+                ForEach(Self.eqShellNames, id: \.self) { shell in
+                    Button(shell) { labVM.setEquationSocketValue(socket.id, onNode: node.id, to: shell) }
+                }
+            } label: { eqPickerLabel(socket) }
+        case .mathOperator:
+            Menu {
+                ForEach(Self.eqMathOperators, id: \.self) { op in
+                    Button(op) { labVM.setEquationSocketValue(socket.id, onNode: node.id, to: op) }
+                }
+            } label: { eqPickerLabel(socket) }
+        case .bond:
+            Menu {
+                ForEach(Self.eqBondOrders, id: \.self) { order in
+                    Button(order) { labVM.setEquationSocketValue(socket.id, onNode: node.id, to: order) }
+                }
+            } label: { eqPickerLabel(socket) }
+        default:
+            // physicsAttribute, physicsValue, elementComponent, delta — same
+            // free-text field as the sidebar's own default case.
+            TextField("", text: Binding(
+                get: { labVM.socketDisplayValue(socket) },
+                set: { labVM.setEquationSocketValue(socket.id, onNode: node.id, to: $0) }
+            ))
+            .font(.system(size: 7, weight: .semibold, design: .monospaced))
+            .foregroundColor(Color(uiColor: socket.kind.color))
+            .lineLimit(1)
+            .frame(width: 40)
+        }
+    }
+
+    private func eqPickerLabel(_ socket: EquationSocket) -> some View {
+        HStack(spacing: 1) {
+            Text(labVM.socketDisplayValue(socket))
+                .font(.system(size: 7, weight: .semibold, design: .monospaced))
+                .foregroundColor(Color(uiColor: socket.kind.color))
+                .lineLimit(1)
+            Image(systemName: "chevron.up.chevron.down")
+                .font(.system(size: 5))
+                .foregroundColor(Color(uiColor: socket.kind.color).opacity(0.6))
+        }
     }
 
     @ViewBuilder

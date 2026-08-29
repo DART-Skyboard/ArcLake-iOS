@@ -39,6 +39,14 @@ public final class ArcLabViewModel: ObservableObject {
         [.group, .neutron, .proton, .electron]
     @Published public var arcSeqSelection: [Int] = []      // atoms in LINK ORDER
     @Published public var arcSameKindFilter = false
+    // Adds one extra measured link — last selected atom back to the first
+    // — closing the sequence into a loop. Recomputed fresh from the
+    // CURRENT nodeIDs every time rebuildArcMeasures() runs, so adding or
+    // removing an atom from the selection automatically updates which
+    // pair the closing arc spans, with no separate tracking needed here.
+    @Published public var arcClosedLoop = false {
+        didSet { rebuildArcMeasures() }
+    }
     // How finely each Arc Measure curve is sampled between two atoms —
     // higher values trace a smoother, more detailed curve; lower values
     // give a coarser, more angular one. Was a hardcoded constant (20) in

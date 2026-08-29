@@ -170,6 +170,25 @@ struct ArcFieldArraySection: View {
                 }
             }
 
+            // Closes the sequence into a loop — one extra measured link
+            // from whichever atom is currently LAST in the selection back
+            // to whichever is currently FIRST. Recomputed fresh every time
+            // the selection changes, so adding or removing an atom always
+            // updates which pair the closing arc spans automatically.
+            Button {
+                labVM.arcClosedLoop.toggle()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: labVM.arcClosedLoop ? "checkmark.square.fill" : "square")
+                        .font(.system(size: 11))
+                        .foregroundColor(labVM.arcClosedLoop ? themeVM.accent : .white.opacity(0.4))
+                    Text("Close loop (last → first)")
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.6))
+                }
+            }
+            .buttonStyle(.plain)
+
             Text("Tap atoms in link order — N1 → N2 → N3…")
                 .font(.system(size: 8, design: .monospaced))
                 .foregroundColor(.white.opacity(0.3))
