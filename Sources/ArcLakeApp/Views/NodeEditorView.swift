@@ -729,9 +729,19 @@ struct NodeEditorView: View {
         guard let node = labVM.equationNodes.first(where: { $0.id == nodeId }) else { return nil }
         let list = isOutgoing ? node.outgoingSockets : node.incomingSockets
         guard let idx = list.firstIndex(where: { $0.id == socketId }) else { return nil }
+        // Row count for vertical centering must match what eqNodeCard
+        // actually uses for the card's real height — max(incoming,
+        // outgoing), not just whichever single list this call happens to
+        // be querying. Element is incoming-only, so incomingSockets.count
+        // (7) and outgoingSockets.count (6) genuinely differ; using
+        // list.count here centered the two columns around two DIFFERENT
+        // vertical midpoints, offsetting every connection line by half a
+        // row — exactly the crossed, misaligned curves seen connecting to
+        // the wrong-looking row on the other node.
+        let rowCount = max(node.incomingSockets.count, node.outgoingSockets.count)
         let livePos = eqDragPositions[nodeId] ?? node.position
         let x = livePos.x + (isOutgoing ? eqNodeWidth/2 - 6 : -eqNodeWidth/2 + 6)
-        let y = livePos.y - (CGFloat(list.count) * eqRowHeight)/2 + eqHeaderHeight/2 + CGFloat(idx) * eqRowHeight + eqRowHeight/2
+        let y = livePos.y - (CGFloat(rowCount) * eqRowHeight)/2 + eqHeaderHeight/2 + CGFloat(idx) * eqRowHeight + eqRowHeight/2
         return CGPoint(x: x, y: y)
     }
 
