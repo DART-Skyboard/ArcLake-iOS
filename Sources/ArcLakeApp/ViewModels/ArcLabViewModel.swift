@@ -1305,7 +1305,6 @@ public final class ArcLabViewModel: ObservableObject {
     // between different nodes, never meant to require its own atom first —
     // silently failed on every single attempt, matching exactly what was
     // reported ("freestanding nodes don't take connections").
-    @discardableResult
     public func connectElementToBondSocket(key: Int, socketId: UUID, onEquationNode nodeId: UUID) -> Bool {
         guard let idx = equationNodes.firstIndex(where: { $0.id == nodeId }) else { return false }
 
