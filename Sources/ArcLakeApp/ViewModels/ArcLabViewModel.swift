@@ -1519,6 +1519,32 @@ public final class ArcLabViewModel: ObservableObject {
         return true
     }
 
+    // For the Node Editor's own node types (+ARC, +OUT, +FOR) — confirmed
+    // as a real, separate gap from connectElementToSocket above, since
+    // those nodes have no chemical element behind them at all and could
+    // never satisfy that function's elementKey requirement. Same toggle
+    // convention as everywhere else; just records the link (by the plain
+    // node's own UUID) rather than pulling any physics/chemistry data,
+    // since there's no real atom here to pull it from.
+    @discardableResult
+    public func connectEditorNodeToSocket(editorNodeId: UUID, socketId: UUID, onEquationNode nodeId: UUID) -> Bool {
+        guard let idx = equationNodes.firstIndex(where: { $0.id == nodeId }) else { return false }
+        func apply(_ socket: inout EquationSocket) {
+            if let i = socket.linkedEditorNodeIds.firstIndex(of: editorNodeId) {
+                socket.linkedEditorNodeIds.remove(at: i)
+            } else {
+                socket.linkedEditorNodeIds.append(editorNodeId)
+            }
+        }
+        if let i = equationNodes[idx].incomingSockets.firstIndex(where: { $0.id == socketId }) {
+            apply(&equationNodes[idx].incomingSockets[i])
+        } else if let i = equationNodes[idx].outgoingSockets.firstIndex(where: { $0.id == socketId }) {
+            apply(&equationNodes[idx].outgoingSockets[i])
+        } else { return false }
+        log("Toggled Node Editor node connection to socket")
+        return true
+    }
+
     private func materializeCanvasLink(for conn: EquationConnection) {
         guard let fromNode = equationNodes.first(where: { $0.id == conn.fromNodeId }),
               let toNode   = equationNodes.first(where: { $0.id == conn.toNodeId }),
@@ -1628,6 +1654,10 @@ public final class ArcLabViewModel: ObservableObject {
         for node in equationNodes {
             for s in node.incomingSockets + node.outgoingSockets where s.id == socketId {
                 if !s.linkedElementKeys.isEmpty { return true }
+                // Same reasoning again, for the Node Editor's own node
+                // types (+ARC, +OUT, +FOR) connected via
+                // connectEditorNodeToSocket.
+                if !s.linkedEditorNodeIds.isEmpty { return true }
             }
         }
         return false

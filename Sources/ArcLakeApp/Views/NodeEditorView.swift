@@ -435,6 +435,13 @@ struct NodeEditorView: View {
                     ForEach(labVM.equationNodes) { node in
                         elementLinkPaths(node)
                     }
+                    // The Node Editor's own node types (+ARC, +OUT, +FOR)
+                    // connected via connectEditorNodeToSocket — same
+                    // rendering approach, just keyed by the plain node's
+                    // own id instead of an element instance key.
+                    ForEach(labVM.equationNodes) { node in
+                        editorNodeLinkPaths(node)
+                    }
                     ForEach(labVM.equationNodes) { node in eqNodeCard(node) }
                 }
                 .offset(canvasOffset)
@@ -679,9 +686,18 @@ struct NodeEditorView: View {
             // silently did nothing, a separate gap from the Bond-specific
             // fix.
             if socket.kind != .elementSelection, let fromNodeId = pendingFrom,
-               let elNode = nodes.first(where: { $0.id == fromNodeId }),
-               let key = elNode.elementKey {
-                labVM.connectElementToSocket(key: key, socketId: socket.id, onEquationNode: node.id)
+               let elNode = nodes.first(where: { $0.id == fromNodeId }) {
+                if let key = elNode.elementKey {
+                    labVM.connectElementToSocket(key: key, socketId: socket.id, onEquationNode: node.id)
+                } else {
+                    // Confirmed as a real, separate gap: the Node Editor's
+                    // own node types (+ARC, +OUT, +FOR) have no
+                    // elementKey at all — no chemical atom behind them —
+                    // so they could never be recognized here regardless of
+                    // socket kind. Falls back to recording the plain link
+                    // by the node's own identity instead.
+                    labVM.connectEditorNodeToSocket(editorNodeId: elNode.id, socketId: socket.id, onEquationNode: node.id)
+                }
                 pendingFrom = nil
                 return
             }
@@ -813,6 +829,42 @@ struct NodeEditorView: View {
         }
     }
 
+    // Same rendering approach as elementLinkPaths, keyed by the plain
+    // node's own id (linkedEditorNodeIds) instead of an element instance
+    // key — covers the Node Editor's own node types (+ARC, +OUT, +FOR),
+    // which have no chemical element behind them to look up by key.
+    @ViewBuilder
+    private func editorNodeLinkPaths(_ eqNode: EquationNode) -> some View {
+        ForEach(eqNode.incomingSockets.filter { !$0.linkedEditorNodeIds.isEmpty }) { socket in
+            ForEach(socket.linkedEditorNodeIds, id: \.self) { nid in
+                if let plainNode = nodes.first(where: { $0.id == nid }),
+                   let b = eqSocketWorldPoint(nodeId: eqNode.id, socketId: socket.id, isOutgoing: false) {
+                    let a = outSocketPoint(plainNode)
+                    Path { p in
+                        p.move(to: a)
+                        let midX = (a.x + b.x) / 2
+                        p.addCurve(to: b, control1: CGPoint(x: midX, y: a.y), control2: CGPoint(x: midX, y: b.y))
+                    }
+                    .stroke(Color(uiColor: socket.kind.color).opacity(0.6), style: StrokeStyle(lineWidth: 1.5))
+                }
+            }
+        }
+        ForEach(eqNode.outgoingSockets.filter { !$0.linkedEditorNodeIds.isEmpty }) { socket in
+            ForEach(socket.linkedEditorNodeIds, id: \.self) { nid in
+                if let plainNode = nodes.first(where: { $0.id == nid }),
+                   let a = eqSocketWorldPoint(nodeId: eqNode.id, socketId: socket.id, isOutgoing: true) {
+                    let b = inSocketPoint(plainNode)
+                    Path { p in
+                        p.move(to: a)
+                        let midX = (a.x + b.x) / 2
+                        p.addCurve(to: b, control1: CGPoint(x: midX, y: a.y), control2: CGPoint(x: midX, y: b.y))
+                    }
+                    .stroke(Color(uiColor: socket.kind.color).opacity(0.6), style: StrokeStyle(lineWidth: 1.5))
+                }
+            }
+        }
+    }
+
     @ViewBuilder
     private func elementBindingPath(_ eqNode: EquationNode) -> some View {
         if let key = eqNode.boundElementKey,
@@ -876,8 +928,12 @@ struct NodeEditorView: View {
                     // does (Molecule Canvas atoms + a genuine MolBond, not
                     // a cosmetic line).
                     // Same generalization, other tap order.
-                    if socket.kind != .elementSelection, let key = node.elementKey {
-                        labVM.connectElementToSocket(key: key, socketId: socket.id, onEquationNode: pending.nodeId)
+                    if socket.kind != .elementSelection {
+                        if let key = node.elementKey {
+                            labVM.connectElementToSocket(key: key, socketId: socket.id, onEquationNode: pending.nodeId)
+                        } else {
+                            labVM.connectEditorNodeToSocket(editorNodeId: node.id, socketId: socket.id, onEquationNode: pending.nodeId)
+                        }
                         eqPendingSocket = nil
                         return
                     }

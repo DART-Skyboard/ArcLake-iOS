@@ -152,6 +152,17 @@ public struct EquationSocket: Identifiable, Codable {
     // to already represent one specific atom first.
     public var linkedElementKeys: [Int] = []
 
+    // Confirmed as a real, separate gap: the Node Editor's own node types
+    // (+ARC, +OUT, +FOR) have no chemical element behind them at all — no
+    // elementKey exists for them — so they could never be recognized by
+    // the linkedElementKeys-based cross-type system regardless of socket
+    // kind. This tracks a plain EditorNode connection by its own real
+    // identity (its UUID) rather than an element instance key, covering
+    // every node type uniformly. No physics/chemistry data gets pulled
+    // automatically from these (there's no real atom to pull it from) —
+    // the connection is simply recorded and shown.
+    public var linkedEditorNodeIds: [UUID] = []
+
     // Fallback only for a socket that hasn't been wired to real canvas data
     // yet — never a second source of truth once linked.
     public var localValue: String = ""
