@@ -1225,7 +1225,6 @@ public final class ArcLabViewModel: ObservableObject {
     /// also creates (or links to) the matching real MolBond/DeltaConnection —
     /// so wiring a curve in the Node Editor is enough to actually bond the
     /// atoms on the Molecule Canvas, not just a visual note.
-    @discardableResult
     // Now a real toggle — tapping the same two sockets that are already
     // connected disconnects them instead of adding a duplicate on top,
     // confirmed as the missing disconnect mechanism (there was previously
