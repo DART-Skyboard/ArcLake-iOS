@@ -793,7 +793,15 @@ struct NodeEditorView: View {
             ForEach(socket.linkedElementKeys, id: \.self) { key in
                 if let elNode = nodes.first(where: { $0.elementKey == key }),
                    let a = eqSocketWorldPoint(nodeId: eqNode.id, socketId: socket.id, isOutgoing: true) {
-                    let b = outSocketPoint(elNode)
+                    // The actual bug reported, confirmed by screenshot: an
+                    // OUTGOING equation socket is providing a value TO the
+                    // atom, so the line should land on the atom's "in"
+                    // port, not "out" — outSocketPoint was used here
+                    // unconditionally regardless of which direction the
+                    // value was actually flowing, which is why every line
+                    // converged on the same "out" point no matter what was
+                    // connected.
+                    let b = inSocketPoint(elNode)
                     Path { p in
                         p.move(to: a)
                         let midX = (a.x + b.x) / 2
