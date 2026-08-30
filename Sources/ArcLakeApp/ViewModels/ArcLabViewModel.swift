@@ -1295,30 +1295,85 @@ public final class ArcLabViewModel: ObservableObject {
     // socket fall back to showing "—" rather than pointing at a deleted
     // entry.
     @discardableResult
+    // Rewritten to actually support what was confirmed as the real design:
+    // a Bond socket accumulates MULTIPLE connected elements (bond order
+    // comes directly from how many — 1=single, 2=double, 3=triple), and
+    // works on a freestanding node with no element of its own, not just
+    // one that's already bound. The previous version required
+    // boundElementKey to already exist before doing anything at all, which
+    // meant a freestanding node's Bond socket — used purely to connect math
+    // between different nodes, never meant to require its own atom first —
+    // silently failed on every single attempt, matching exactly what was
+    // reported ("freestanding nodes don't take connections").
+    @discardableResult
     public func connectElementToBondSocket(key: Int, socketId: UUID, onEquationNode nodeId: UUID) -> Bool {
-        guard let idx = equationNodes.firstIndex(where: { $0.id == nodeId }),
-              let ownKey = equationNodes[idx].boundElementKey,
-              let ownAtomId = getOrCreateCanvasAtom(forElementKey: ownKey),
-              let otherAtomId = getOrCreateCanvasAtom(forElementKey: key),
-              ownAtomId != otherAtomId else {
-            log("Can't connect Bond — assign this node's own element first")
-            return false
-        }
-        if equationNodes[idx].boundAtomId == nil {
-            equationNodes[idx].boundAtomId = ownAtomId
-        }
-        addMolBond(from: ownAtomId, to: otherAtomId)
-        guard let bond = molBonds.first(where: {
-            ($0.fromId == ownAtomId && $0.toId == otherAtomId) || ($0.fromId == otherAtomId && $0.toId == ownAtomId)
-        }) else { return false }
+        guard let idx = equationNodes.firstIndex(where: { $0.id == nodeId }) else { return false }
 
-        func apply(_ socket: inout EquationSocket) { socket.linkedBondId = bond.id }
+        func currentKeys() -> [Int] {
+            if let s = equationNodes[idx].incomingSockets.first(where: { $0.id == socketId }) { return s.linkedElementKeys }
+            if let s = equationNodes[idx].outgoingSockets.first(where: { $0.id == socketId }) { return s.linkedElementKeys }
+            return []
+        }
+        var keys = currentKeys()
+        guard !keys.contains(key) else { return false }   // already connected, nothing to add
+        keys.append(key)
+
+        // If this node already represents its own element (the normal,
+        // non-freestanding case), that atom is always part of the bonded
+        // group too, even though it isn't itself "connected via a wire" —
+        // it's simply what the node IS.
+        var allKeys = keys
+        if let ownKey = equationNodes[idx].boundElementKey, !allKeys.contains(ownKey) {
+            allKeys.insert(ownKey, at: 0)
+        }
+
+        // Every connected atom gets placed on the canvas (only once each,
+        // reusing the same instance via elementKeyToCanvasAtomId), then
+        // mutually bonded to every other one in the group — order set to
+        // the group size, clamped to a real chemical maximum of 3.
+        let atomIds = allKeys.compactMap { getOrCreateCanvasAtom(forElementKey: $0) }
+        guard atomIds.count >= 2 else {
+            // Only one real atom in the group so far — nothing to bond
+            // together yet, but the connection itself is still valid and
+            // recorded, ready to become a real bond once a second one joins.
+            func apply(_ socket: inout EquationSocket) { socket.linkedElementKeys = keys }
+            if let i = equationNodes[idx].incomingSockets.firstIndex(where: { $0.id == socketId }) {
+                apply(&equationNodes[idx].incomingSockets[i])
+            } else if let i = equationNodes[idx].outgoingSockets.firstIndex(where: { $0.id == socketId }) {
+                apply(&equationNodes[idx].outgoingSockets[i])
+            }
+            return true
+        }
+        let order = min(3, atomIds.count)
+        for i in 0..<atomIds.count {
+            for j in (i+1)..<atomIds.count {
+                molBonds.removeAll { ($0.fromId==atomIds[i]&&$0.toId==atomIds[j]) || ($0.fromId==atomIds[j]&&$0.toId==atomIds[i]) }
+                molBonds.append(MolBond(from: atomIds[i], to: atomIds[j], order: order))
+            }
+        }
+
+        if equationNodes[idx].boundAtomId == nil, let first = atomIds.first {
+            equationNodes[idx].boundAtomId = first
+        }
+
+        func apply(_ socket: inout EquationSocket) {
+            socket.linkedElementKeys = keys
+            // Point at one representative bond so setEquationSocketValue's
+            // existing order-editing logic (which reads/writes a single
+            // linkedBondId) still works for manually overriding the order
+            // this derived — it'll just apply to every pair equally the
+            // next time this same connect function runs, keeping them
+            // consistent with each other.
+            if let b = molBonds.first(where: { atomIds.contains($0.fromId) && atomIds.contains($0.toId) }) {
+                socket.linkedBondId = b.id
+            }
+        }
         if let i = equationNodes[idx].incomingSockets.firstIndex(where: { $0.id == socketId }) {
             apply(&equationNodes[idx].incomingSockets[i])
         } else if let i = equationNodes[idx].outgoingSockets.firstIndex(where: { $0.id == socketId }) {
             apply(&equationNodes[idx].outgoingSockets[i])
         }
-        log("Connected Bond — real Molecule Canvas bond created")
+        log("Connected Bond — \(atomIds.count) atoms, order \(order)")
         return true
     }
 
@@ -1425,12 +1480,16 @@ public final class ArcLabViewModel: ObservableObject {
             return node.boundElementKey != nil
         }
         // Same reasoning, for Bond — connectElementToBondSocket sets
-        // linkedBondId directly rather than creating an EquationConnection,
-        // so this socket would otherwise show hollow even once a real
-        // MolBond exists for it.
+        // linkedElementKeys directly rather than creating an
+        // EquationConnection, so this socket would otherwise show hollow
+        // even with real connections on it. Checking linkedElementKeys
+        // rather than linkedBondId specifically, since a single connected
+        // element (not yet enough to form a real bond) still counts as
+        // genuinely connected — linkedBondId only appears once a second
+        // element joins.
         for node in equationNodes {
             for s in node.incomingSockets + node.outgoingSockets where s.id == socketId && s.kind == .bond {
-                return s.linkedBondId != nil
+                return !s.linkedElementKeys.isEmpty
             }
         }
         return false

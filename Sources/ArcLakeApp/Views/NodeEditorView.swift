@@ -425,6 +425,15 @@ struct NodeEditorView: View {
                     ForEach(labVM.equationNodes.filter { $0.boundElementKey != nil }) { node in
                         elementBindingPath(node)
                     }
+                    // Bond sockets now accept multiple element connections
+                    // (bond order comes from how many), so this draws one
+                    // line per connected element per Bond socket, not just
+                    // a single link — works on freestanding nodes too,
+                    // which have a Bond socket but no boundElementKey of
+                    // their own.
+                    ForEach(labVM.equationNodes) { node in
+                        bondBindingPaths(node)
+                    }
                     ForEach(labVM.equationNodes) { node in eqNodeCard(node) }
                 }
                 .offset(canvasOffset)
@@ -748,6 +757,38 @@ struct NodeEditorView: View {
         let x = livePos.x + (isOutgoing ? eqNodeWidth/2 - 6 : -eqNodeWidth/2 + 6)
         let y = livePos.y - (CGFloat(rowCount) * eqRowHeight)/2 + eqHeaderHeight/2 + CGFloat(idx) * eqRowHeight + eqRowHeight/2
         return CGPoint(x: x, y: y)
+    }
+
+    @ViewBuilder
+    private func bondBindingPaths(_ eqNode: EquationNode) -> some View {
+        ForEach(eqNode.incomingSockets.filter { $0.kind == .bond }) { socket in
+            ForEach(socket.linkedElementKeys, id: \.self) { key in
+                if let elNode = nodes.first(where: { $0.elementKey == key }),
+                   let b = eqSocketWorldPoint(nodeId: eqNode.id, socketId: socket.id, isOutgoing: false) {
+                    let a = outSocketPoint(elNode)
+                    Path { p in
+                        p.move(to: a)
+                        let midX = (a.x + b.x) / 2
+                        p.addCurve(to: b, control1: CGPoint(x: midX, y: a.y), control2: CGPoint(x: midX, y: b.y))
+                    }
+                    .stroke(Color.green.opacity(0.6), style: StrokeStyle(lineWidth: 1.5))
+                }
+            }
+        }
+        ForEach(eqNode.outgoingSockets.filter { $0.kind == .bond }) { socket in
+            ForEach(socket.linkedElementKeys, id: \.self) { key in
+                if let elNode = nodes.first(where: { $0.elementKey == key }),
+                   let a = eqSocketWorldPoint(nodeId: eqNode.id, socketId: socket.id, isOutgoing: true) {
+                    let b = outSocketPoint(elNode)
+                    Path { p in
+                        p.move(to: a)
+                        let midX = (a.x + b.x) / 2
+                        p.addCurve(to: b, control1: CGPoint(x: midX, y: a.y), control2: CGPoint(x: midX, y: b.y))
+                    }
+                    .stroke(Color.green.opacity(0.6), style: StrokeStyle(lineWidth: 1.5))
+                }
+            }
+        }
     }
 
     @ViewBuilder

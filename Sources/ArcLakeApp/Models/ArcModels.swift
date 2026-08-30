@@ -143,6 +143,15 @@ public struct EquationSocket: Identifiable, Codable {
     public var linkedBondId: UUID? = nil
     public var linkedDeltaId: UUID? = nil
 
+    // A Bond socket connects to MULTIPLE elements now, not just one — bond
+    // order is derived directly from how many are connected (1 = single,
+    // 2 = double, etc.), confirmed as the intended design rather than a
+    // single fixed link. Works even on a freestanding node with no
+    // boundElementKey of its own — the socket just accumulates whichever
+    // atoms have been wired to it directly, rather than requiring the node
+    // to already represent one specific atom first.
+    public var linkedElementKeys: [Int] = []
+
     // Fallback only for a socket that hasn't been wired to real canvas data
     // yet — never a second source of truth once linked.
     public var localValue: String = ""
