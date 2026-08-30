@@ -1226,8 +1226,20 @@ public final class ArcLabViewModel: ObservableObject {
     /// so wiring a curve in the Node Editor is enough to actually bond the
     /// atoms on the Molecule Canvas, not just a visual note.
     @discardableResult
+    // Now a real toggle — tapping the same two sockets that are already
+    // connected disconnects them instead of adding a duplicate on top,
+    // confirmed as the missing disconnect mechanism (there was previously
+    // no way to remove a connection at all once made, for any node type).
+    @discardableResult
     public func connectEquationSockets(fromNode: UUID, fromSocket: UUID,
-                                        toNode: UUID, toSocket: UUID, isDelta: Bool = false) -> EquationConnection {
+                                        toNode: UUID, toSocket: UUID, isDelta: Bool = false) -> EquationConnection? {
+        if let existing = equationConnections.first(where: {
+            ($0.fromSocketId == fromSocket && $0.toSocketId == toSocket) ||
+            ($0.fromSocketId == toSocket && $0.toSocketId == fromSocket)
+        }) {
+            equationConnections.removeAll { $0.id == existing.id }
+            return nil
+        }
         let conn = EquationConnection(fromNodeId: fromNode, fromSocketId: fromSocket,
                                        toNodeId: toNode, toSocketId: toSocket, isDelta: isDelta)
         equationConnections.append(conn)
@@ -1248,6 +1260,16 @@ public final class ArcLabViewModel: ObservableObject {
     // never recognized each other as valid endpoints.
     public func assignElement(key: Int, toEquationNode nodeId: UUID) {
         guard let idx = equationNodes.firstIndex(where: { $0.id == nodeId }) else { return }
+        // Toggle — tapping the same element that's already assigned here
+        // again clears the binding instead of just re-setting the same
+        // value, matching the same disconnect convention as every other
+        // socket type.
+        if equationNodes[idx].boundElementKey == key {
+            equationNodes[idx].boundElementKey = nil
+            equationNodes[idx].boundElementSymbol = nil
+            log("Unassigned element from equation node")
+            return
+        }
         equationNodes[idx].boundElementKey = key
         if let elIdx = selectedElementKeys.firstIndex(of: key) {
             equationNodes[idx].boundElementSymbol = selectedElements[elIdx].elementSymbol
@@ -1314,7 +1336,49 @@ public final class ArcLabViewModel: ObservableObject {
             return []
         }
         var keys = currentKeys()
-        guard !keys.contains(key) else { return false }   // already connected, nothing to add
+
+        // Toggle — connecting the same element to this socket a second
+        // time disconnects it instead, recomputing the remaining group's
+        // bonds (and dropping the order accordingly — a group that goes
+        // from three atoms to two goes from triple back to double) rather
+        // than just refusing the tap.
+        if keys.contains(key) {
+            keys.removeAll { $0 == key }
+            var remaining = keys
+            if let ownKey = equationNodes[idx].boundElementKey, !remaining.contains(ownKey) {
+                remaining.insert(ownKey, at: 0)
+            }
+            let removedAtomId = getOrCreateCanvasAtom(forElementKey: key)
+            let remainingAtomIds = remaining.compactMap { getOrCreateCanvasAtom(forElementKey: $0) }
+            if let removedAtomId {
+                molBonds.removeAll { bond in
+                    (bond.fromId == removedAtomId || bond.toId == removedAtomId) &&
+                    (remainingAtomIds.contains(bond.fromId) || remainingAtomIds.contains(bond.toId) || true)
+                }
+            }
+            if remainingAtomIds.count >= 2 {
+                let order = min(3, remainingAtomIds.count)
+                for i in 0..<remainingAtomIds.count {
+                    for j in (i+1)..<remainingAtomIds.count {
+                        molBonds.removeAll { ($0.fromId==remainingAtomIds[i]&&$0.toId==remainingAtomIds[j]) || ($0.fromId==remainingAtomIds[j]&&$0.toId==remainingAtomIds[i]) }
+                        molBonds.append(MolBond(from: remainingAtomIds[i], to: remainingAtomIds[j], order: order))
+                    }
+                }
+            }
+            func apply(_ socket: inout EquationSocket) {
+                socket.linkedElementKeys = keys
+                socket.linkedBondId = remainingAtomIds.count >= 2
+                    ? molBonds.first(where: { remainingAtomIds.contains($0.fromId) && remainingAtomIds.contains($0.toId) })?.id
+                    : nil
+            }
+            if let i = equationNodes[idx].incomingSockets.firstIndex(where: { $0.id == socketId }) {
+                apply(&equationNodes[idx].incomingSockets[i])
+            } else if let i = equationNodes[idx].outgoingSockets.firstIndex(where: { $0.id == socketId }) {
+                apply(&equationNodes[idx].outgoingSockets[i])
+            }
+            log("Disconnected Bond element — \(remainingAtomIds.count) remaining")
+            return true
+        }
         keys.append(key)
 
         // If this node already represents its own element (the normal,

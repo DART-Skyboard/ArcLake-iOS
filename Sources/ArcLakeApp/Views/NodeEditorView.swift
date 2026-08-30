@@ -861,10 +861,22 @@ struct NodeEditorView: View {
                 }
                 if let from = pendingFrom {
                     if from != node.id {
-                        connections.append(NodeConnection(
-                            fromNodeId: from, fromPort: port,
-                            toNodeId: node.id, toPort: port,
-                            isDelta: false))
+                        // Toggle — tapping two already-connected plain
+                        // nodes again disconnects them, matching the same
+                        // convention now used everywhere else (equation
+                        // sockets, Bond, Element), rather than only working
+                        // for equation nodes.
+                        if let existingIdx = connections.firstIndex(where: {
+                            ($0.fromNodeId == from && $0.toNodeId == node.id) ||
+                            ($0.fromNodeId == node.id && $0.toNodeId == from)
+                        }) {
+                            connections.remove(at: existingIdx)
+                        } else {
+                            connections.append(NodeConnection(
+                                fromNodeId: from, fromPort: port,
+                                toNodeId: node.id, toPort: port,
+                                isDelta: false))
+                        }
                     }
                     pendingFrom = nil
                 } else { pendingFrom = node.id }
