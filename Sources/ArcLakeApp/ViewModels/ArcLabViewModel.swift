@@ -1138,7 +1138,26 @@ public final class ArcLabViewModel: ObservableObject {
     /// daisy-chain of connected nodes evaluates recursively the same way
     /// nested parentheses would.
     public func evaluateEquationNode(_ nodeId: UUID) -> Double {
-        guard let node = equationNodes.first(where: { $0.id == nodeId }) else { return 0 }
+        evaluateEquationNode(nodeId, visited: [])
+    }
+
+    // The actual cause of the crash confirmed in the .ips report — this
+    // recurses into whichever node feeds its incoming Value socket, with
+    // NO cycle detection at all. Wiring two nodes' Value sockets to feed
+    // each other (directly, or through a longer chain that loops back) —
+    // easy to do by accident with the tap-to-connect system, which never
+    // checked for this — recursed the exact same instruction 486 levels
+    // deep before hitting the stack guard page, confirmed directly in the
+    // crash log. This runs live during rendering (it powers the result
+    // shown on every node card), so it fires continuously while
+    // connections are being made, not just once. `visited` tracks every
+    // node already entered on this call chain; hitting one again means a
+    // cycle exists, so evaluation stops there and returns 0 for that
+    // branch instead of recursing forever.
+    private func evaluateEquationNode(_ nodeId: UUID, visited: Set<UUID>) -> Double {
+        guard !visited.contains(nodeId),
+              let node = equationNodes.first(where: { $0.id == nodeId }) else { return 0 }
+        let visited = visited.union([nodeId])
         var value = node.outgoingSockets.first(where: { $0.kind == .physicsValue })?.doubleValue ?? 0
 
         let op = node.outgoingSockets.first(where: { $0.kind == .mathOperator })?.localValue ?? "N/A"
@@ -1151,7 +1170,7 @@ public final class ArcLabViewModel: ObservableObject {
         if let incomingValueSocket = node.incomingSockets.first(where: { $0.kind == .physicsValue }),
            let conn = equationConnections.first(where: { $0.toSocketId == incomingValueSocket.id }),
            let upstreamNode = equationNodes.first(where: { $0.id == conn.fromNodeId }) {
-            let upstream = evaluateEquationNode(upstreamNode.id)
+            let upstream = evaluateEquationNode(upstreamNode.id, visited: visited)
             switch op {
             case "+": value = upstream + value
             case "-": value = upstream - value
