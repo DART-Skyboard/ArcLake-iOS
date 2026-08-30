@@ -1439,6 +1439,86 @@ public final class ArcLabViewModel: ObservableObject {
         return true
     }
 
+    // Generalizes the same cross-type connection to EVERY socket kind, not
+    // just Element and Bond — confirmed as the real requirement: "all node
+    // types need to be able to connect all node types and all sockets".
+    // Delta/OrbitShell/PhysicsAttr/Value/Operator previously had no
+    // cross-type path from a plain atom node at all, so tapping an atom
+    // then any of those sockets silently did nothing — this is a real,
+    // separate gap from the Bond fix, not the same one. Toggle behavior
+    // matches every other connection type: connecting the same atom to the
+    // same socket again disconnects it.
+    @discardableResult
+    public func connectElementToSocket(key: Int, socketId: UUID, onEquationNode nodeId: UUID) -> Bool {
+        guard let idx = equationNodes.firstIndex(where: { $0.id == nodeId }),
+              let socket = (equationNodes[idx].incomingSockets + equationNodes[idx].outgoingSockets)
+                  .first(where: { $0.id == socketId }) else { return false }
+
+        // Bond already has its own richer, multi-atom-with-order handling —
+        // route there instead of duplicating it here.
+        if socket.kind == .bond {
+            return connectElementToBondSocket(key: key, socketId: socketId, onEquationNode: nodeId)
+        }
+
+        func currentKeys() -> [Int] {
+            if let s = equationNodes[idx].incomingSockets.first(where: { $0.id == socketId }) { return s.linkedElementKeys }
+            if let s = equationNodes[idx].outgoingSockets.first(where: { $0.id == socketId }) { return s.linkedElementKeys }
+            return []
+        }
+        var keys = currentKeys()
+        let disconnecting = keys.contains(key)
+        if disconnecting { keys.removeAll { $0 == key } } else { keys.append(key) }
+
+        // Where a socket kind has an obvious, meaningful default to pull
+        // from the connected atom, apply it — otherwise the connection is
+        // still fully recorded and shown, just without an automatic value.
+        var localValueUpdate: String? = nil
+        var doubleValueUpdate: Double? = nil
+        if !disconnecting, let elIdx = selectedElementKeys.firstIndex(of: key) {
+            let element = selectedElements[elIdx]
+            switch socket.kind {
+            case .orbitShell:
+                let shellNames = ["K","L","M","N","O","P","Q"]
+                let outerShellIdx = max(0, element.electronOrbits.count - 1)
+                localValueUpdate = shellNames[min(outerShellIdx, shellNames.count - 1)]
+            case .physicsValue:
+                let attrSocket = (equationNodes[idx].incomingSockets + equationNodes[idx].outgoingSockets)
+                    .first(where: { $0.kind == .physicsAttribute })
+                let atomPhysics = ArcAtomPhysics(element: element, gravityMS2: physics.gravity,
+                                                  temperatureK: physics.activeTab.ambientTempK)
+                switch attrSocket?.localValue {
+                case "volume": doubleValueUpdate = atomPhysics.volumeAngstrom3
+                case "weight": doubleValueUpdate = atomPhysics.weightN
+                case "density": doubleValueUpdate = atomPhysics.densityKgM3
+                case "temperature": doubleValueUpdate = atomPhysics.temperatureK
+                case "velocity": doubleValueUpdate = atomPhysics.velocityMS
+                default: doubleValueUpdate = atomPhysics.massU
+                }
+            case .delta:
+                if let ownKey = equationNodes[idx].boundElementKey,
+                   let ownAtomId = getOrCreateCanvasAtom(forElementKey: ownKey),
+                   let otherAtomId = getOrCreateCanvasAtom(forElementKey: key),
+                   ownAtomId != otherAtomId {
+                    addDeltaConnection(from: ownAtomId, to: otherAtomId, fromShell: 0, toShell: 0, op: "=")
+                }
+            default: break
+            }
+        }
+
+        func apply(_ socket: inout EquationSocket) {
+            socket.linkedElementKeys = keys
+            if let v = localValueUpdate { socket.localValue = v }
+            if let v = doubleValueUpdate { socket.doubleValue = v }
+        }
+        if let i = equationNodes[idx].incomingSockets.firstIndex(where: { $0.id == socketId }) {
+            apply(&equationNodes[idx].incomingSockets[i])
+        } else if let i = equationNodes[idx].outgoingSockets.firstIndex(where: { $0.id == socketId }) {
+            apply(&equationNodes[idx].outgoingSockets[i])
+        }
+        log(disconnecting ? "Disconnected element from socket" : "Connected element to socket")
+        return true
+    }
+
     private func materializeCanvasLink(for conn: EquationConnection) {
         guard let fromNode = equationNodes.first(where: { $0.id == conn.fromNodeId }),
               let toNode   = equationNodes.first(where: { $0.id == conn.toNodeId }),
@@ -1541,17 +1621,13 @@ public final class ArcLabViewModel: ObservableObject {
         }) {
             return node.boundElementKey != nil
         }
-        // Same reasoning, for Bond — connectElementToBondSocket sets
-        // linkedElementKeys directly rather than creating an
-        // EquationConnection, so this socket would otherwise show hollow
-        // even with real connections on it. Checking linkedElementKeys
-        // rather than linkedBondId specifically, since a single connected
-        // element (not yet enough to form a real bond) still counts as
-        // genuinely connected — linkedBondId only appears once a second
-        // element joins.
+        // Same reasoning, generalized to every socket kind now — Bond and
+        // connectElementToSocket both set linkedElementKeys directly rather
+        // than creating an EquationConnection, so any of these sockets
+        // would otherwise show hollow even with real connections on them.
         for node in equationNodes {
-            for s in node.incomingSockets + node.outgoingSockets where s.id == socketId && s.kind == .bond {
-                return !s.linkedElementKeys.isEmpty
+            for s in node.incomingSockets + node.outgoingSockets where s.id == socketId {
+                if !s.linkedElementKeys.isEmpty { return true }
             }
         }
         return false

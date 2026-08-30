@@ -425,14 +425,15 @@ struct NodeEditorView: View {
                     ForEach(labVM.equationNodes.filter { $0.boundElementKey != nil }) { node in
                         elementBindingPath(node)
                     }
-                    // Bond sockets now accept multiple element connections
-                    // (bond order comes from how many), so this draws one
-                    // line per connected element per Bond socket, not just
-                    // a single link — works on freestanding nodes too,
-                    // which have a Bond socket but no boundElementKey of
-                    // their own.
+                    // Generalized rendering — every socket kind now accepts
+                    // atom connections (linkedElementKeys), not just Bond,
+                    // so this draws one line per connected element per
+                    // socket, for every socket kind, colored to match that
+                    // kind's own dot color. Works on freestanding nodes
+                    // too, which have all these sockets but no
+                    // boundElementKey of their own.
                     ForEach(labVM.equationNodes) { node in
-                        bondBindingPaths(node)
+                        elementLinkPaths(node)
                     }
                     ForEach(labVM.equationNodes) { node in eqNodeCard(node) }
                 }
@@ -669,10 +670,18 @@ struct NodeEditorView: View {
             // each only once) and creates a genuine MolBond between them,
             // confirmed by design as the correct behavior rather than a
             // Node-Editor-only cosmetic link.
-            if socket.kind == .bond, let fromNodeId = pendingFrom,
+            // Generalized beyond just Bond — every socket kind now
+            // accepts a connection from a plain atom node, confirmed as
+            // the actual requirement ("all node types need to be able to
+            // connect all node types and all sockets"). Delta/OrbitShell/
+            // PhysicsAttr/Value/Operator had no cross-type path at all
+            // before this — tapping an atom then any of those sockets
+            // silently did nothing, a separate gap from the Bond-specific
+            // fix.
+            if socket.kind != .elementSelection, let fromNodeId = pendingFrom,
                let elNode = nodes.first(where: { $0.id == fromNodeId }),
                let key = elNode.elementKey {
-                labVM.connectElementToBondSocket(key: key, socketId: socket.id, onEquationNode: node.id)
+                labVM.connectElementToSocket(key: key, socketId: socket.id, onEquationNode: node.id)
                 pendingFrom = nil
                 return
             }
@@ -759,9 +768,14 @@ struct NodeEditorView: View {
         return CGPoint(x: x, y: y)
     }
 
+    // Generalized from a Bond-only version — every socket kind accepts
+    // atom connections now (linkedElementKeys), not just Bond, so this
+    // draws one line per connected element per socket, for every kind,
+    // colored to match that specific socket's own dot color rather than a
+    // single fixed green.
     @ViewBuilder
-    private func bondBindingPaths(_ eqNode: EquationNode) -> some View {
-        ForEach(eqNode.incomingSockets.filter { $0.kind == .bond }) { socket in
+    private func elementLinkPaths(_ eqNode: EquationNode) -> some View {
+        ForEach(eqNode.incomingSockets.filter { !$0.linkedElementKeys.isEmpty }) { socket in
             ForEach(socket.linkedElementKeys, id: \.self) { key in
                 if let elNode = nodes.first(where: { $0.elementKey == key }),
                    let b = eqSocketWorldPoint(nodeId: eqNode.id, socketId: socket.id, isOutgoing: false) {
@@ -771,11 +785,11 @@ struct NodeEditorView: View {
                         let midX = (a.x + b.x) / 2
                         p.addCurve(to: b, control1: CGPoint(x: midX, y: a.y), control2: CGPoint(x: midX, y: b.y))
                     }
-                    .stroke(Color.green.opacity(0.6), style: StrokeStyle(lineWidth: 1.5))
+                    .stroke(Color(uiColor: socket.kind.color).opacity(0.6), style: StrokeStyle(lineWidth: 1.5))
                 }
             }
         }
-        ForEach(eqNode.outgoingSockets.filter { $0.kind == .bond }) { socket in
+        ForEach(eqNode.outgoingSockets.filter { !$0.linkedElementKeys.isEmpty }) { socket in
             ForEach(socket.linkedElementKeys, id: \.self) { key in
                 if let elNode = nodes.first(where: { $0.elementKey == key }),
                    let a = eqSocketWorldPoint(nodeId: eqNode.id, socketId: socket.id, isOutgoing: true) {
@@ -785,7 +799,7 @@ struct NodeEditorView: View {
                         let midX = (a.x + b.x) / 2
                         p.addCurve(to: b, control1: CGPoint(x: midX, y: a.y), control2: CGPoint(x: midX, y: b.y))
                     }
-                    .stroke(Color.green.opacity(0.6), style: StrokeStyle(lineWidth: 1.5))
+                    .stroke(Color(uiColor: socket.kind.color).opacity(0.6), style: StrokeStyle(lineWidth: 1.5))
                 }
             }
         }
@@ -853,8 +867,9 @@ struct NodeEditorView: View {
                     // connectElementToBondSocket for what this actually
                     // does (Molecule Canvas atoms + a genuine MolBond, not
                     // a cosmetic line).
-                    if socket.kind == .bond, let key = node.elementKey {
-                        labVM.connectElementToBondSocket(key: key, socketId: socket.id, onEquationNode: pending.nodeId)
+                    // Same generalization, other tap order.
+                    if socket.kind != .elementSelection, let key = node.elementKey {
+                        labVM.connectElementToSocket(key: key, socketId: socket.id, onEquationNode: pending.nodeId)
                         eqPendingSocket = nil
                         return
                     }
