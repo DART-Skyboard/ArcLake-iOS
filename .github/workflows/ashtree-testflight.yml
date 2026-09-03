@@ -67,18 +67,16 @@ jobs:
 
       - name: Bump build number
         run: |
-          # Read current build number from project.yml and increment by 1
-          CURRENT=$(grep 'CURRENT_PROJECT_VERSION' Sources/AshtreeIDEApp/../project.yml | head -1 | awk '{print $2}' | tr -d '[:space:]')
-          # If it's a timestamp (long number > 10 digits), reset to 124
-          if [ ${#CURRENT} -gt 6 ]; then
-            BUILD=124
-          else
-            BUILD=$((CURRENT + 1))
-          fi
+          # Read from project.yml (correct path relative to checkout root)
+          PROJ_FILE="project.yml"
+          CURRENT=$(grep 'CURRENT_PROJECT_VERSION' "$PROJ_FILE" | head -1 | awk '{print $2}' | tr -d '[:space:]')
+          echo "Current build: $CURRENT"
+          BUILD=$((CURRENT + 1))
+          echo "New build: $BUILD"
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD" \
             Sources/AshtreeIDEApp/Info.plist
-          # Write back to project.yml so next build increments correctly
-          sed -i "" "s/CURRENT_PROJECT_VERSION:.*/CURRENT_PROJECT_VERSION: $BUILD/" project.yml
+          # Write back so next run increments correctly
+          sed -i "" "s/CURRENT_PROJECT_VERSION:.*/CURRENT_PROJECT_VERSION: $BUILD/" "$PROJ_FILE"
           echo "BUILD_NUMBER=$BUILD" >> $GITHUB_ENV
 
       - name: Archive (full output for error diagnosis)
