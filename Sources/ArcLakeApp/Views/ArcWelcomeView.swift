@@ -93,7 +93,14 @@ struct ArcWelcomeView: View {
                     // deliberately whether that's an acceptable risk for this
                     // submission or whether GitHub should be gated too — not
                     // something to let ride by default.
-                    if false {
+                    //
+                    // RE-ENABLED: root cause found and fixed. The app was signing
+                    // with com.apple.developer.associated-appclip-app-identifiers,
+                    // which the ArcLakeGitHubFlow provisioning profile does not
+                    // grant — an entitlement the profile doesn't permit invalidates
+                    // the entitlement blob at runtime, taking applesignin down with
+                    // it. That key is now removed, and this button uses the same
+                    // native ASAuthorizationAppleIDButton path Ash Tree IDE ships.
                     if !authVM.savedAppleAccounts.isEmpty {
                         // Saved Apple accounts — show them as quick-resume rows
                         ForEach(authVM.savedAppleAccounts) { account in
@@ -125,24 +132,19 @@ struct ArcWelcomeView: View {
                             }
                         }
                         // Add another Apple ID
-                        SignInWithAppleButton(.signIn) { req in
-                            authVM.configureAppleRequest(req)
-                        } onCompletion: { result in
-                            authVM.handleAppleResult(result)
-                        }
-                        .signInWithAppleButtonStyle(.white)
+                        ArcAppleSignInButton(
+                            onRequest:    { req    in authVM.configureAppleRequest(req) },
+                            onCompletion: { result in authVM.handleAppleResult(result) }
+                        )
                         .frame(height: 44).cornerRadius(10)
                     } else {
                         // No saved Apple accounts — show full Sign In button
-                        SignInWithAppleButton(.signIn) { req in
-                            authVM.configureAppleRequest(req)
-                        } onCompletion: { result in
-                            authVM.handleAppleResult(result)
-                        }
-                        .signInWithAppleButtonStyle(.white)
+                        ArcAppleSignInButton(
+                            onRequest:    { req    in authVM.configureAppleRequest(req) },
+                            onCompletion: { result in authVM.handleAppleResult(result) }
+                        )
                         .frame(height: 52).cornerRadius(12)
                     }
-                    } // end Apple hide
 
                     // ② Google Sign-In — hidden until Google Cloud paid dev account
                     // is set up with a proper iOS-type OAuth client (Google requires
