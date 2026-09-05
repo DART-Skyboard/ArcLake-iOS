@@ -6,30 +6,35 @@
     <array>
         <string>Default</string>
     </array>
+
+    <!-- Matches Ash Tree IDE, where Sign in with Apple works reliably.
+         Gives the app an explicit keychain access group so credential
+         reads/writes during the SIWA flow are not subject to the default
+         group being inferred differently between build configurations. -->
+    <key>keychain-access-groups</key>
+    <array>
+        <string>$(AppIdentifierPrefix)DART-Meadow-LLC.Cotharticren</string>
+    </array>
+    <key>com.apple.security.network.client</key>
+    <true/>
+
     <key>aps-environment</key>
     <string>production</string>
 
-    <!-- Required on the FULL app too, not just the clip target — Apple
-         verifies both declare the same associated domain to establish the
-         "this App Clip belongs to this app" relationship. appclips: is a
-         distinct service type from applinks: (Universal Links). -->
+    <!-- NOTE: com.apple.developer.associated-appclip-app-identifiers was
+         REMOVED here. The ArcLakeGitHubFlow provisioning profile does not
+         grant that entitlement, and signing an app with an entitlement the
+         profile doesn't permit invalidates the entitlement blob at runtime —
+         which is what was breaking Sign in with Apple on device/TestFlight
+         even though the applesignin entitlement itself was present.
+         Re-add it only after enabling App Clips on the App ID and
+         regenerating the profile. -->
     <key>com.apple.developer.associated-domains</key>
     <array>
         <string>appclips:radicaldeepscale.com</string>
     </array>
 
-    <!-- Normally auto-added by Xcode when creating an App Clip target
-         through its own UI, which this project doesn't use — added
-         manually. Declares which App Clip this app is associated with. -->
-    <key>com.apple.developer.associated-appclip-app-identifiers</key>
-    <array>
-        <string>$(AppIdentifierPrefix)DART-Meadow-LLC.Cotharticren.Clip</string>
-    </array>
-
-    <!-- iCloud Drive document storage. These were MISSING entirely, which is
-         why FileManager.url(forUbiquityContainerIdentifier:) returned nil and
-         the vault silently fell back to local-only storage despite the UI
-         saying work saves to iCloud Drive. Container ID must match what the
+    <!-- iCloud Drive document storage. Container ID must match what the
          provisioning profile permits (iCloud.dedm) or code signing fails. -->
     <key>com.apple.developer.icloud-container-identifiers</key>
     <array>
