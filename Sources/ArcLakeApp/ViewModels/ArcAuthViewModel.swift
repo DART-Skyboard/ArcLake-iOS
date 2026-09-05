@@ -17,6 +17,10 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
     // true only during the automatic launch-time silent check; false for an
     // explicit user-tapped Sign in with Apple button
     private var isSilentAppleCheck = false
+    // Raw nonce for the in-flight Apple request. Ash Tree IDE sets a nonce on
+    // every request and Sign in with Apple works there reliably, so Arc Lake
+    // now matches that construction exactly rather than omitting it.
+    private var currentAppleNonce = ""
     private var googleSignInCompletion: ((Bool) -> Void)?
 
     // MARK: — State
@@ -180,7 +184,10 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
         error = nil
         diagLog("Sign in with Apple requested (scopes: fullName, email)")
         request.requestedScopes = [.fullName, .email]
-        // No nonce — only needed for server-side JWT verification (Firebase etc.)
+        // Attach a nonce, matching Ash Tree IDE's working implementation.
+        let raw = ArcAppleNonce.generate()
+        currentAppleNonce = raw
+        request.nonce = ArcAppleNonce.sha256(raw)
     }
 
     // Called by SwiftUI SignInWithAppleButton onCompletion
@@ -215,31 +222,21 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
                 githubUsername: githubConnected ? githubUsername : nil) }
 
         case .failure(let err):
+            // Mirrors Ash Tree IDE's handler exactly. The automatic retry into
+            // the manual ASAuthorizationController path was REMOVED: with the
+            // native ArcAppleSignInButton the first attempt already uses our own
+            // delegate + live-key-window anchor, so a retry only risks
+            // double-presenting and re-triggering the same failure.
             let asErr = err as? ASAuthorizationError
             let code  = asErr?.code
-            print("[ArcAuth] SignInWithAppleButton failure: \(err.localizedDescription) (code: \(code.map(String.init(describing:)) ?? "?"))")
-            switch code {
-            case .canceled:
-                break  // user tapped Cancel — not an error, stay silent
-            case .unknown:
-                diagLog("SignInWithAppleButton failed (.unknown)", error: err)
-                // Fall back once to the manual controller path (different code
-                // path, our own presentation anchor). Distinguishes "SwiftUI
-                // wrapper problem" from "system refuses the request outright".
-                if !didRetryManualApple {
-                    didRetryManualApple = true
-                    diagLog("Retrying via manual ASAuthorizationController…", level: .warning)
-                    signInWithApple()
-                    return
-                }
-                diagLog("Manual ASAuthorizationController ALSO failed — both paths rejected", level: .error)
-                // On TestFlight/device this commonly means iCloud isn't signed in,
-                // two-factor auth is off, or the capability didn't register yet —
-                // surface it instead of swallowing it, since this is a direct
-                // button tap, not a passive background check.
-                self.error = Self.appleDiagnosticMessage(err)
-            default:
-                self.error = "Apple Sign-In failed: \(err.localizedDescription)"
+            diagLog("Apple Sign-In failure (code: \(code.map(String.init(describing:)) ?? "?"))", error: err)
+
+            if code == .canceled { return }   // user dismissed — not an error
+
+            if asErr?.code.rawValue == 1001 {
+                self.error = "Sign in with Apple is temporarily unavailable. Please try GitHub, or try again in a few minutes."
+            } else {
+                self.error = err.localizedDescription
             }
         }
     }
