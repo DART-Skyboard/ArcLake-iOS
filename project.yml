@@ -64,8 +64,8 @@ targets:
         CODE_SIGN_ENTITLEMENTS: Sources/ArcLakeClip/ArcLakeClip.entitlements
         ENABLE_USER_SCRIPT_SANDBOXING: NO
         TARGETED_DEVICE_FAMILY: "1,2"
-        CURRENT_PROJECT_VERSION: "381"
-        MARKETING_VERSION: "1.5.7"
+        CURRENT_PROJECT_VERSION: "382"
+        MARKETING_VERSION: "1.5.8"
       configs:
         Debug:
           SWIFT_OPTIMIZATION_LEVEL: "-Onone"
@@ -140,8 +140,8 @@ targets:
         ENABLE_USER_SCRIPT_SANDBOXING: NO
         SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
         TARGETED_DEVICE_FAMILY: "1,2"
-        CURRENT_PROJECT_VERSION: "381"
-        MARKETING_VERSION: "1.5.7"
+        CURRENT_PROJECT_VERSION: "382"
+        MARKETING_VERSION: "1.5.8"
       configs:
         Debug:
           SWIFT_OPTIMIZATION_LEVEL: "-Onone"
