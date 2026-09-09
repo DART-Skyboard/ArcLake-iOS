@@ -770,10 +770,18 @@ struct ArcProfileSheet: View {
 
                 Spacer().frame(height: 12)
                 VStack(spacing: 0) {
-                    // Apple ID row hidden until the iOS 27 beta Sign in with Apple
-                    // bug is resolved (see ArcWelcomeView for details) — re-enable
-                    // alongside that button, and mind Guideline 4.8 (equivalent
-                    // login) before submitting with GitHub sign-in visible.
+                    // Apple ID row — RESTORED. It had been deleted while Sign in
+                    // with Apple was disabled; the confirmationDialog it opens
+                    // ("Switch Apple Account" / "Add New Apple ID") was still wired
+                    // up below, so the feature was reachable by no path at all.
+                    // Guideline 4.8 also requires this to exist while GitHub login
+                    // is shown.
+                    arcRow("Apple ID",
+                           authVM.appleUserId != nil ? authVM.username : "Not connected",
+                           authVM.appleUserId != nil ? themeVM.accent : .white.opacity(0.3)) {
+                        showApplePicker = true
+                    }
+                    Divider().background(Color.white.opacity(0.08))
                     arcRow("GitHub", authVM.githubConnected ? authVM.githubUsername : "Not connected",
                            authVM.githubConnected ? themeVM.accent : .white.opacity(0.3)) { showGitHubPicker = true }
                     // Google row hidden until iOS-type OAuth client is set up
