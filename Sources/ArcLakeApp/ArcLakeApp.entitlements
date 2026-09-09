@@ -21,18 +21,13 @@
     <key>aps-environment</key>
     <string>production</string>
 
-    <!-- NOTE: com.apple.developer.associated-appclip-app-identifiers was
-         REMOVED here. The ArcLakeGitHubFlow provisioning profile does not
-         grant that entitlement, and signing an app with an entitlement the
-         profile doesn't permit invalidates the entitlement blob at runtime —
-         which is what was breaking Sign in with Apple on device/TestFlight
-         even though the applesignin entitlement itself was present.
-         Re-add it only after enabling App Clips on the App ID and
-         regenerating the profile. -->
-    <key>com.apple.developer.associated-domains</key>
-    <array>
-        <string>appclips:radicaldeepscale.com</string>
-    </array>
+    <!-- associated-domains (appclips:…) REMOVED in build 387.
+         AshtreeIDE.entitlements has no associated-domains and SIWA works.
+         Same failure mode as the earlier associated-appclip-app-identifiers
+         mismatch: an entitlement the distribution profile does not grant can
+         invalidate the whole entitlement blob at runtime and take applesignin
+         down with it. Re-add only after the App Store profile explicitly
+         includes Associated Domains + App Clip, then regenerate the profile. -->
 
     <!-- iCloud Drive document storage. Container ID must match what the
          provisioning profile permits (iCloud.dedm) or code signing fails. -->
