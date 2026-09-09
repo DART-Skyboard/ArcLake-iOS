@@ -31,6 +31,12 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
     @Published public var githubUsername  = ""
     @Published public var githubAvatarURL: URL? = nil
     @Published public var appleUserId     = ""
+    // Apple's own display name, independent of `username` (which GitHub also
+    // writes to). Falls back to the keychain-cached name so it survives relaunch
+    // without waiting on a network round trip.
+    public var appleDisplayName: String {
+        KeychainHelper.load(key: displayNameKey) ?? "Apple User"
+    }
     @Published public var error: String?  = nil
     @Published public var deviceFlowCode: ArcDeviceFlowDisplay? = nil
     @Published public var savedAppleAccounts:  [ArcSavedAccount] = []
