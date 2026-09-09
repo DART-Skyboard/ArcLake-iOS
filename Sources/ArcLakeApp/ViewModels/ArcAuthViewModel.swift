@@ -231,13 +231,31 @@ public final class ArcAuthViewModel: NSObject, ObservableObject {
             let code  = asErr?.code
             diagLog("Apple Sign-In failure (code: \(code.map(String.init(describing:)) ?? "?"))", error: err)
 
-            if code == .canceled { return }   // user dismissed — not an error
+            if code == .canceled { return }   // 1001 — user dismissed, not an error
 
-            if asErr?.code.rawValue == 1001 {
-                self.error = "Sign in with Apple is temporarily unavailable. Please try GitHub, or try again in a few minutes."
-            } else {
+            // NOTE: ASAuthorizationError raw values are unknown=1000, canceled=1001,
+            // invalidResponse=1002, notHandled=1003, failed=1004, notInteractive=1005.
+            // A previous version checked for 1001 here, which is canceled and already
+            // returned above — so that branch was dead and 1000 fell through to the
+            // raw NSError string the user was seeing on screen.
+            let ns = err as NSError
+            switch code {
+            case .unknown:            // 1000
+                self.error = "Sign in with Apple couldn't complete. Check that you're signed into iCloud in Settings and that two-factor authentication is on, then try again."
+            case .invalidResponse:    // 1002
+                self.error = "Apple returned an invalid response. Please try again."
+            case .notHandled:         // 1003
+                self.error = "Apple couldn't handle the request. Please try again."
+            case .failed:             // 1004
+                self.error = "Apple Sign-In failed. Please try again, or use GitHub."
+            case .notInteractive:     // 1005
+                self.error = "Apple Sign-In needs an interactive session. Please try again."
+            default:
                 self.error = err.localizedDescription
             }
+            // Full underlying detail goes to the log, not the UI — this is what
+            // actually pinpoints a 1000, which is otherwise opaque.
+            diagLog("Apple raw NSError domain=\(ns.domain) code=\(ns.code) userInfo=\(ns.userInfo)", level: .error)
         }
     }
 
