@@ -776,9 +776,15 @@ struct ArcProfileSheet: View {
                     // up below, so the feature was reachable by no path at all.
                     // Guideline 4.8 also requires this to exist while GitHub login
                     // is shown.
+                    // BUG FIX: appleUserId is a non-optional String ("" when signed
+                    // out), so `!= nil` always evaluated true — this is why the row
+                    // showed "dartsolarpunk" (the shared `username` field, also used
+                    // by GitHub) before Apple Sign-In had ever succeeded. Check
+                    // emptiness instead, and show the Apple display name, not the
+                    // GitHub one.
                     arcRow("Apple ID",
-                           authVM.appleUserId != nil ? authVM.username : "Not connected",
-                           authVM.appleUserId != nil ? themeVM.accent : .white.opacity(0.3)) {
+                           !authVM.appleUserId.isEmpty ? authVM.appleDisplayName : "Not connected",
+                           !authVM.appleUserId.isEmpty ? themeVM.accent : .white.opacity(0.3)) {
                         showApplePicker = true
                     }
                     Divider().background(Color.white.opacity(0.08))
