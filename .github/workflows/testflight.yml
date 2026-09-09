@@ -49,7 +49,7 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: \
             -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
-          # Fetch the LIVE ArcLakeGitHubFlow profile from ASC API — never stale,
+          # Fetch the LIVE ArcLakeAppStoreFlow profile from ASC API — never stale,
           # always includes current App ID capabilities (Sign in with Apple etc.)
           pip3 install --quiet --break-system-packages pyjwt cryptography 2>/dev/null || pip3 install --user --quiet --break-system-packages pyjwt cryptography 2>/dev/null || python3 -m pip install --quiet --break-system-packages pyjwt cryptography || true
           PP_PATH="$RUNNER_TEMP/arclake.mobileprovision"
@@ -60,7 +60,7 @@ jobs:
               "exp":int(time.time())+1200,"aud":"appstoreconnect-v1"}, key,
               algorithm="ES256", headers={"kid":"NQXQ595W59"})
           req = urllib.request.Request(
-              "https://api.appstoreconnect.apple.com/v1/profiles?filter[name]=ArcLakeGitHubFlow",
+              "https://api.appstoreconnect.apple.com/v1/profiles?filter[name]=ArcLakeAppStoreFlow",
               headers={"Authorization": f"Bearer {token}"})
           d = json.loads(urllib.request.urlopen(req).read())
           prof = d["data"][0]["attributes"]
