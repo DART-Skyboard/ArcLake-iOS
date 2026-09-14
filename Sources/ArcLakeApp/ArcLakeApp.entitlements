@@ -2,48 +2,39 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>com.apple.developer.applesignin</key>
-    <array>
-        <string>Default</string>
-    </array>
-
-    <!-- Matches Ash Tree IDE, where Sign in with Apple works reliably.
-         Gives the app an explicit keychain access group so credential
-         reads/writes during the SIWA flow are not subject to the default
-         group being inferred differently between build configurations. -->
-    <key>keychain-access-groups</key>
-    <array>
-        <string>$(AppIdentifierPrefix)DART-Meadow-LLC.Cotharticren</string>
-    </array>
-    <key>com.apple.security.network.client</key>
-    <true/>
-
-    <key>aps-environment</key>
-    <string>production</string>
-
-    <!-- associated-domains (appclips:…) REMOVED in build 387.
-         AshtreeIDE.entitlements has no associated-domains and SIWA works.
-         Same failure mode as the earlier associated-appclip-app-identifiers
-         mismatch: an entitlement the distribution profile does not grant can
-         invalidate the whole entitlement blob at runtime and take applesignin
-         down with it. Re-add only after the App Store profile explicitly
-         includes Associated Domains + App Clip, then regenerate the profile. -->
-
-    <!-- iCloud Drive document storage. Container ID must match what the
-         provisioning profile permits (iCloud.dedm) or code signing fails. -->
-    <key>com.apple.developer.icloud-container-identifiers</key>
-    <array>
-        <string>iCloud.dedm</string>
-    </array>
-    <key>com.apple.developer.ubiquity-container-identifiers</key>
-    <array>
-        <string>iCloud.dedm</string>
-    </array>
-    <key>com.apple.developer.icloud-services</key>
-    <array>
-        <string>CloudDocuments</string>
-    </array>
-    <key>com.apple.developer.ubiquity-kvstore-identifier</key>
-    <string>$(TeamIdentifierPrefix)$(CFBundleIdentifier)</string>
+	<key>application-identifier</key>
+	<string>$(AppIdentifierPrefix)DART-Meadow-LLC.Cotharticren</string>
+	<key>aps-environment</key>
+	<string>production</string>
+	<key>beta-reports-active</key>
+	<true/>
+	<key>com.apple.developer.applesignin</key>
+	<array>
+		<string>Default</string>
+	</array>
+	<key>com.apple.developer.icloud-container-identifiers</key>
+	<array>
+		<string>iCloud.dedm</string>
+	</array>
+	<key>com.apple.developer.icloud-services</key>
+	<array>
+		<string>CloudDocuments</string>
+	</array>
+	<key>com.apple.developer.team-identifier</key>
+	<string>L7AHWS9Q6V</string>
+	<key>com.apple.developer.ubiquity-container-identifiers</key>
+	<array>
+		<string>iCloud.dedm</string>
+	</array>
+	<key>com.apple.developer.ubiquity-kvstore-identifier</key>
+	<string>$(TeamIdentifierPrefix)$(CFBundleIdentifier)</string>
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<key>get-task-allow</key>
+	<false/>
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)DART-Meadow-LLC.Cotharticren</string>
+	</array>
 </dict>
 </plist>
