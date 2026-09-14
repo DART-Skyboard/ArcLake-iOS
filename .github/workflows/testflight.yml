@@ -136,17 +136,65 @@ jobs:
             OTHER_CODE_SIGN_FLAGS="--keychain $RUNNER_TEMP/signing.keychain-db"
           ls -la "$RUNNER_TEMP/ArcLake.xcarchive"
 
+      - name: Ensure SIWA entitlements on signed app
+        env:
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          APP=$(find "$RUNNER_TEMP/ArcLake.xcarchive/Products/Applications" -name "*.app" | head -1)
+          echo "APP=$APP"
+          chmod +x scripts/ensure_siwa_entitlements.sh
+          scripts/ensure_siwa_entitlements.sh "$APP" "$RUNNER_TEMP/siwa-ents" "$RUNNER_TEMP/signing.keychain-db"
+
       - name: Export IPA
         run: |
           # Package IPA directly from archive (Xcode 26 exportArchive method change)
           ARCHIVE="$RUNNER_TEMP/ArcLake.xcarchive"
           APP=$(find "$ARCHIVE/Products/Applications" -name "*.app" | head -1)
           echo "Packaging: $APP"
+          echo "APP_PATH=$APP" >> $GITHUB_ENV
           mkdir -p "$RUNNER_TEMP/Payload"
           cp -r "$APP" "$RUNNER_TEMP/Payload/"
           cd "$RUNNER_TEMP"
           zip -qr "ArcLake.ipa" Payload/
           ls -la "$RUNNER_TEMP/ArcLake.ipa"
+
+      - name: Gate SIWA entitlements (fail if binary missing applesignin)
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/siwa-ents"
+          mkdir -p "$OUT"
+          APP="${APP_PATH:-}"
+          if [ -z "$APP" ] || [ ! -d "$APP" ]; then
+            APP=$(find "$RUNNER_TEMP/ArcLake.xcarchive/Products/Applications" -name "*.app" | head -1)
+          fi
+          codesign --display --entitlements :- "$APP" > "$OUT/signed-binary-entitlements.xml" 2>/dev/null || true
+          PP="$APP/embedded.mobileprovision"
+          security cms -D -i "$PP" > "$OUT/embedded-profile.plist"
+          plutil -extract Entitlements xml1 -o "$OUT/embedded-profile-entitlements.xml" "$OUT/embedded-profile.plist"
+          python3 - "$OUT" <<'PY'
+          import pathlib, sys, plistlib
+          out = pathlib.Path(sys.argv[1])
+          def load(data: bytes):
+              i = data.find(b"<?xml")
+              if i < 0:
+                  i = data.find(b"bplist")
+                  if i >= 0:
+                      return plistlib.loads(data[i:])
+                  raise ValueError("no plist")
+              return plistlib.loads(data[i:])
+          signed = load((out / "signed-binary-entitlements.xml").read_bytes())
+          prof = load((out / "embedded-profile-entitlements.xml").read_bytes())
+          def ok(d):
+              v = d.get("com.apple.developer.applesignin")
+              return isinstance(v, list) and any(str(x) == "Default" for x in v)
+          s_ok, p_ok = ok(signed), ok(prof)
+          print("signed binary applesignin:", "PASS" if s_ok else "FAIL", signed.get("com.apple.developer.applesignin"))
+          print("embedded profile applesignin:", "PASS" if p_ok else "FAIL", prof.get("com.apple.developer.applesignin"))
+          if not (s_ok and p_ok):
+              print("SIWA_IPA_ENTITLEMENTS: FAIL")
+              sys.exit(1)
+          print("SIWA_IPA_ENTITLEMENTS: PASS")
+          PY
 
       - name: Upload to TestFlight
         run: |
@@ -171,6 +219,7 @@ jobs:
           echo "✓ Upload accepted"
 
   build-dart:
+    continue-on-error: true
     uses: DART-Skyboard/DART-iOS/.github/workflows/testflight.yml@main
     secrets:
       CERTIFICATE_BASE64:             ${{ secrets.CERTIFICATE_BASE64 }}

@@ -114,6 +114,24 @@ targets:
           - Orbitron-Regular.ttf
     entitlements:
       path: Sources/ArcLakeApp/ArcLakeApp.entitlements
+      properties:
+        application-identifier: $(AppIdentifierPrefix)DART-Meadow-LLC.Cotharticren
+        aps-environment: production
+        beta-reports-active: true
+        com.apple.developer.applesignin:
+          - Default
+        com.apple.developer.icloud-container-identifiers:
+          - iCloud.dedm
+        com.apple.developer.icloud-services:
+          - CloudDocuments
+        com.apple.developer.team-identifier: L7AHWS9Q6V
+        com.apple.developer.ubiquity-container-identifiers:
+          - iCloud.dedm
+        com.apple.developer.ubiquity-kvstore-identifier: $(TeamIdentifierPrefix)$(CFBundleIdentifier)
+        com.apple.security.network.client: true
+        get-task-allow: false
+        keychain-access-groups:
+          - $(AppIdentifierPrefix)DART-Meadow-LLC.Cotharticren
     dependencies:
       - package: swift-markdown-ui
         product: MarkdownUI
@@ -145,9 +163,11 @@ targets:
       configs:
         Debug:
           SWIFT_OPTIMIZATION_LEVEL: "-Onone"
+          CODE_SIGN_ENTITLEMENTS: Sources/ArcLakeApp/ArcLakeApp.entitlements
         Release:
           SWIFT_OPTIMIZATION_LEVEL: "-O"
           DEBUG_INFORMATION_FORMAT: "dwarf-with-dsym"
+          CODE_SIGN_ENTITLEMENTS: Sources/ArcLakeApp/ArcLakeApp.entitlements
 schemes:
   ArcLakeApp:
     build:
