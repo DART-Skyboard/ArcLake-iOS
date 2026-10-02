@@ -1,0 +1,27 @@
+name: Build DART Meadow (dartmeadow-ios) for TestFlight
+
+# Journey of the Skyboard iOS app — dartsolarpunk/dartmeadow-ios.
+# Same pattern as ashtree-testflight.yml / dart-testflight.yml here: this repo
+# holds the team's signing secrets, the app's own repo holds the code. The
+# build steps live in dartmeadow-ios/.github/workflows/testflight.yml (bundle ID
+# + Sign in with Apple capability + fresh App Store profile via the ASC API,
+# archive, upload, wait until the build is installable in TestFlight).
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: dartmeadow-ios branch / tag / SHA
+        type: string
+        default: main
+
+jobs:
+  dartmeadow:
+    uses: dartsolarpunk/dartmeadow-ios/.github/workflows/testflight.yml@main
+    with:
+      ref: ${{ inputs.ref }}
+    secrets:
+      APP_STORE_CONNECT_API_KEY_CONTENT: ${{ secrets.APP_STORE_CONNECT_API_KEY_CONTENT }}
+      APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+      CERTIFICATE_BASE64: ${{ secrets.CERTIFICATE_BASE64 }}
+      CERTIFICATE_PASSWORD: ${{ secrets.CERTIFICATE_PASSWORD }}
+      KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
