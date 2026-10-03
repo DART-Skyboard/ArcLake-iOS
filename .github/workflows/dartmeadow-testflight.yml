@@ -16,7 +16,7 @@ on:
       mode:
         description: build (archive + upload + wait), testers (internal group/testers), iap (create/update in-app purchases)
         type: choice
-        options: [build, testers, iap, external, listing]
+        options: [build, testers, iap, external, listing, attach]
         default: build
 
 jobs:
