@@ -14,9 +14,9 @@ on:
         type: string
         default: main
       mode:
-        description: build (archive + upload + wait) or testers (internal group/testers only)
+        description: build (archive + upload + wait), testers (internal group/testers), iap (create/update in-app purchases)
         type: choice
-        options: [build, testers]
+        options: [build, testers, iap]
         default: build
 
 jobs:
