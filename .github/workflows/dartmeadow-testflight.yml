@@ -13,12 +13,18 @@ on:
         description: dartmeadow-ios branch / tag / SHA
         type: string
         default: main
+      mode:
+        description: build (archive + upload + wait) or testers (internal group/testers only)
+        type: choice
+        options: [build, testers]
+        default: build
 
 jobs:
   dartmeadow:
     uses: dartsolarpunk/dartmeadow-ios/.github/workflows/testflight.yml@main
     with:
       ref: ${{ inputs.ref }}
+      mode: ${{ inputs.mode }}
     secrets:
       APP_STORE_CONNECT_API_KEY_CONTENT: ${{ secrets.APP_STORE_CONNECT_API_KEY_CONTENT }}
       APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
