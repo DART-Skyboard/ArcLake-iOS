@@ -201,6 +201,18 @@ public struct ArcComponentSpec: Identifiable {
     public var fluidType: ArcCombustionFlow.FluidType? = nil
     public var boundingMin: SIMD3<Float> = .zero
     public var boundingMax: SIMD3<Float> = .zero
+    // Task #41: geometric auto-classification — set by
+    // ArcGeometricClassifier for every component whose role wasn't found
+    // in the hardcoded Combustion_flow.glb dictionary (ArcCombustionFlow.
+    // componentRoles), so ANY imported GLB gets a sensible container/pipe
+    // split instead of defaulting to "unknown." `nil` for a component
+    // that WAS resolved via the hardcoded dictionary (that path already
+    // has its own precise role — see ArcCombustionFlow.ComponentRole).
+    public var geometricKind: ArcGeometricClassifier.Kind? = nil
+    // Node names of containers this pipe/channel connects, nearest-first
+    // at each of its two long-axis extremities (empty for a container,
+    // or a pipe for which no container was found nearby).
+    public var connectedContainerNames: [String] = []
     // Volume in scene units³ (not converted — scene unit scale depends on model)
     public var volumeSceneUnits: Double {
         let s = boundingMax - boundingMin
@@ -489,6 +501,16 @@ public final class ArcFluidEngine: ObservableObject {
     }
 
     // MARK: — Scan component specs
+    //
+    // Task #41: the hardcoded ArcCombustionFlow.componentRoles dictionary
+    // remains the FIRST lookup (so the one bundled Combustion_flow.glb
+    // asset keeps its exact existing hand-tuned behavior — fallback/
+    // override per the task brief), but any node name NOT found there
+    // now goes through ArcGeometricClassifier instead of silently
+    // defaulting to a bare "unknown, steel alloy" spec. This is what
+    // makes "import your own model and have it just work" real: an
+    // arbitrary GLB with its own mesh names gets a real container/pipe
+    // split and inferred pipe→container connections purely from shape.
     func scanComponentSpecs(_ scene: SCNScene) {
         var specs: [ArcComponentSpec] = []
         var seenNames = Set<String>()
@@ -512,21 +534,43 @@ public final class ArcFluidEngine: ObservableObject {
             if let ex = self.componentSpecs.first(where:{$0.nodeName==nm}) {
                 spec = ex
             } else {
-                // Auto-detect role from Combustion_flow.glb mesh names
+                // 1) Hardcoded dictionary first — exact names from the
+                //    bundled Combustion_flow.glb demo asset.
                 let role = ArcCombustionFlow.componentRoles[dname]
-                let alloy: ArcAlloySpec
-                switch role {
-                case .combustionChamber: alloy = .inconel   // high-temp chamber
-                case .channel:          alloy = .titanium   // lightweight channel
-                case .pressureChamber:  alloy = .steel      // pressure vessel
-                case .tank:             alloy = .aluminum   // tank walls
-                case nil:               alloy = .steel
+                if let role {
+                    let alloy: ArcAlloySpec
+                    switch role {
+                    case .combustionChamber: alloy = .inconel   // high-temp chamber
+                    case .channel:          alloy = .titanium   // lightweight channel
+                    case .pressureChamber:  alloy = .steel      // pressure vessel
+                    case .tank:             alloy = .aluminum   // tank walls
+                    }
+                    spec = ArcComponentSpec(nodeName: nm, displayName: dname, alloy: alloy)
+                    if case .pressureChamber = role { spec.isInlet = true; spec.pressurePsi = 150 }
+                    if case .combustionChamber = role { spec.isCombustionChamber = true }
+                    if case .tank(let fluid) = role { spec.fluidType = fluid }
+                } else {
+                    // 2) No dictionary entry — classify geometrically.
+                    // boundingMin/Max aren't set on `spec` until after
+                    // this branch, so classify directly from bmin/bmax.
+                    let shape = ArcGeometricClassifier.ShapeInfo(nodeName: nm, boundingMin: bmin, boundingMax: bmax)
+                    let result = ArcGeometricClassifier.classify(shape)
+                    let alloy: ArcAlloySpec
+                    switch result.kind {
+                    case .pipe:      alloy = .titanium
+                    case .container: alloy = .aluminum
+                    case .unknown:   alloy = .steel
+                    }
+                    spec = ArcComponentSpec(nodeName: nm, displayName: dname, alloy: alloy)
+                    spec.geometricKind = result.kind
+                    if result.kind == .container {
+                        // A compact, enclosed-volume shape with no other
+                        // signal defaults to a generic inlet-capable tank
+                        // so it's immediately fillable — matches the
+                        // hardcoded dictionary's .tank behavior.
+                        spec.isInlet = true
+                    }
                 }
-                spec = ArcComponentSpec(nodeName: nm, displayName: dname, alloy: alloy)
-                // Set isInlet/isOutlet from role
-                if case .pressureChamber = role { spec.isInlet = true; spec.pressurePsi = 150 }
-                if case .combustionChamber = role { spec.isCombustionChamber = true }
-                if case .tank(let fluid) = role { spec.fluidType = fluid }
             }
             // Always update bounding box
             spec.boundingMin = bmin; spec.boundingMax = bmax
@@ -535,6 +579,36 @@ public final class ArcFluidEngine: ObservableObject {
             spec.particleCapacity = max(5, Int(vol * 30))  // 30 particles/m³ default
             specs.append(spec)
         }
+
+        // 3) Pipe→container connection inference (task #41, part 2): for
+        // every geometrically-classified pipe, find the nearest
+        // geometrically-classified container at each of its two
+        // long-axis end regions. Only runs over components that went
+        // through the geometric path (geometricKind != nil) — the
+        // hardcoded dictionary's channels already carry an explicit
+        // from/to in ArcCombustionFlow.ComponentRole.channel, so this
+        // doesn't need to (and shouldn't) second-guess those.
+        let containerShapes: [ArcGeometricClassifier.ShapeInfo] = specs
+            .filter { $0.geometricKind == .container }
+            .map { ArcGeometricClassifier.ShapeInfo(nodeName: $0.nodeName, boundingMin: $0.boundingMin, boundingMax: $0.boundingMax) }
+        if !containerShapes.isEmpty {
+            for i in 0..<specs.count {
+                guard specs[i].geometricKind == .pipe else { continue }
+                let shape = ArcGeometricClassifier.ShapeInfo(nodeName: specs[i].nodeName, boundingMin: specs[i].boundingMin, boundingMax: specs[i].boundingMax)
+                let result = ArcGeometricClassifier.classify(shape)
+                guard !result.pipeEnds.isEmpty else { continue }
+                // Search radius: generous multiple of this pipe's own
+                // cross-section so a tightly-abutting tank is always
+                // found, but a container on the far side of a large
+                // scene isn't spuriously matched.
+                let (c0, c1) = shape.crossSectionDims
+                let searchR = max(c0, c1) * 8 + 1.0
+                let names = ArcGeometricClassifier.nearestContainers(
+                    toEnds: result.pipeEnds, containers: containerShapes, maxSearchDistance: searchR)
+                specs[i].connectedContainerNames = names.compactMap { $0 }
+            }
+        }
+
         componentSpecs = specs
     }
 

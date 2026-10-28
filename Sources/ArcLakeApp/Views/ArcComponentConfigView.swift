@@ -346,11 +346,19 @@ struct ArcComponentConfigView: View {
                             .font(.system(size: 9, design: .monospaced)).foregroundColor(.orange)
                             .frame(width: 52, alignment: .trailing)
                     }
-                    // Auto-detected flow info
+                    // Auto-detected flow info — hardcoded dictionary first,
+                    // geometric classification (task #41) as the fallback
+                    // for any component not in that dictionary.
                     if flowDir == .auto, let role = ArcCombustionFlow.componentRoles[displayName] {
                         HStack(spacing: 4) {
                             Image(systemName: "info.circle").font(.system(size: 9)).foregroundColor(themeVM.accent)
                             Text(autoFlowDescription(role))
+                                .font(.system(size: 8, design: .monospaced)).foregroundColor(.white.opacity(0.5))
+                        }
+                    } else if flowDir == .auto, let desc = geometricFlowDescription(s) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "wand.and.stars").font(.system(size: 9)).foregroundColor(.cyan)
+                            Text(desc)
                                 .font(.system(size: 8, design: .monospaced)).foregroundColor(.white.opacity(0.5))
                         }
                     }
@@ -557,6 +565,8 @@ struct ArcComponentConfigView: View {
         if s.fluidType == .fuel  { return "drop.fill" }
         if s.fluidType == .oxidizer { return "bolt.fill" }
         if s.isInlet  { return "arrow.down.circle.fill" }
+        if s.geometricKind == .pipe { return "line.diagonal" }
+        if s.geometricKind == .container { return "cube.fill" }
         return "cube.fill"
     }
 
@@ -565,6 +575,7 @@ struct ArcComponentConfigView: View {
         if s.fluidType == .fuel  { return .blue }
         if s.fluidType == .oxidizer { return .red }
         if s.isInlet  { return .green }
+        if s.geometricKind == .pipe { return .cyan }
         return themeVM.accent
     }
 
@@ -573,7 +584,14 @@ struct ArcComponentConfigView: View {
         if let ft = s.fluidType { return "\(ft.rawValue.uppercased()) TANK" }
         if s.isInlet  { return "PRESSURE INLET" }
         if s.isOutlet { return "EXHAUST OUTLET" }
-        return "COMPONENT"
+        // Task #41: geometric fallback when no hardcoded-dictionary role
+        // or explicit designation applies — tells the user WHY this
+        // component looks the way it does for an arbitrary imported model.
+        switch s.geometricKind {
+        case .pipe:      return "PIPE / CHANNEL (auto-detected)"
+        case .container: return "CONTAINER (auto-detected)"
+        case .unknown, nil: return "COMPONENT"
+        }
     }
 
     private func autoFlowDescription(_ role: ArcCombustionFlow.ComponentRole) -> String {
@@ -582,6 +600,24 @@ struct ArcComponentConfigView: View {
         case .tank: return "Gravity-assisted downward flow via channel"
         case .channel(let from, let to): return "\(from) → \(to) (gravity-fed)"
         case .combustionChamber: return "Receives fuel + oxidizer, exhaust exits bottom"
+        }
+    }
+
+    /// Task #41: geometric-classification equivalent of
+    /// autoFlowDescription for components that have no hardcoded-dictionary
+    /// role — surfaces the inferred pipe→container connection(s) so the
+    /// user can see what the shape-based classifier worked out.
+    private func geometricFlowDescription(_ s: ArcComponentSpec) -> String? {
+        switch s.geometricKind {
+        case .pipe:
+            if s.connectedContainerNames.isEmpty {
+                return "Pipe/channel geometry (long, thin) — no nearby container found"
+            }
+            return "Pipe/channel connecting: " + s.connectedContainerNames.joined(separator: " ↔ ")
+        case .container:
+            return "Sealed container geometry — fillable cavity"
+        case .unknown, nil:
+            return nil
         }
     }
 
