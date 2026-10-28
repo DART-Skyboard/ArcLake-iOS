@@ -620,10 +620,20 @@ struct DARTTabSelector: View {
                                              ? themeVM.accent : .white.opacity(0.3))
                         Text(label)
                             .font(.system(size: 8, design: .monospaced))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
                             .foregroundColor(labVM.activeTab == tab
                                              ? themeVM.accent : .white.opacity(0.25))
                     }
-                    .frame(width: 60)
+                    // Was 60 — with 7 tabs this bar never fits the sidebar's
+                    // 380pt cap regardless of width (7×60 + spacing alone
+                    // exceeds it), so horizontal scroll is unavoidable here.
+                    // Narrower tabs mean more of them peek into view at
+                    // once, which — combined with the edge fade mask below
+                    // — makes "there's more, swipe" visually obvious
+                    // instead of the strip looking like a short, complete
+                    // row that happens to cut off mid-icon.
+                    .frame(width: 50)
                     .padding(.vertical, 8)
                     .background(labVM.activeTab == tab
                                 ? themeVM.accent.opacity(0.08) : Color.clear)
@@ -642,6 +652,21 @@ struct DARTTabSelector: View {
         .background(Color.black.opacity(0.5))
         .overlay(Rectangle().frame(height: 0.5)
             .foregroundColor(Color.white.opacity(0.08)), alignment: .bottom)
+        // Fade mask on both edges: a tab visibly cut off at the panel's
+        // edge (faded rather than cleanly clipped) reads as "more tabs
+        // this way" at a glance — the scrollable-but-looks-complete
+        // problem the screenshot showed (only Fluid/Algebra/Physics
+        // visible, no hint that Arc/Log/Imports/Render exist off-screen).
+        .mask(
+            LinearGradient(
+                stops: [
+                    .init(color: .clear, location: 0),
+                    .init(color: .black, location: 0.04),
+                    .init(color: .black, location: 0.92),
+                    .init(color: .clear, location: 1),
+                ],
+                startPoint: .leading, endPoint: .trailing)
+        )
     }
 }
 

@@ -79,9 +79,19 @@ struct ArcFluidView: View {
             ForEach(FTab.allCases, id:\.self) { t in
                 Button { panelTab = t } label: {
                     Text(t.rawValue)
-                        .font(.system(size:9,weight:.bold,design:.monospaced))
+                        // Was size:9 — fit fine at 3 tabs (Setup/Materials/
+                        // Measure), but adding "Build" as a 4th tab narrowed
+                        // each one enough that "Materials" wrapped mid-word
+                        // ("Material" / "s") instead of fitting on one line.
+                        // lineLimit+minimumScaleFactor is the real fix (it
+                        // shrinks instead of wrapping at any tab count),
+                        // with the smaller base size so it rarely needs to.
+                        .font(.system(size:8,weight:.bold,design:.monospaced))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
                         .foregroundColor(panelTab==t ? .black : .white.opacity(0.5))
                         .frame(maxWidth:.infinity).padding(.vertical,7)
+                        .padding(.horizontal, 2)
                         .background(panelTab==t ? themeVM.accent : Color.clear)
                 }
             }
@@ -486,7 +496,15 @@ struct ArcFluidView: View {
     }
 
     private func mono(_ s:String) -> some View {
+        // .fixedSize(horizontal:true) stops this label from being
+        // compressed below its natural width by a neighboring flexible
+        // view (a Slider, Spacer, etc.) in a tight HStack — without it,
+        // short labels like "Particles" or "Materials" can get squeezed
+        // and wrap mid-word ("Particle" / "s") instead of staying on one
+        // line, which is what was happening in the Parameters card.
         Text(s).font(.system(size:10,design:.monospaced)).foregroundColor(.white.opacity(0.65))
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
     }
     private func accent(_ s:String) -> some View {
         Text(s).font(.system(size:9,design:.monospaced)).foregroundColor(themeVM.accent)
