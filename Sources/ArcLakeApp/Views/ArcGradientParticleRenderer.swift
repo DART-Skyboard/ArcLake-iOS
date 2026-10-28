@@ -162,6 +162,18 @@ enum ArcGradientParticleRenderer {
     /// tempK), not invented per-pole data, so the gradient genuinely
     /// tracks what the simulation is doing rather than being a cosmetic
     /// animation layered on top.
+    ///
+    /// Also responds to neighbor/asset interaction, not just the
+    /// particle's own isolated state: `p.dens` is the solver's own local
+    /// density field sample at this particle's cell (i.e. "how crowded
+    /// with neighboring fluid am I right now" — not a per-particle N-body
+    /// search, but physically the same information, since the grid cell
+    /// IS the local-neighborhood-averaged state), and a non-empty
+    /// `p.componentHit` means this particle is currently touching/near a
+    /// named collision component (an imported asset's surface). Both
+    /// visibly brighten/saturate activation across the whole pole set, so
+    /// a particle genuinely reads differently when it's packed into a
+    /// dense cluster or pressed against a wall versus drifting alone.
     static func poleSet(for p: ArcParticle, baseColor: SIMD3<Float>, envTempK: Float) -> ArcParticlePoleSet {
         let speed = simd_length(SIMD3(p.vx, p.vy, p.vz))
         let velDir: SIMD3<Float> = speed > 0.001 ? SIMD3(p.vx, p.vy, p.vz) / speed : SIMD3(0,1,0)
@@ -169,8 +181,24 @@ enum ArcGradientParticleRenderer {
         let hotColor = SIMD3<Float>(1.0, 0.45, 0.08)
         let coolColor = SIMD3<Float>(0.15, 0.4, 1.0)
 
+        // Local crowding: how dense is the fluid right where this particle
+        // is, relative to a nominal "comfortably dense" reference. This is
+        // the particle-to-particle interaction signal — a particle packed
+        // into a tight cluster reads brighter/more saturated overall than
+        // one drifting in sparse fluid, independent of its own velocity.
+        let crowding = min(1, max(0, p.dens / 2.0))
+        // Asset contact: this particle's last grid step touched a named
+        // collision component (set by the SDF/mesh-collision correction
+        // pass) — a visible "pressed against the wall" brighten, the
+        // particle-to-imported-asset interaction signal.
+        let touchingAsset = !p.componentHit.isEmpty
+
         var colors = [SIMD3<Float>](repeating: baseColor, count: 6)
-        var activations = [Float](repeating: 0.55, count: 6) // base "always some presence" floor
+        // Base activation floor rises with local crowding and asset
+        // contact, so these two interaction signals are visible across
+        // the whole particle, not just at one pole.
+        let interactionFloor: Float = 0.45 + crowding * 0.2 + (touchingAsset ? 0.15 : 0)
+        var activations = [Float](repeating: min(0.85, interactionFloor), count: 6)
 
         // Velocity-facing pole: brightest/most saturated; its opposite
         // pole dims toward the base color at lower activation — this is
@@ -183,9 +211,9 @@ enum ArcGradientParticleRenderer {
         }
         let speedNorm = min(1, speed / 12.0)
         colors[bestPole] = mix(baseColor, SIMD3(min(1,baseColor.x*1.3+0.2), min(1,baseColor.y*1.3+0.2), min(1,baseColor.z*1.3+0.2)), t: speedNorm)
-        activations[bestPole] = min(1, 0.55 + speedNorm * 0.45)
+        activations[bestPole] = min(1, activations[bestPole] + speedNorm * 0.45)
         let oppositePole = bestPole % 2 == 0 ? bestPole + 1 : bestPole - 1
-        activations[oppositePole] = max(0.15, 0.55 - speedNorm * 0.35)
+        activations[oppositePole] = max(0.15, activations[oppositePole] - speedNorm * 0.3)
 
         // Thermal split on the Z axis poles (index 4 = +Z hot, 5 = -Z
         // cool) independent of the velocity poles above — a gas pocket
@@ -195,6 +223,15 @@ enum ArcGradientParticleRenderer {
         colors[5] = mix(colors[5], coolColor, t: 1 - heat)
         activations[4] = max(activations[4], heat * 0.9)
         activations[5] = max(activations[5], (1 - heat) * 0.5)
+
+        // Asset-contact rim: a particle actually touching collision
+        // geometry gets a visible saturation lift on whichever pole faces
+        // away from its own velocity (the side pressed "into" the surface
+        // tends to be the trailing side), so contact reads as a distinct
+        // bright rim rather than just a uniform brighten.
+        if touchingAsset {
+            activations[oppositePole] = min(1, activations[oppositePole] + 0.35)
+        }
 
         return ArcParticlePoleSet(colors: colors, activations: activations)
     }

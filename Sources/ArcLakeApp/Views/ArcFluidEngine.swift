@@ -1,6 +1,7 @@
 import Foundation
 import SceneKit
 import simd
+import UIKit
 
 // ═══════════════════════════════════════════════════════════════════
 // ArcFluidEngine — Arc Edge CFD: mesh-conformal sparse-voxel fluid
@@ -1064,6 +1065,26 @@ public final class ArcFluidEngine: ObservableObject {
             let frac = expected - Float(whole)
             let perCell = whole + (Float.random(in: 0..<1) < frac ? 1 : 0)
             guard perCell > 0 else { continue }
+            // Asset-contact signal for the gradient-sphere renderer's
+            // particle-to-asset interaction response (see
+            // ArcGradientParticleRenderer.poleSet): is this fluid cell
+            // adjacent to an SDF/mesh-collision solid boundary cell right
+            // now? Checked once per cell (not per particle spawned in it)
+            // since all particles seeded from the same cell share the same
+            // neighborhood. A tagged neighbor's component name is used
+            // when available so this is a real "touching THIS asset"
+            // signal, not just a generic "near some wall" flag.
+            var componentHit = ""
+            for nc in voxelGrid.neighbors6(of: c) {
+                let n = voxelGrid[nc]
+                guard n.isSolid else { continue }
+                if n.componentTag >= 0, Int(n.componentTag) < componentSpecs.count {
+                    componentHit = componentSpecs[Int(n.componentTag)].displayName
+                } else {
+                    componentHit = "wall"
+                }
+                break
+            }
             for _ in 0..<perCell {
                 let jitter = SIMD3<Float>.random(in: -voxelGrid.cellSize/2...voxelGrid.cellSize/2)
                 let wp = center + jitter
@@ -1075,6 +1096,7 @@ public final class ArcFluidEngine: ObservableObject {
                 part.tempK = cell.tempK
                 part.pressure = max(0, cell.pressure) * 1000
                 part.spd = simd_length(cell.velocity)
+                part.componentHit = componentHit
                 newPts.append(part)
                 if newPts.count >= hardCap { break outer }
             }
@@ -1545,10 +1567,15 @@ public final class ArcFluidEngine: ObservableObject {
         let densityScale = Float(max(0.55, min(1.0, 1.0 - log10(Double(max(1, n))) * 0.08)))
         switch particleVisual {
         case .points:
-            let sz = Float(min(5, max(1.2, (1.4 + avgSpd * 0.08) * densityScale)))
+            // Fine "smoky grain" target: individual points should be hard
+            // to resolve as discrete shapes — a fraction of their old
+            // floor size, relying on the soft radial sprite above (not
+            // flat squares) plus additive overlap at real density to read
+            // as continuous smoke/mist rather than a sparse dot field.
+            let sz = Float(min(3.2, max(0.4, (0.6 + avgSpd * 0.05) * densityScale)))
             elem.pointSize = CGFloat(sz)
-            elem.minimumPointScreenSpaceRadius = 0.6
-            elem.maximumPointScreenSpaceRadius = CGFloat(sz * 1.8)
+            elem.minimumPointScreenSpaceRadius = 0.25
+            elem.maximumPointScreenSpaceRadius = CGFloat(sz * 1.6)
         case .spheres:
             // Softened from the old "large blended spheres" default — still
             // bigger than .points, but no longer chunky at realistic density.
@@ -1580,9 +1607,45 @@ public final class ArcFluidEngine: ObservableObject {
         // actual visual mechanism FLIP/volumetric renders rely on for a
         // "fine smoke or liquid" look rather than a particle spray.
         mat.blendMode = .add
+        // Soft radial-falloff sprite instead of SceneKit's default hard-
+        // edged square point primitive. A point rendered as a flat square
+        // (or even a flat circle) still reads as a discrete dot at any
+        // size — there is no amount of "smaller" that turns a hard edge
+        // into smoke. Sampling a small procedural gaussian-falloff texture
+        // per point gives each particle a soft, fading edge, so at high
+        // density/small size (particleVisual == .points, the default "fine
+        // smoky grain" mode) the individual sprite disappears into the
+        // additive blend with its neighbors and the whole cluster reads as
+        // continuous mist/fluid rather than a dot field. SceneKit point
+        // primitives DO sample diffuse.contents per point when the geometry
+        // element's primitiveType is .point, so this needs no custom shader.
+        mat.diffuse.contents = ArcFluidEngine.softDotSprite
         geo.firstMaterial = mat
         cloudNode.geometry = geo
     }
+
+    // Cached once — a small (32×32) radial-gaussian-falloff white-on-
+    // transparent sprite, used as the point-sprite texture for all
+    // point-cloud visual modes so individual particles fade softly at
+    // their edge instead of rendering as hard-edged squares/circles.
+    private static let softDotSprite: UIImage = {
+        let size: CGFloat = 32
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size))
+        return renderer.image { ctx in
+            let cg = ctx.cgContext
+            let colors = [UIColor.white.withAlphaComponent(1.0).cgColor,
+                          UIColor.white.withAlphaComponent(0.55).cgColor,
+                          UIColor.white.withAlphaComponent(0.0).cgColor] as CFArray
+            guard let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                                             colors: colors, locations: [0.0, 0.45, 1.0]) else {
+                return
+            }
+            let center = CGPoint(x: size/2, y: size/2)
+            cg.drawRadialGradient(gradient, startCenter: center, startRadius: 0,
+                                   endCenter: center, endRadius: size/2,
+                                   options: [])
+        }
+    }()
 
     // MARK: — Geometry helpers
     private func extractFloat3(from src: SCNGeometrySource) -> [SIMD3<Float>] {
