@@ -329,6 +329,7 @@ public final class ArcFluidEngine: ObservableObject {
         fitVoxelDomainToScene(scene)
         solver.viscosity = mode.params.visc * 0.6
         solver.thermalDiffusion = mode.params.visc * 1.2 + 0.02
+        solver.ambientTempK = envTempK
 
         // Initialize component specs for all mesh nodes
         scanComponentSpecs(scene)
@@ -421,6 +422,18 @@ public final class ArcFluidEngine: ObservableObject {
     }
 
     // MARK: — Voxel domain fit (v3.0)
+    // v3.1 fix (item 8): the old code merged each node's LOCAL
+    // boundingBox directly into the voxel domain bounds, as if it were
+    // already world-space — correct only when the node's transform is
+    // pure identity/translation. An imported node with a non-identity
+    // scale or rotation (common for GLB imports) then produces a
+    // domain that doesn't match the actually-rendered (world-space)
+    // model size. Fixed to transform all 8 corners of each node's local
+    // bounding box through node.worldTransform before merging, matching
+    // (and going one better than — scanComponentSpecs transforms only
+    // the min/max corners, which is sufficient for translation+uniform
+    // scale but not rotation) the existing worldTransform-based pattern
+    // elsewhere in this file.
     private func fitVoxelDomainToScene(_ scene: SCNScene) {
         var mn = SIMD3<Float>(repeating:  Float.infinity)
         var mx = SIMD3<Float>(repeating: -Float.infinity)
@@ -429,10 +442,18 @@ public final class ArcFluidEngine: ObservableObject {
                   let nm = node.name,
                   !nm.hasPrefix("arc_light_"),
                   nm != "arcFluidCloud" else { return }
-            let wb = node.boundingBox
-            let lo = SIMD3<Float>(wb.min.x, wb.min.y, wb.min.z)
-            let hi = SIMD3<Float>(wb.max.x, wb.max.y, wb.max.z)
-            mn = simd_min(mn, lo); mx = simd_max(mx, hi)
+            let bb = node.boundingBox
+            let wt = node.worldTransform
+            let corners: [SIMD3<Float>] = [
+                SIMD3(bb.min.x, bb.min.y, bb.min.z), SIMD3(bb.max.x, bb.min.y, bb.min.z),
+                SIMD3(bb.min.x, bb.max.y, bb.min.z), SIMD3(bb.max.x, bb.max.y, bb.min.z),
+                SIMD3(bb.min.x, bb.min.y, bb.max.z), SIMD3(bb.max.x, bb.min.y, bb.max.z),
+                SIMD3(bb.min.x, bb.max.y, bb.max.z), SIMD3(bb.max.x, bb.max.y, bb.max.z),
+            ]
+            for corner in corners {
+                let world = self.transformPoint(corner, by: wt)
+                mn = simd_min(mn, world); mx = simd_max(mx, world)
+            }
             _ = geo
         }
         if mx.x > mn.x {
@@ -647,10 +668,24 @@ public final class ArcFluidEngine: ObservableObject {
 
             syncMeshCollisionToGrid()
 
+            // v3.1 fix (item 6): apply any combustion heat/exhaust-velocity
+            // written to the grid by the PREVIOUS tick's applyCombustionReaction
+            // BEFORE this tick's velocityStep/scalarStep run, so the heat
+            // actually feeds the physics instead of being a dead-end visual
+            // write (see applyCombustionReaction below — it now writes into
+            // voxelGrid cells directly, not just pts[]).
+
             solver.viscosity = p.visc * 0.6
             solver.thermalDiffusion = p.visc * 1.2 + 0.02
+            solver.ambientTempK = envTempK
             solver.velocityStep(dt: dt, gravity: gravity)
             solver.scalarStep(dt: dt)
+
+            // v3.1 fix (item 2): advance the grid's empty-streak reclaim
+            // counter exactly once per tick here — NOT per Gauss-Seidel
+            // iteration inside the solver's diffuse/project loops. See
+            // ArcSparseVoxelGrid.advanceFrame's doc comment.
+            voxelGrid.advanceFrame()
 
             // Cavity-fill inlet re-injection (replaces per-particle reinject
             // in v2's stream preset) — inject fresh density/temp/velocity at
@@ -671,22 +706,70 @@ public final class ArcFluidEngine: ObservableObject {
                     inCount = 1
                 }
                 if let oz = outletZone {
-                    // Sink: drain density at outlet so the domain doesn't
-                    // saturate — mirrors v2's "particle reaches outlet, reinject"
-                    // behavior as continuous drain instead of discrete teleport.
-                    let c = voxelGrid.cellCoord(of: oz)
-                    var cell = voxelGrid[c]
-                    if cell.density > 0.05 { outCount = 1 }
-                    cell.density *= 0.5
-                    voxelGrid[c] = cell
+                    // Sink: drain density at the outlet so the domain
+                    // doesn't saturate — mirrors v2's "particle reaches
+                    // outlet, reinject" behavior as continuous drain
+                    // instead of discrete teleport.
+                    //
+                    // v3.1 fix (item 9): the old code only read/halved
+                    // the single cell at the outlet zone CENTER, and
+                    // counted outCount from that one cell without
+                    // checking isSolid — so (a) fluid in neighboring
+                    // cells within outletRadius wasn't drained or
+                    // counted (outletFlow could read near-zero while
+                    // fluid was actually exiting), and (b) a solid
+                    // outlet cell still holding stale density from
+                    // before mesh sync could incorrectly count as
+                    // draining. Ported the pre-rebuild SPH code's
+                    // radius-based approach (drain/count every PARTICLE
+                    // within outletRadius) to grid cells: iterate every
+                    // cell whose world center falls within outletRadius
+                    // of the outlet zone, skip isSolid cells, halve
+                    // density on each qualifying cell, and count/
+                    // accumulate from the whole set.
+                    //
+                    // Units: outletZone/outletRadius are both plain
+                    // world-space scene units (outletZone is set
+                    // directly from a world-space hit position in
+                    // ArcMeshSelectorView; outletRadius defaults to 40,
+                    // matching that scale) — no SCALE factor needed or
+                    // reintroduced here, consistent with it being
+                    // dropped from the Swift sources during the v3.0
+                    // rebuild.
+                    let radius = outletRadius
+                    let radiusSq = radius * radius
+                    let cellsPerAxis = max(1, Int(ceil(radius / voxelGrid.cellSize)))
+                    let centerCoord = voxelGrid.cellCoord(of: oz)
+                    var drainedAny = false
+                    for dz in -cellsPerAxis...cellsPerAxis {
+                        for dy in -cellsPerAxis...cellsPerAxis {
+                            for dx in -cellsPerAxis...cellsPerAxis {
+                                let c = centerCoord &+ SIMD3<Int32>(Int32(dx), Int32(dy), Int32(dz))
+                                var cell = voxelGrid[c]
+                                guard !cell.isSolid else { continue }
+                                let center = voxelGrid.worldCenter(of: c)
+                                let d = center - oz
+                                guard simd_length_squared(d) <= radiusSq else { continue }
+                                if cell.density > 0.05 {
+                                    drainedAny = true
+                                    outCount += 1
+                                }
+                                cell.density *= 0.5
+                                voxelGrid[c] = cell
+                            }
+                        }
+                    }
+                    _ = drainedAny
                 }
             }
 
             // Reseed the visual particle layer from the grid's current state.
             reseedParticlesFromGrid()
 
-            // Chemical combustion reaction in chamber (unchanged — reads
-            // pts[].r/g/b + chamber bounding box, works against reseeded pts)
+            // Chemical combustion reaction in chamber — reads pts[].r/g/b +
+            // chamber bounding box (works against reseeded pts), and as of
+            // v3.1 also writes heat/exhaust-velocity into the grid cells
+            // under each reacting particle (see applyCombustionReaction).
             if scenePreset == .stream { applyCombustionReaction() }
 
             // Aggregate grid stats for the measure panel + thermal colormap,
@@ -737,34 +820,165 @@ public final class ArcFluidEngine: ObservableObject {
     /// from active cells would let fluid flow straight through a wall on
     /// first contact (the cell materializes as fluid before it's ever
     /// checked against the mesh). Each triangle instead explicitly
-    /// touches/materializes the handful of cells along its surface.
+    /// touches/materializes every cell it actually overlaps.
     /// Runs once at engine start via meshCollisionSynced; mesh geometry
     /// is static during a run (scanned once in extractMeshGeometry), so
     /// this doesn't need to re-run every frame.
+    ///
+    /// v3.1 fix (item 4 — the root cause of the fluid-through-walls bug):
+    /// the old code sampled only 7 points per triangle (3 corners +
+    /// centroid + 3 edge midpoints) and marked just the one cell each
+    /// point fell in. A triangle spanning multiple voxel widths left
+    /// most of the cells it actually crossed unmarked, so fluid could
+    /// slip through the gaps. Now rasterizes each triangle into EVERY
+    /// voxel cell its bounding box overlaps, keeping only cells that
+    /// pass a real triangle-vs-AABB separating-axis test.
+    ///
+    /// v3.1 addition (item 5 — adaptive collision resolution): while
+    /// rasterizing, count how many triangles overlap each cell. A cell
+    /// with unusually high triangle density is a joint/narrow-passage
+    /// area (e.g. a pipe-to-tank interface or nozzle throat) where the
+    /// coarse simulation-grid resolution under-resolves the collision
+    /// geometry and lets fluid "leak through crevices." For those cells,
+    /// also mark the finer sub-cells (ArcSparseVoxelGrid's supplementary
+    /// fineSolidCells lookup, at fineSubdivision× resolution) solid —
+    /// see docs/StableFluidsArchitecture.md "v3.1: adaptive collision
+    /// resolution" for the full design rationale and why a second grid
+    /// resolution (rather than a full octree) was chosen here.
     private var meshCollisionSynced = false
+
+    /// Triangles overlapping a cell above this count flag that cell (and
+    /// its immediate neighborhood) as a tight passage for fine-boundary
+    /// refinement. Chosen empirically: a flat wall crossing a cell at a
+    /// shallow angle typically contributes 1-4 triangles; a joint/throat
+    /// where multiple mesh surfaces converge inside one cell runs
+    /// noticeably higher.
+    private let tightPassageTriangleThreshold = 6
+
+    /// Cap on cells touched per triangle — guards against a degenerate
+    /// huge triangle (relative to cell size) blowing up rasterization
+    /// cost. A triangle whose bounding box would need more cells than
+    /// this is skipped with a warning; this is expected to never trigger
+    /// for normal mesh geometry at the configured targetResolution.
+    private let maxCellsPerTriangle = 400
+
     private func syncMeshCollisionToGrid() {
         guard !meshTriangles.isEmpty, !meshCollisionSynced else { return }
         meshCollisionSynced = true
         let h = voxelGrid.cellSize
+
+        // Triangle-density histogram, keyed by the same cell key scheme
+        // the grid uses internally — tracked locally here (rather than
+        // adding a field to ArcVoxelCell, which must keep its physics
+        // layout unchanged per the compatibility contract) purely to
+        // find tight-passage cells during this one-time sync pass.
+        var triangleDensity: [SIMD3<Int32>: Int] = [:]
+
         for tri in meshTriangles {
-            // Sample a small set of points across the triangle (corners,
-            // edge midpoints, centroid) and mark every cell within half a
-            // cell-width of each as solid — cheap coverage that avoids
-            // needing full triangle-voxel rasterization for this pass.
-            let samples: [SIMD3<Float>] = [
-                tri.v0, tri.v1, tri.v2, tri.centroid,
-                (tri.v0+tri.v1)*0.5, (tri.v1+tri.v2)*0.5, (tri.v2+tri.v0)*0.5
-            ]
-            for s in samples {
-                let c = voxelGrid.cellCoord(of: s)
-                var cell = voxelGrid.ensure(c)
-                cell.isSolid = true
-                cell.solidNormal = tri.normal
-                cell.velocity = .zero
-                voxelGrid[c] = cell
+            // Triangle bounding box → cell-coordinate range.
+            let bboxMin = simd_min(tri.v0, simd_min(tri.v1, tri.v2))
+            let bboxMax = simd_max(tri.v0, simd_max(tri.v1, tri.v2))
+            let cMin = voxelGrid.cellCoord(of: bboxMin)
+            let cMax = voxelGrid.cellCoord(of: bboxMax)
+
+            let spanX = Int(cMax.x - cMin.x) + 1
+            let spanY = Int(cMax.y - cMin.y) + 1
+            let spanZ = Int(cMax.z - cMin.z) + 1
+            let totalCells = spanX * spanY * spanZ
+            guard totalCells > 0 && totalCells <= maxCellsPerTriangle else {
+                if totalCells > maxCellsPerTriangle {
+                    print("[ArcCFD] ⚠ skipping degenerate triangle spanning \(totalCells) cells (cap \(maxCellsPerTriangle)) — centroid \(tri.centroid)")
+                }
+                continue
             }
-            _ = h
+
+            for zi in cMin.z...cMax.z {
+                for yi in cMin.y...cMax.y {
+                    for xi in cMin.x...cMax.x {
+                        let c = SIMD3<Int32>(xi, yi, zi)
+                        let cellCenter = voxelGrid.worldCenter(of: c)
+                        guard triangleOverlapsAABB(tri: tri, boxCenter: cellCenter, halfExtent: h * 0.5) else { continue }
+
+                        var cell = voxelGrid.ensure(c)
+                        cell.isSolid = true
+                        cell.solidNormal = tri.normal
+                        cell.velocity = .zero
+                        voxelGrid[c] = cell
+
+                        triangleDensity[c, default: 0] += 1
+                    }
+                }
+            }
         }
+
+        // Adaptive refinement pass: any cell whose triangle count crossed
+        // the tight-passage threshold gets its fine sub-cells marked
+        // solid too, so the WALL boundary is finer-grained there without
+        // changing the simulation grid's own resolution.
+        var tightPassageCount = 0
+        for (c, count) in triangleDensity where count >= tightPassageTriangleThreshold {
+            tightPassageCount += 1
+            markFineSolidSubcells(of: c)
+        }
+        if tightPassageCount > 0 {
+            print("[ArcCFD] mesh sync: \(tightPassageCount) tight-passage cell(s) got fine-boundary refinement (\(voxelGrid.fineSolidCellCount) fine sub-cells total)")
+        }
+    }
+
+    /// Mark every fine sub-cell within a coarse cell as solid in the
+    /// grid's supplementary fine lookup.
+    private func markFineSolidSubcells(of c: SIMD3<Int32>) {
+        let h = voxelGrid.cellSize
+        let sub = voxelGrid.fineSubdivision
+        let center = voxelGrid.worldCenter(of: c)
+        let coarseLo = center - SIMD3<Float>(repeating: h * 0.5)
+        let fineStep = h / Float(sub)
+        for zi in 0..<sub { for yi in 0..<sub { for xi in 0..<sub {
+            let p = coarseLo + SIMD3<Float>(Float(xi), Float(yi), Float(zi)) * fineStep + fineStep * 0.5
+            voxelGrid.markFineSolid(at: p)
+        }}}
+    }
+
+    /// Classic separating-axis test for a triangle vs. an axis-aligned
+    /// box (Akenine-Möller's triangle/box overlap test) — doesn't need
+    /// to be an exact conservative rasterization, just correct enough to
+    /// decide "does this triangle meaningfully touch this voxel."
+    private func triangleOverlapsAABB(tri: ArcTriangle, boxCenter: SIMD3<Float>, halfExtent: Float) -> Bool {
+        let e = SIMD3<Float>(repeating: halfExtent)
+        // Translate triangle into box-local space.
+        let v0 = tri.v0 - boxCenter, v1 = tri.v1 - boxCenter, v2 = tri.v2 - boxCenter
+
+        // 1) Test the box's 3 face normals (equivalent to an AABB overlap
+        //    of the triangle's own bounding box against the box).
+        let triMin = simd_min(v0, simd_min(v1, v2))
+        let triMax = simd_max(v0, simd_max(v1, v2))
+        if triMin.x > e.x || triMax.x < -e.x { return false }
+        if triMin.y > e.y || triMax.y < -e.y { return false }
+        if triMin.z > e.z || triMax.z < -e.z { return false }
+
+        // 2) Test the triangle's own face normal (plane-box overlap).
+        let normal = tri.normal
+        let r = e.x * abs(normal.x) + e.y * abs(normal.y) + e.z * abs(normal.z)
+        let s = simd_dot(normal, v0)
+        if abs(s) > r { return false }
+
+        // 3) Test the 9 cross-product axes of (triangle edge) × (box axis).
+        let edges = [v1 - v0, v2 - v1, v0 - v2]
+        let boxAxes = [SIMD3<Float>(1,0,0), SIMD3<Float>(0,1,0), SIMD3<Float>(0,0,1)]
+        let verts = [v0, v1, v2]
+        for edge in edges {
+            for axis in boxAxes {
+                let a = simd_cross(edge, axis)
+                guard simd_length_squared(a) > 1e-10 else { continue }
+                var p0: Float = 0, p1: Float = 0, p2: Float = 0
+                p0 = simd_dot(a, verts[0]); p1 = simd_dot(a, verts[1]); p2 = simd_dot(a, verts[2])
+                let minP = min(p0, min(p1, p2))
+                let maxP = max(p0, max(p1, p2))
+                let rad = e.x * abs(a.x) + e.y * abs(a.y) + e.z * abs(a.z)
+                if minP > rad || maxP < -rad { return false }
+            }
+        }
+        return true
     }
 
     /// Rebuild the visual particle array from the grid's current density/
@@ -995,6 +1209,22 @@ public final class ArcFluidEngine: ObservableObject {
     // MARK: — Chemical combustion reaction
     // When fuel and oxidizer particles meet in the combustion chamber zone,
     // they react: temperature spikes, velocity increases (gas expansion), color shifts red-white.
+    //
+    // v3.1 fix (item 6): `pts` is just a visual particle array rebuilt
+    // from the grid every tick by reseedParticlesFromGrid() — the old
+    // code wrote heat/exhaust-velocity only into pts[].tempK/.vy, which
+    // were thrown away before the NEXT tick's velocityStep/scalarStep
+    // ever saw them (reseedParticlesFromGrid overwrites pts[] again
+    // before this function is even called again). Now also writes the
+    // combustion effect directly into the grid cells within the
+    // chamber's bounding box, via voxelGrid.ensure(c) + subscript set —
+    // the same direct-grid-write pattern used elsewhere in this file
+    // (e.g. fillComponentCavity, spawnParticles via solver.addSource).
+    // Call order in stepGrid(): this still runs AFTER this tick's
+    // velocityStep/scalarStep (so the pts[] visual color/heat read
+    // immediately after combustion stays responsive), but the grid
+    // writes it makes are read by solver.velocityStep/scalarStep at the
+    // START of the NEXT tick — see the comment at that call site.
     private func applyCombustionReaction() {
         guard let chamberSpec = componentSpecs.first(where: { $0.isCombustionChamber }) else { return }
         // Chamber bounds are in world space — particles are in world space
@@ -1020,19 +1250,41 @@ public final class ArcFluidEngine: ObservableObject {
         // When both fuel and oxidizer present in chamber → react
         guard !fuelInChamber.isEmpty && !oxInChamber.isEmpty else { return }
         let reacting = min(fuelInChamber.count, oxInChamber.count)
+        let heatPerParticle = reactionHeat / 100
+        let exhaustBoost: Float = min(VMAX * 0.4, heatPerParticle * 0.0002)
+
         for k in 0..<reacting {
             let fi = fuelInChamber[k]; let oi = oxInChamber[k]
-            // Temperature spike
-            let heatPerParticle = reactionHeat / 100
+            // Temperature spike (immediate visual read on pts[])
             pts[fi].tempK += heatPerParticle; pts[oi].tempK += heatPerParticle
             // Gas expansion: increase downward velocity (exhaust)
-            let exhaustBoost: Float = min(VMAX * 0.4, heatPerParticle * 0.0002)
             pts[fi].vy -= exhaustBoost; pts[oi].vy -= exhaustBoost
             // Color shift → combustion orange-white
             let t = min(1, heatPerParticle / 2000)
             pts[fi].r = 1; pts[fi].g = 1-t*0.5; pts[fi].b = 0
             pts[oi].r = 1; pts[oi].g = 0.6-t*0.4; pts[oi].b = 0
+
+            // Grid write — this is what the NEXT tick's physics actually
+            // sees. Written at each reacting particle's own grid cell
+            // (rather than a single chamber-wide average) so the heat/
+            // exhaust lands where the reaction visually occurred.
+            applyCombustionToGridCell(at: SIMD3(pts[fi].x, pts[fi].y, pts[fi].z),
+                                       heat: heatPerParticle, exhaustVy: -exhaustBoost)
+            applyCombustionToGridCell(at: SIMD3(pts[oi].x, pts[oi].y, pts[oi].z),
+                                       heat: heatPerParticle, exhaustVy: -exhaustBoost)
         }
+    }
+
+    /// Write a combustion event's heat and exhaust velocity directly
+    /// into the grid cell at `worldPos`, so solver.velocityStep/
+    /// scalarStep pick it up on their next invocation (v3.1 fix, item 6).
+    private func applyCombustionToGridCell(at worldPos: SIMD3<Float>, heat: Float, exhaustVy: Float) {
+        let c = voxelGrid.cellCoord(of: worldPos)
+        var cell = voxelGrid.ensure(c)
+        guard !cell.isSolid else { return }
+        cell.tempK += heat
+        cell.velocity.y += exhaustVy
+        voxelGrid[c] = cell
     }
 
     // Molecule symbols for the active fuel/oxidizer — set externally
@@ -1155,7 +1407,12 @@ public final class ArcFluidEngine: ObservableObject {
 
     private func uploadParticleCloud() {
         guard let cloudNode else { return }
-        let n = pts.count; guard n > 0 else { return }
+        let n = pts.count
+        // v3.1 fix (item 10): the old guard returned without clearing
+        // cloudNode.geometry, so the last nonempty particle cloud stayed
+        // visibly rendered even after reseedParticlesFromGrid() legitimately
+        // emptied pts (e.g. all fluid drained/dissipated).
+        guard n > 0 else { cloudNode.geometry = nil; return }
         // Particles are in world space — arcFluidCloud is at scene root so no offset needed
         var rawPos=[Float](); rawPos.reserveCapacity(n*3)
         var rawCol=[Float](); rawCol.reserveCapacity(n*4)
