@@ -193,8 +193,20 @@ struct ArcSettingsView: View {
                                  "Apple SceneKit · Metal — native hardware graphics",
                                  link: nil)
                         Divider().background(Color.white.opacity(0.08))
+                        aboutRow("Fluid Dynamics Solver",
+                                 "Jos Stam, \"Stable Fluids,\" SIGGRAPH 1999 — unconditionally stable semi-Lagrangian advection + Helmholtz-Hodge projection. Core of Arc Edge CFD v3.0's sparse voxel grid solver.",
+                                 link: "https://www.autodesk.com/research/publications/more-fun-stable-fluids")
+                        Divider().background(Color.white.opacity(0.08))
+                        aboutRow("Fluid Kernels (legacy / visual layer)",
+                                 "Müller, Charypar & Gross, \"Particle-Based Fluid Simulation,\" SCA 2003 (SPH kernels) — informs the particle visual layer and buoyancy coupling in Arc Edge CFD v3.0.",
+                                 link: "https://matthias-research.github.io/pages/publications/sca03.pdf")
+                        Divider().background(Color.white.opacity(0.08))
+                        aboutRow("Combustion / Spray Reference",
+                                 "Ihmsen et al., \"Simulating Spray and Foam Bubbles,\" CGI 2012 — combustion-chamber reaction color/thermal reference.",
+                                 link: "https://cg.informatik.uni-freiburg.de/publications/2012_CGI_sprayFoamBubbles.pdf")
+                        Divider().background(Color.white.opacity(0.08))
                         aboutRow("GL Translation Research",
-                                 "MetalANGLE — OpenGL ES → Metal API translation layer (MIT)",
+                                 "MetalANGLE — OpenGL ES → Metal API translation layer (MIT). Considered for Arc Edge CFD's Metal compute pass; not adopted there, since this project already targets Metal natively via SceneKit/MetalKit with nothing legacy to translate.",
                                  link: "https://github.com/kakashidinho/metalangle")
                         Divider().background(Color.white.opacity(0.08))
                         aboutRow("USDZ Interop Research",

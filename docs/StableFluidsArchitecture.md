@@ -101,24 +101,37 @@ the thermal colormap convention. Not touched by this work.
 
 ## Mantis Nav
 
-No simulation-side change needed — `ArcMantisNav`/`MantisNavigationView` never call
-into `ArcFluidEngine`. The existing gesture guard in `ArcSceneView`
-(`labVM.mantisTabIndex == labVM.activeTabIndex`) already isolates Mantis Nav from
-whatever's rendering elsewhere. One addition: grid stepping/upload should skip work
-when `labVM.activeTabIndex` is a tab with no fluid view visible, as a perf courtesy,
-not a correctness requirement.
+Verified, no simulation-side change needed. `ArcMantisNav`/`MantisNavigationView`
+never call into `ArcFluidEngine`, and all three gesture guards in `ArcSceneView`
+(`handleOrbit`/`handlePan`/`handleDolly`) gate purely on
+`labVM.mantis.isActive`/`cameraMode`/`mantisTabIndex == activeTabIndex` — none of
+them touch fluid-engine state. The only coupling is the tap-to-select handler
+(`componentSpecs`/`selectComponent`), both preserved exactly by this migration.
+
+Originally planned a "skip grid stepping when the fluid tab isn't visible" perf
+courtesy — dropped after checking `ArcLabViewModel`: each scene tab tracks its own
+`tabStates[i].isCFDActive`, and `ArcFluidEngine.shared` is a singleton, which means
+running CFD on one tab while viewing/using Mantis Nav on another tab is already a
+supported, intentional use case. Gating grid compute on "is the fluid view the
+visible tab" would silently break that. Left alone.
 
 ## Credits (→ ArcSettingsView "About / Open Source")
 
+Correction from an earlier draft of this doc: the "About / Open Source" section in
+`ArcSettingsView.swift` already existed and was already populated (it was only the
+file's header *comment* that still called it a to-do) — including an existing
+MetalANGLE credit. Added to the existing section rather than building a new one:
+
 - Jos Stam, "Stable Fluids," SIGGRAPH 1999 — semi-Lagrangian advection, implicit
   diffusion, Helmholtz-Hodge projection (new, this pass)
-- Müller, Charypar & Gross, SCA 2003 — SPH kernels (existing credit, kept: kernel
-  math may still inform buoyancy/density-coupling constants even post-migration)
+- Müller, Charypar & Gross, SCA 2003 — SPH kernels (existing credit, reworded to
+  note it now informs the particle visual layer + buoyancy coupling, not the core
+  solver)
 - Ihmsen et al. 2012, CGI — spray/foam reference (existing credit, kept)
-- MetalANGLEKit [BSD-3] — considered, not used: it's an OpenGL-ES→Metal shim for
-  porting legacy GL code; this project targets Metal natively via SceneKit/MetalKit
-  already, so there's nothing to translate. Noted here rather than silently dropped
-  since it came from the user's reference scrape.
+- MetalANGLE [MIT] — already credited in Settings as GL-translation research; noted
+  there that it was considered for the v3.0 Metal compute pass and not adopted
+  (nothing legacy-GL to translate, this project targets Metal natively), rather
+  than silently leaving the existing credit unexplained for this use case.
 
 ## Explicitly not done in this pass
 
