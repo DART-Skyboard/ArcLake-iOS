@@ -1,5 +1,6 @@
 import SwiftUI
 import SceneKit
+import UIKit
 
 // ═══════════════════════════════════════════════════════════════════
 // ArcFluidView — Arc Edge Fluid Dynamics UI
@@ -13,6 +14,7 @@ struct ArcFluidView: View {
     @EnvironmentObject var themeVM: ArcThemeViewModel
     @State private var panelTab: FTab = .build
     @State private var expandedComponent: UUID? = nil
+    @State private var showMantisSettings = false
 
     // "Build" merges in the element/compound-building flow (previously a
     // separate Atoms tab) so designing a compound and simulating its fluid
@@ -125,9 +127,15 @@ struct ArcFluidView: View {
                 }
             }
 
+            // All 7 original action tiles from the old standalone Atoms
+            // tab (DARTMoleculePanel) — a prior pass here only brought
+            // over 3 of them (Periodic Table/Mol Canvas/Clear All) and
+            // silently dropped Export GLB, Export Blender, Mantis Nav and
+            // Node Editor. Restored to the full original set; nothing
+            // should be missing from what build 388 had.
             DARTPanelCard(title: "Build Actions", icon: "sparkles") {
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()),
-                                    GridItem(.flexible())],
+                                    GridItem(.flexible()), GridItem(.flexible())],
                           spacing: 8) {
                     DARTActionTile(label: "Periodic\nTable", icon: "tablecells",
                                    color: themeVM.accent) {
@@ -137,12 +145,54 @@ struct ArcFluidView: View {
                                    color: .purple) {
                         withAnimation(.spring()) { labVM.isMolCanvasVisible.toggle() }
                     }
+                    DARTActionTile(label: "Export\nGLB", icon: "square.and.arrow.up",
+                                   color: .green) {
+                        if let url = labVM.exportGLB() {
+                            let av = UIActivityViewController(
+                                activityItems: [url], applicationActivities: nil)
+                            UIApplication.shared.connectedScenes
+                                .compactMap { $0 as? UIWindowScene }
+                                .first?.windows.first?
+                                .rootViewController?.present(av, animated: true)
+                        }
+                    }
+                    DARTActionTile(label: "Export\nBlender", icon: "cube.transparent",
+                                   color: Color(red:1.0,green:0.45,blue:0.0)) {
+                        // Export Arc Lake scene as Blender Python setup script + JSON
+                        if let exportDir = ArcBlenderExporter.exportToZip(labVM: labVM) {
+                            var shareItems: [URL] = []
+                            if let contents = try? FileManager.default.contentsOfDirectory(
+                                at: exportDir, includingPropertiesForKeys: nil) {
+                                shareItems = contents.sorted { $0.lastPathComponent < $1.lastPathComponent }
+                            }
+                            if shareItems.isEmpty { shareItems = [exportDir] }
+                            let av = UIActivityViewController(
+                                activityItems: shareItems, applicationActivities: nil)
+                            av.completionWithItemsHandler = { _, _, _, _ in
+                                try? FileManager.default.removeItem(at: exportDir)
+                            }
+                            UIApplication.shared.connectedScenes
+                                .compactMap { $0 as? UIWindowScene }
+                                .first?.windows.first?
+                                .rootViewController?.present(av, animated: true)
+                        }
+                    }
+                    DARTActionTile(label: "Mantis\nNav", icon: "paperplane.fill",
+                                   color: Color(red: 0.35, green: 0.78, blue: 1.0)) {
+                        labVM.openMantisTab()      // dedicated tab + live flight
+                        showMantisSettings = true  // settings apply instantly
+                    }
+                    DARTActionTile(label: "Node\nEditor", icon: "circle.grid.cross",
+                                   color: .orange) {
+                        withAnimation(.spring()) { labVM.isNodeEditorVisible.toggle() }
+                    }
                     DARTActionTile(label: "Clear\nAll", icon: "trash",
                                    color: .red.opacity(0.8)) {
                         labVM.clearElements()
                     }
                 }
             }
+            .sheet(isPresented: $showMantisSettings) { MantisSettingsSheet(model: labVM.mantis) }
 
             Text("Build a compound here, then switch to Setup to simulate its fluid behavior.")
                 .font(.system(size:8,design:.monospaced))
