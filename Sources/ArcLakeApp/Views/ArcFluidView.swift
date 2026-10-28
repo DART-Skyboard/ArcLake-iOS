@@ -262,6 +262,11 @@ struct ArcFluidView: View {
     // MARK: — SETUP TAB
     private var setupPanel: some View {
         VStack(spacing:10) {
+            // Task #43: one-tap built-in demo — lets a brand-new user see
+            // the whole import → auto-classify → fill → simulate chain
+            // work immediately, before ever importing their own model.
+            demoLoadCard
+
             // Fluid type
             card("FLUID TYPE") {
                 HStack(spacing:4) {
@@ -321,6 +326,19 @@ struct ArcFluidView: View {
                         accent(String(format:"%.1f psi",
                                Double(eng.envPressurePa > 0 ? eng.envPressurePa : 101325) / 6894.76))
                     }
+                    // Task #44: these sliders only drive the GENERIC preset
+                    // scenes (dam/wave/drop/orbital/stream) that have no
+                    // imported-model components to scan — they do NOT
+                    // affect a per-component CFD run against an imported
+                    // GLB. Kept as a one-line caption rather than removing
+                    // or redesigning anything, since the generic presets
+                    // are still real, used paths.
+                    Text(eng.componentSpecs.isEmpty
+                         ? "Generic preset scene controls — no imported components detected"
+                         : "Generic preset controls only — this scene's imported components are configured per-part: tap one in the 3D view")
+                        .font(.system(size:7,design:.monospaced))
+                        .foregroundColor(.white.opacity(0.3))
+                        .multilineTextAlignment(.center)
                 }
             }
 
@@ -365,6 +383,82 @@ struct ArcFluidView: View {
 
             // Credits
             credits
+        }
+    }
+
+    // MARK: — Task #43: one-tap built-in demo
+    @State private var loadingDemo = false
+    @State private var demoLoadError: String? = nil
+
+    private var demoLoadCard: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "flame.fill").foregroundColor(.orange).font(.system(size: 16))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("LOAD DEMO: ROCKET COMBUSTION")
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .foregroundColor(.white)
+                    Text("Bundled model · auto-fills Fuel + Oxidizer · ready to ignite")
+                        .font(.system(size: 7, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.4))
+                }
+                Spacer()
+            }
+            Button {
+                loadCombustionDemo()
+            } label: {
+                HStack(spacing: 6) {
+                    if loadingDemo {
+                        ProgressView().tint(.black)
+                    } else {
+                        Image(systemName: "square.and.arrow.down.on.square").font(.system(size: 12))
+                    }
+                    Text(loadingDemo ? "LOADING…" : "LOAD & IGNITE DEMO")
+                        .font(.system(size: 10, weight: .bold, design: .monospaced)).tracking(1)
+                }
+                .foregroundColor(.black).frame(maxWidth: .infinity).padding(.vertical, 11)
+                .background(Color.orange).clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+            .disabled(loadingDemo || eng.isRunning)
+            if let err = demoLoadError {
+                Text(err).font(.system(size: 7, design: .monospaced)).foregroundColor(.red.opacity(0.8))
+            }
+        }
+        .padding(10).background(Color.orange.opacity(0.08)).clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+
+    /// Loads the bundled Combustion_flow demo asset (downloaded/cached via
+    /// the same remote-asset mechanism Mantis Nav already uses for its
+    /// built-in assets — see MantisNavModel.remoteAssets/loadRemoteAsset),
+    /// scans components, auto-fills Fuel/Oxidizer via
+    /// ArcFluidEngine.autoFillCombustionDemo (through eng.start, which
+    /// already calls it), and starts the simulation — all in one tap so a
+    /// new user sees the whole import → classify → fill → simulate chain
+    /// work before ever importing their own model.
+    private func loadCombustionDemo() {
+        loadingDemo = true; demoLoadError = nil
+        guard let demoAsset = MantisNavModel.remoteAssets.first(where: { $0.resource == "Combustion_flow" }) else {
+            demoLoadError = "Demo asset not found"; loadingDemo = false; return
+        }
+        Task(priority: .userInitiated) {
+            let nodeName: String? = await MainActor.run {
+                labVM.mantis.loadRemoteAsset(resource: demoAsset.resource, remoteURL: demoAsset.url)
+            }
+            await MainActor.run {
+                loadingDemo = false
+                guard nodeName != nil else {
+                    demoLoadError = "Couldn't download the demo asset — check network connection"
+                    return
+                }
+                // Re-scan so the newly-added nodes are picked up as
+                // components (hardcoded Combustion_flow.glb names resolve
+                // via ArcCombustionFlow.componentRoles as usual), then
+                // launch — eng.start already calls autoFillCombustionDemo
+                // internally, which fills Fuel/Oxidizer at sensible
+                // pressures and flips scenePreset to .stream.
+                eng.scanComponentSpecsPublic(labVM.scene)
+                launchCFD()
+            }
         }
     }
 
