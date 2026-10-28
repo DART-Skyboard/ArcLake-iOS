@@ -17,7 +17,10 @@ public final class ArcLabViewModel: ObservableObject {
     // simulation entirely, never moved, while whatever the plain-id lookup
     // did find kept receiving force contributions meant for all of them.
     @Published public var selectedElementKeys: [Int] = []
-    @Published public var activeTab: ArcTab = .molecule
+    // Default lands on .fluid (unified Simulation flow: Build + Setup +
+    // Materials + Measure), not .molecule — compound building is now a
+    // section inside it rather than its own tab.
+    @Published public var activeTab: ArcTab = .fluid
     @Published public var isPeriodicTableVisible = false
     @Published public var isMolCanvasVisible = false
     @Published public var isCFDActive = false

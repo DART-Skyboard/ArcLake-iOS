@@ -11,10 +11,14 @@ struct ArcFluidView: View {
     @StateObject private var eng = ArcFluidEngine.shared
     @EnvironmentObject var labVM: ArcLabViewModel
     @EnvironmentObject var themeVM: ArcThemeViewModel
-    @State private var panelTab: FTab = .setup
+    @State private var panelTab: FTab = .build
     @State private var expandedComponent: UUID? = nil
 
-    enum FTab: String, CaseIterable { case setup="Setup", materials="Materials", measure="Measure" }
+    // "Build" merges in the element/compound-building flow (previously a
+    // separate Atoms tab) so designing a compound and simulating its fluid
+    // behavior are one continuous flow, per user request — not two tabs
+    // the user has to hop between.
+    enum FTab: String, CaseIterable { case build="Build", setup="Setup", materials="Materials", measure="Measure" }
 
     var body: some View {
         VStack(spacing:0) {
@@ -23,9 +27,10 @@ struct ArcFluidView: View {
             ScrollView(showsIndicators:false) {
                 VStack(spacing:10) {
                     switch panelTab {
-                    case .setup:    setupPanel
+                    case .build:     buildPanel
+                    case .setup:     setupPanel
                     case .materials: materialsPanel
-                    case .measure:  measurePanel
+                    case .measure:   measurePanel
                     }
                     Spacer(minLength:20)
                 }.padding(10)
@@ -84,6 +89,56 @@ struct ArcFluidView: View {
         .background(Color.white.opacity(0.05))
         .clipShape(RoundedRectangle(cornerRadius:8))
         .padding(.horizontal,10).padding(.vertical,6)
+    }
+
+    // MARK: — BUILD TAB (element/compound builder, merged in from the old
+    // standalone Atoms tab so building a compound and simulating it are one
+    // continuous flow)
+    private var buildPanel: some View {
+        VStack(spacing:10) {
+            DARTPanelCard(title: "Active Elements", icon: "atom") {
+                if labVM.selectedElements.isEmpty {
+                    VStack(spacing: 6) {
+                        Image(systemName: "atom")
+                            .font(.system(size: 24))
+                            .foregroundColor(themeVM.accent.opacity(0.25))
+                        Text("Open the Periodic Table to add elements")
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.3))
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity).padding(.vertical, 12)
+                } else {
+                    ForEach(labVM.selectedElements) { el in
+                        DARTElementRow(element: el)
+                    }
+                }
+            }
+
+            DARTPanelCard(title: "Build Actions", icon: "sparkles") {
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()),
+                                    GridItem(.flexible())],
+                          spacing: 8) {
+                    DARTActionTile(label: "Periodic\nTable", icon: "tablecells",
+                                   color: themeVM.accent) {
+                        withAnimation(.spring()) { labVM.isPeriodicTableVisible.toggle() }
+                    }
+                    DARTActionTile(label: "Mol\nCanvas", icon: "scribble",
+                                   color: .purple) {
+                        withAnimation(.spring()) { labVM.isMolCanvasVisible.toggle() }
+                    }
+                    DARTActionTile(label: "Clear\nAll", icon: "trash",
+                                   color: .red.opacity(0.8)) {
+                        labVM.clearElements()
+                    }
+                }
+            }
+
+            Text("Build a compound here, then switch to Setup to simulate its fluid behavior.")
+                .font(.system(size:8,design:.monospaced))
+                .foregroundColor(.white.opacity(0.3))
+                .multilineTextAlignment(.center)
+        }
     }
 
     // MARK: — SETUP TAB

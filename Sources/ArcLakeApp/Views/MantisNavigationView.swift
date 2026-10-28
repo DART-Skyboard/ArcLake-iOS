@@ -220,14 +220,18 @@ struct MantissDronePanel: View {
 }
 
 // MARK: — Chemistry Flight Panel
+//
+// Mantis Nav is a pure navigation/production consumer: it has no simulation
+// controls of its own (no hand-typed temp/rate/pressure sliders writing into
+// a disconnected labVM.physics bag). Everything shown here reads directly
+// from ArcFluidEngine.shared — the same CFD engine driven by the Fluid tab's
+// "IGNITE — FILL & SIMULATE" button. If nothing has been set up and ignited
+// there, this panel says so and launch is disabled; it never fakes its own
+// readout or runs its own timer-driven "launch".
 struct MantisChemPanel: View {
     @EnvironmentObject var themeVM: ArcThemeViewModel
     @EnvironmentObject var labVM: ArcLabViewModel
-    @State private var combustionTemp: Double = 298
-    @State private var reactionRate: Double = 1.0
-    @State private var pressure: Double = 14.7
-    @State private var launchSequenceActive = false
-    @State private var launchPhase = 0
+    @StateObject private var eng = ArcFluidEngine.shared
 
     var body: some View {
         VStack(spacing: 8) {
@@ -268,66 +272,54 @@ struct MantisChemPanel: View {
                             .multilineTextAlignment(.center)
                     }
 
-                    // Combustion parameters (connected to labVM physics)
-                    HStack {
-                        Text("Combustion Temp").font(.system(size:10,design:.monospaced)).foregroundColor(.white.opacity(0.5))
-                        Spacer()
-                        Text(String(format:"%.0f K", combustionTemp))
-                            .font(.system(size:10,design:.monospaced)).foregroundColor(.orange)
-                    }
-                    Slider(value: $combustionTemp, in: 298...3000)
-                        .tint(.orange)
-                        .onChange(of: combustionTemp) { t in
-                            labVM.physics.temperature = t - 273.15
+                    // Live readout from the real CFD engine — read-only here.
+                    // To change these values, go to the Fluid tab's Setup panel.
+                    if eng.isRunning {
+                        VStack(spacing: 6) {
+                            chemReadRow("Chamber Temp",
+                                        String(format:"%.0f K", eng.envTempK > 0 ? eng.envTempK : 293),
+                                        color: .orange)
+                            chemReadRow("Reynolds No.", String(format:"%.2e", eng.measure.reynoldsNum),
+                                        color: themeVM.accent)
+                            chemReadRow("Chamber Pressure",
+                                        String(format:"%.1f psi",
+                                               Double(eng.envPressurePa > 0 ? eng.envPressurePa : 101325) / 6894.76),
+                                        color: themeVM.accent)
                         }
-
-                    HStack {
-                        Text("Reaction Rate").font(.system(size:10,design:.monospaced)).foregroundColor(.white.opacity(0.5))
-                        Spacer()
-                        Text(String(format:"%.2f", reactionRate))
-                            .font(.system(size:10,design:.monospaced)).foregroundColor(themeVM.accent)
+                    } else {
+                        Text("No simulation running — set up and ignite in the Fluid tab first")
+                            .font(.system(size:8,design:.monospaced))
+                            .foregroundColor(.white.opacity(0.3))
+                            .multilineTextAlignment(.center)
                     }
-                    Slider(value: $reactionRate, in: 0.1...10).tint(themeVM.accent)
-
-                    HStack {
-                        Text("Chamber Pressure").font(.system(size:10,design:.monospaced)).foregroundColor(.white.opacity(0.5))
-                        Spacer()
-                        Text(String(format:"%.1f psi", pressure))
-                            .font(.system(size:10,design:.monospaced)).foregroundColor(themeVM.accent)
-                    }
-                    Slider(value: $pressure, in: 0...500)
-                        .tint(themeVM.accent)
-                        .onChange(of: pressure) { p in labVM.physics.pressure = p }
                 }
             }
 
-            // Launch sequence — connected to elements & physics
+            // Launch sequence — mirrors the real CFD engine's running state;
+            // does not own or simulate its own physics.
             MantisSectionCard(title: "LAUNCH SEQUENCE", icon: "flame.fill") {
                 VStack(spacing: 8) {
-                    // Phase indicator
-                    HStack(spacing: 4) {
-                        ForEach(0..<5) { i in
-                            Capsule()
-                                .fill(i < launchPhase ? themeVM.accent : Color.white.opacity(0.1))
-                                .frame(maxWidth:.infinity, minHeight:4)
-                        }
-                    }
-                    Text(launchPhaseLabel)
+                    Text(eng.isRunning ? "ENGINE RUNNING" : "STANDBY — NOT IGNITED")
                         .font(.system(size:9,design:.monospaced))
-                        .foregroundColor(launchSequenceActive ? themeVM.accent : .white.opacity(0.3))
+                        .foregroundColor(eng.isRunning ? themeVM.accent : .white.opacity(0.3))
 
-                    Button {
-                        if launchSequenceActive { abortLaunch() } else { startLaunch() }
-                    } label: {
-                        Label(launchSequenceActive ? "ABORT" : "INITIATE LAUNCH",
-                              systemImage: launchSequenceActive ? "stop.fill" : "flame.fill")
-                            .font(.system(size:11,weight:.semibold,design:.monospaced))
-                            .foregroundColor(launchSequenceActive ? .red : .black)
-                            .frame(maxWidth:.infinity).padding(.vertical,10)
-                            .background(launchSequenceActive ? Color.red.opacity(0.2) : themeVM.accent)
-                            .clipShape(RoundedRectangle(cornerRadius:8))
+                    if eng.isRunning {
+                        Button {
+                            eng.stop()
+                        } label: {
+                            Label("ABORT", systemImage: "stop.fill")
+                                .font(.system(size:11,weight:.semibold,design:.monospaced))
+                                .foregroundColor(.red)
+                                .frame(maxWidth:.infinity).padding(.vertical,10)
+                                .background(Color.red.opacity(0.2))
+                                .clipShape(RoundedRectangle(cornerRadius:8))
+                        }
+                    } else {
+                        Text("Ignite the combustion simulation in the Fluid tab to enable launch")
+                            .font(.system(size:8,design:.monospaced))
+                            .foregroundColor(.white.opacity(0.28))
+                            .multilineTextAlignment(.center)
                     }
-                    .disabled(labVM.selectedElements.isEmpty)
                 }
             }
 
@@ -335,7 +327,7 @@ struct MantisChemPanel: View {
             MantisSectionCard(title: "CONNECTED NODES", icon: "network") {
                 VStack(spacing: 4) {
                     HStack {
-                        Text("Mol Canvas → Chemistry Flight")
+                        Text("Mol Canvas → Fluid CFD Engine")
                             .font(.system(size:9,design:.monospaced))
                             .foregroundColor(.white.opacity(0.4))
                         Spacer()
@@ -343,11 +335,12 @@ struct MantisChemPanel: View {
                             .frame(width:6,height:6)
                     }
                     HStack {
-                        Text("Physics → Combustion Engine")
+                        Text("Fluid CFD Engine → Mantis Nav")
                             .font(.system(size:9,design:.monospaced))
                             .foregroundColor(.white.opacity(0.4))
                         Spacer()
-                        Circle().fill(themeVM.accent).frame(width:6,height:6)
+                        Circle().fill(eng.isRunning ? .green : themeVM.accent.opacity(0.4))
+                            .frame(width:6,height:6)
                     }
                     Button {
                         withAnimation { labVM.isNodeEditorVisible = true }
@@ -361,25 +354,12 @@ struct MantisChemPanel: View {
         }
     }
 
-    private var launchPhaseLabel: String {
-        let labels = ["STANDBY","PREFLIGHT CHECK","IGNITION","LIFTOFF","ORBIT INSERT"]
-        return labels[min(launchPhase, labels.count-1)]
-    }
-
-    private func startLaunch() {
-        launchSequenceActive = true
-        launchPhase = 0
-        // Step through phases using element data
-        Timer.scheduledTimer(withTimeInterval: 0.8, repeats: true) { t in
-            launchPhase += 1
-            labVM.physics.pressure = pressure * Double(launchPhase) / 4.0
-            labVM.physics.temperature = combustionTemp - 273.15
-            if launchPhase >= 5 { t.invalidate(); launchSequenceActive = false }
+    private func chemReadRow(_ label: String, _ value: String, color: Color) -> some View {
+        HStack {
+            Text(label).font(.system(size:10,design:.monospaced)).foregroundColor(.white.opacity(0.5))
+            Spacer()
+            Text(value).font(.system(size:10,design:.monospaced)).foregroundColor(color)
         }
-    }
-    private func abortLaunch() {
-        launchSequenceActive = false; launchPhase = 0
-        labVM.physics.pressure = 14.7
     }
 }
 

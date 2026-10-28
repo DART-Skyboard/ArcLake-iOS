@@ -584,15 +584,20 @@ struct DARTTabSelector: View {
     @EnvironmentObject var labVM: ArcLabViewModel
     @EnvironmentObject var themeVM: ArcThemeViewModel
 
+    // "Atoms" (.molecule) is no longer a separate top-level tab — element/
+    // compound building is now the Build section inside the Fluid tab, so
+    // designing a compound and simulating it are one continuous flow
+    // instead of two tabs the user has to hop between. The .molecule case
+    // and DARTMoleculePanel still exist (other code references them) but
+    // are not surfaced as their own button here.
     private let tabs: [(ArcTab, String, String)] = [
-        (.molecule, "Atoms",   "atom"),
-        (.math,     "Algebra", "function"),  // between Atoms and Physics, per request
+        (.fluid,    "Fluid",   "water.waves"),
+        (.math,     "Algebra", "function"),
         (.physics,  "Physics", "waveform.path"),
         (.arc,      "Arc",     "circle.and.line.horizontal"),
         (.log,      "Log",     "list.bullet"),
         (.imports,  "Imports", "square.and.arrow.down"),
         (.render,   "Render",  "scope"),
-        (.fluid,    "Fluid",   "water.waves"),
     ]
 
     var body: some View {
