@@ -295,6 +295,37 @@ struct MantisChemPanel: View {
                 }
             }
 
+            // Propellant / fuel-tank setup — this is the real rocketry math
+            // (oxidizer + fuel per tank, additional tanks supported via
+            // propSets, environment presets, multi-tank total force) and it
+            // stays here, fully intact. What changed is only where its live
+            // pressure number comes from: when the Fluid tab's CFD sim is
+            // running and a tank's assetName matches an oxidizer/fuel
+            // component in that sim, totalChemForce() uses the sim's live
+            // pressure instead of the tank's static design psi.
+            MantisSectionCard(title: "PROPELLANT / FUEL TANKS", icon: "fuelpump.fill") {
+                VStack(spacing: 6) {
+                    ForEach(Array(labVM.mantis.propSets.enumerated()), id: \.offset) { idx, set in
+                        HStack {
+                            Text(set.assetName ?? "Tank \(idx + 1)")
+                                .font(.system(size:9,weight:.semibold,design:.monospaced))
+                                .foregroundColor(.white.opacity(0.75))
+                            Spacer()
+                            Circle()
+                                .fill(eng.isRunning ? .green : Color.white.opacity(0.2))
+                                .frame(width:6,height:6)
+                            Text(eng.isRunning ? "LIVE-LINKED" : "DESIGN VALUES")
+                                .font(.system(size:7,weight:.bold,design:.monospaced))
+                                .foregroundColor(eng.isRunning ? .green : .white.opacity(0.35))
+                        }
+                    }
+                    Text("Add tanks from Mantis Nav settings. Each one's force comes from the Fluid tab's CFD simulation whenever it's running and ignited.")
+                        .font(.system(size:7,design:.monospaced))
+                        .foregroundColor(.white.opacity(0.28))
+                        .multilineTextAlignment(.center)
+                }
+            }
+
             // Launch sequence — mirrors the real CFD engine's running state;
             // does not own or simulate its own physics.
             MantisSectionCard(title: "LAUNCH SEQUENCE", icon: "flame.fill") {

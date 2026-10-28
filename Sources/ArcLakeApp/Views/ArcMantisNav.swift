@@ -190,10 +190,39 @@ public final class MantisNavModel: ObservableObject {
     }
 
     // getPropData → force: potential · density · valveGate · flow%, clamped
-    private func propForce(_ p: MantisPropellant, depress: Double, flowPct: Double) -> Double {
-        var potential = p.totalPressure
-        if depress < p.totalPressure {
-            potential += (p.totalPressure - depress)             // pressure differential
+    //
+    // Link to the real fluid sim: when ArcFluidEngine is actually running a
+    // combustion simulation (set up in the Fluid tab's Build/Setup, same
+    // compound/element pipeline), the live pressure it has computed for the
+    // matching oxidizer/fuel ArcComponentSpec replaces this propellant's
+    // static design-time psi — so the launch math in Mantis Nav is driven
+    // by the actual CFD result, not a second disconnected number. When no
+    // sim is running (or no matching component was found/tagged), this
+    // falls back to the propellant's own configured psi exactly as before,
+    // so nothing here changes unless a real linked simulation exists.
+    private func livePressurePsi(for fluidType: ArcCombustionFlow.FluidType,
+                                  assetName: String?, fallback: Double) -> Double {
+        let eng = ArcFluidEngine.shared
+        guard eng.isRunning else { return fallback }
+        let matches = eng.componentSpecs.filter { spec in
+            spec.fluidType == fluidType &&
+            (assetName == nil || spec.nodeName.contains(assetName!) || (assetName!).contains(spec.nodeName))
+        }
+        guard !matches.isEmpty else { return fallback }
+        // Use the highest live pressure among matching cavities for this
+        // propellant role — conservative for a force estimate (a stalled or
+        // empty cavity elsewhere shouldn't silently zero out real thrust).
+        let livePsiVals = matches.map { $0.currentPressureMPa * 145.038 }  // MPa -> psi
+        return livePsiVals.max() ?? fallback
+    }
+
+    private func propForce(_ p: MantisPropellant, depress: Double, flowPct: Double,
+                            fluidType: ArcCombustionFlow.FluidType, assetName: String?) -> Double {
+        let effectivePsi = livePressurePsi(for: fluidType, assetName: assetName, fallback: p.psi)
+        let totalPressure = effectivePsi + p.atmPsi
+        var potential = totalPressure
+        if depress < totalPressure {
+            potential += (totalPressure - depress)             // pressure differential
         }
         let valveGate = p.valveAngle / 180.0
         return min(potential * p.density * valveGate * (flowPct / 100.0), p.maxFlow)
@@ -202,8 +231,10 @@ public final class MantisNavModel: ObservableObject {
     func totalChemForce(oxiPct: Double, fuelPct: Double) -> Double {
         propSets.reduce(0) { acc, s in
             let d = s.depressPsi + s.depressAtmPsi
-            return acc + propForce(s.oxidizer, depress: d, flowPct: oxiPct)
-                       + propForce(s.fuel,     depress: d, flowPct: fuelPct)
+            return acc + propForce(s.oxidizer, depress: d, flowPct: oxiPct,
+                                    fluidType: .oxidizer, assetName: s.assetName)
+                       + propForce(s.fuel,     depress: d, flowPct: fuelPct,
+                                    fluidType: .fuel, assetName: s.assetName)
         }
     }
     var totalWeightLbs: Double {
