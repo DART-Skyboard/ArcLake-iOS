@@ -390,42 +390,45 @@ public final class MantisNavModel: ObservableObject {
     /// swallowed into a generic nil.
     ///
     /// `nonisolated` deliberately: this method touches no actor-isolated
-    /// state (pure FileManager/URLSession/local-variable work), so
-    /// marking it `nonisolated` lets the blocking semaphore wait inside
-    /// it actually run on a background thread when called from a
-    /// background `Task`, instead of being forced onto the main thread
-    /// just because `MantisNavModel` itself is `@MainActor`-isolated.
-    /// Calling `self.cachedRemoteURL(...)` from inside a `MainActor.run`
-    /// block (as an earlier version of `loadRemoteAsset` did) would hop
-    /// onto the actor and block the UI for the whole download — see
-    /// `loadRemoteAsset` below, which calls this OFF the actor and only
-    /// touches actor-isolated scene state once the bytes are on disk.
-    public nonisolated func cachedRemoteURL(resource: String, remoteURL: String) throws -> URL {
+    /// state (pure FileManager/URLSession/local-variable work), so it can
+    /// be called from a background `Task` without forcing a hop onto the
+    /// main actor just because `MantisNavModel` itself is `@MainActor`.
+    ///
+    /// `async` (NOT the blocking `DispatchSemaphore.wait()` version this
+    /// replaced): the previous build still showed "nothing happens" when
+    /// Load & Ignite Demo was tapped — no spinner, no error, the UI simply
+    /// never progressed. Root cause: `DispatchSemaphore.wait()` blocks
+    /// whatever thread it's called on, and this method was being called
+    /// from inside a plain `Task { }` closure — Swift Concurrency runs a
+    /// `Task`'s body on its small, fixed-size COOPERATIVE thread pool
+    /// (sized to CPU core count), which the runtime explicitly documents
+    /// as never safe to block synchronously: doing so can starve that pool
+    /// outright (every cooperative thread ends up parked on a semaphore
+    /// waiting for a callback that needs a cooperative thread to run on),
+    /// which reads to the user as the task silently hanging forever with
+    /// no error and no visible progress — exactly the "I hit the button
+    /// and nothing happened" report. `URLSession.shared.data(from:)` is
+    /// the structured-concurrency-native replacement: it suspends this
+    /// async function without blocking any thread, so the cooperative pool
+    /// stays free and `loadingDemo`'s UI update is never stuck behind it.
+    public nonisolated func cachedRemoteURL(resource: String, remoteURL: String) async throws -> URL {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let local = docs.appendingPathComponent("\(resource).glb")
         if FileManager.default.fileExists(atPath: local.path) { return local }
         guard let url = URL(string: remoteURL) else {
             throw ArcAssetDownloadError.badURL(remoteURL)
         }
-        let semaphore = DispatchSemaphore(value: 0)
-        var resultData: Data?
-        var resultError: Error?
-        var httpStatus: Int?
-        let task = URLSession.shared.dataTask(with: url) { data, response, error in
-            resultData = data
-            resultError = error
-            httpStatus = (response as? HTTPURLResponse)?.statusCode
-            semaphore.signal()
+        let resultData: Data
+        let response: URLResponse
+        do {
+            (resultData, response) = try await URLSession.shared.data(from: url)
+        } catch {
+            throw ArcAssetDownloadError.transport(error)
         }
-        task.resume()
-        semaphore.wait()
-        if let resultError {
-            throw ArcAssetDownloadError.transport(resultError)
-        }
-        if let httpStatus, !(200...299).contains(httpStatus) {
+        if let httpStatus = (response as? HTTPURLResponse)?.statusCode, !(200...299).contains(httpStatus) {
             throw ArcAssetDownloadError.httpStatus(httpStatus)
         }
-        guard let resultData, !resultData.isEmpty else {
+        guard !resultData.isEmpty else {
             throw ArcAssetDownloadError.emptyResponse
         }
         do {
@@ -458,7 +461,7 @@ public final class MantisNavModel: ObservableObject {
     /// `MainActor.run` with the download still happening inside it (the
     /// pre-fix shape) blocks the UI for the whole download.
     @discardableResult
-    public func loadRemoteAsset(resource: String, remoteURL: String, errorOut: inout String?) -> String? {
+    public func loadRemoteAsset(resource: String, remoteURL: String, errorOut: inout String?) async -> String? {
         errorOut = nil
         let sc = labVM?.scene ?? self.scene
         guard let sc else { errorOut = "No active scene"; return nil }
@@ -468,15 +471,14 @@ public final class MantisNavModel: ObservableObject {
         }
         let localURL: URL
         do {
-            // Already off-actor-safe to call here too (cachedRemoteURL is
-            // nonisolated), but by the time a background-Task caller
-            // reaches this synchronous method it has necessarily already
-            // hopped onto the main actor — so for a "downloads nothing
-            // new" cache-hit path this is instant and fine; for an actual
-            // fresh download, callers should prefer the two-step
-            // pattern documented above instead of relying on this call
-            // alone to stay off the main thread.
-            localURL = try cachedRemoteURL(resource: resource, remoteURL: remoteURL)
+            // cachedRemoteURL is async + nonisolated: awaiting it here
+            // suspends this main-actor method without blocking the main
+            // thread. Callers should still prefer pre-downloading via
+            // cachedRemoteURL off-actor first (see the two-step pattern
+            // documented above) so this call is normally a cache hit and
+            // returns immediately; it's still correct (just slower) if
+            // called cold, since the await no longer blocks either way.
+            localURL = try await cachedRemoteURL(resource: resource, remoteURL: remoteURL)
         } catch {
             errorOut = (error as? ArcAssetDownloadError)?.userMessage ?? error.localizedDescription
             print("[Mantis] Remote asset download failed: \(error)")
@@ -1016,7 +1018,7 @@ struct MantisSettingsSheet: View {
                                 Button(ra.label + " (download)") {
                                     Task.detached(priority: .userInitiated) {
                                         var err: String?
-                                        let n = model.loadRemoteAsset(
+                                        let n = await model.loadRemoteAsset(
                                             resource: ra.resource, remoteURL: ra.url, errorOut: &err)
                                         if let n { await MainActor.run { model.setActiveVehicle(n) } }
                                     }

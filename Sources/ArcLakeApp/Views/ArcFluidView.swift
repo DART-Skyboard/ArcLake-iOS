@@ -442,13 +442,13 @@ struct ArcFluidView: View {
         }
         Task(priority: .userInitiated) {
             // Download off the main actor first (cachedRemoteURL is
-            // `nonisolated`, so this blocking network call runs on this
-            // background Task's own thread, not the UI thread), THEN hop
-            // onto the main actor only to parse the GLB and mutate the
-            // scene graph — SceneKit scene access genuinely needs to be
-            // on-actor, but the multi-MB network fetch does not, and
-            // doing the fetch inside MainActor.run would freeze the UI
-            // for however long the download takes.
+            // `nonisolated async`, a true suspending call with no blocking
+            // wait anywhere inside it), THEN hop onto the main actor only
+            // to parse the GLB and mutate the scene graph — SceneKit scene
+            // access genuinely needs to be on-actor, but the multi-MB
+            // network fetch does not, and doing the fetch inside
+            // MainActor.run would freeze the UI for however long the
+            // download takes.
             // Grab the (nonisolated-method-bearing) mantis reference while
             // still on the main actor — this Task closure itself is NOT
             // main-actor-isolated (a plain `Task { }` doesn't inherit the
@@ -461,15 +461,23 @@ struct ArcFluidView: View {
             var downloadErr: String?
             let preDownloadedURL: URL?
             do {
-                preDownloadedURL = try mantis.cachedRemoteURL(resource: demoAsset.resource, remoteURL: demoAsset.url)
+                // cachedRemoteURL is async + nonisolated now (no more
+                // DispatchSemaphore.wait()): awaiting it here suspends
+                // this Task without blocking Swift Concurrency's
+                // cooperative thread pool. The pre-fix blocking version is
+                // what caused "I hit the button and nothing happened" —
+                // see cachedRemoteURL's own doc comment for the full
+                // mechanism (a blocked cooperative thread can starve the
+                // whole pool, silently hanging with no error and no
+                // spinner update, rather than erroring out like a normal
+                // network failure would).
+                preDownloadedURL = try await mantis.cachedRemoteURL(resource: demoAsset.resource, remoteURL: demoAsset.url)
             } catch {
                 preDownloadedURL = nil
                 downloadErr = (error as? ArcAssetDownloadError)?.userMessage ?? error.localizedDescription
             }
             var loadErr: String? = downloadErr
-            let nodeName: String? = preDownloadedURL == nil ? nil : await MainActor.run {
-                labVM.mantis.loadRemoteAsset(resource: demoAsset.resource, remoteURL: demoAsset.url, errorOut: &loadErr)
-            }
+            let nodeName: String? = preDownloadedURL == nil ? nil : await mantis.loadRemoteAsset(resource: demoAsset.resource, remoteURL: demoAsset.url, errorOut: &loadErr)
             await MainActor.run {
                 loadingDemo = false
                 guard nodeName != nil else {

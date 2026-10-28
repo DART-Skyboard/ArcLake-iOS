@@ -817,7 +817,7 @@ extension ArcLabViewModel {
         // Pre-fetch remote assets — cachedRemoteURL does the disk IO
         Task(priority: .background) {
             for ra in MantisNavModel.remoteAssets {
-                _ = try? self.mantis.cachedRemoteURL(resource: ra.resource, remoteURL: ra.url)
+                _ = try? await self.mantis.cachedRemoteURL(resource: ra.resource, remoteURL: ra.url)
             }
         }
     }
