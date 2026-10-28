@@ -48,6 +48,12 @@ public enum ArcParticleVisual: String, CaseIterable, Identifiable {
     // than the other modes — meant for a close, inspectable fluid-look
     // demo rather than maximum bulk-fluid particle density.
     case gradientSphere = "Gradient"
+    // Ray-marched volumetric density field (see ArcVolumetricFluidRenderer):
+    // one bounding-box mesh whose fragment shader ray-marches a density/
+    // color volume baked each tick straight from ArcSparseVoxelGrid
+    // (trilinearSample + isFineSolid), replacing the particle cloud
+    // entirely for this mode — no per-particle geometry at all.
+    case volumetric = "Volumetric"
     public var id: String { rawValue }
     var icon: String {
         switch self {
@@ -55,6 +61,7 @@ public enum ArcParticleVisual: String, CaseIterable, Identifiable {
         case .spheres: return "circlebadge.fill"
         case .arcWave: return "wave.3.right"
         case .gradientSphere: return "circle.hexagongrid.fill"
+        case .volumetric: return "cloud.fill"
         }
     }
 }
@@ -389,6 +396,7 @@ public final class ArcFluidEngine: ObservableObject {
         simTask?.cancel(); simTask = nil
         isRunning = false
         cloudNode?.removeFromParentNode(); cloudNode = nil
+        volumetricNode?.removeFromParentNode(); volumetricNode = nil
         // Remove thermal coloring from all mesh nodes
         scene?.rootNode.enumerateChildNodes { node, _ in
             node.geometry?.materials.forEach { m in
@@ -1571,8 +1579,39 @@ public final class ArcFluidEngine: ObservableObject {
         uploadParticleCloud()
     }
 
+    // Volumetric mode's own node, kept separate from cloudNode (the
+    // point-sprite/gradient-sphere particle cloud) since it is not a
+    // particle geometry at all — one bounding-box mesh whose material's
+    // fragment shader ray-marches a density volume baked straight from
+    // voxelGrid. Lives for the same start()...stop() lifetime as
+    // cloudNode and is torn down alongside it in stop().
+    private var volumetricNode: SCNNode?
+
     private func uploadParticleCloud() {
         guard let cloudNode else { return }
+
+        // Volumetric mode reads voxelGrid directly, not pts — density
+        // lives in the simulation grid every tick regardless of whether
+        // pts (the point-cloud visual layer) has been reseeded, so this
+        // dispatch happens before the `pts.isEmpty` guard below, which
+        // is specific to the point-sprite/gradient-sphere particle path.
+        if particleVisual == .volumetric {
+            cloudNode.geometry = nil // no point-cloud geometry in this mode
+            guard let scene else { return }
+            volumetricNode = ArcVolumetricFluidRenderer.updateVolumetricNode(
+                in: scene,
+                existingNode: volumetricNode,
+                grid: voxelGrid,
+                envTempK: envTempK)
+            return
+        } else if let volumetricNode {
+            // Switched away from volumetric mode — remove its node so it
+            // doesn't keep rendering a stale baked volume underneath
+            // whichever particle mode is now active.
+            volumetricNode.removeFromParentNode()
+            self.volumetricNode = nil
+        }
+
         let n = pts.count
         // v3.1 fix (item 10): the old guard returned without clearing
         // cloudNode.geometry, so the last nonempty particle cloud stayed
@@ -1663,10 +1702,11 @@ public final class ArcFluidEngine: ObservableObject {
             elem.pointSize = CGFloat(sz)
             elem.minimumPointScreenSpaceRadius = 0.9
             elem.maximumPointScreenSpaceRadius = CGFloat(sz * 2.0)
-        case .gradientSphere:
-            // Unreachable: handled by the early-return dispatch to
-            // ArcGradientParticleRenderer above, before this point-sprite
-            // code runs. Case kept only for switch exhaustiveness.
+        case .gradientSphere, .volumetric:
+            // Unreachable: both handled by early-return dispatches (to
+            // ArcGradientParticleRenderer / ArcVolumetricFluidRenderer)
+            // above, before this point-sprite code runs. Cases kept only
+            // for switch exhaustiveness.
             break
         }
 
