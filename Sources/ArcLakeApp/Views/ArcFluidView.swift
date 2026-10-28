@@ -15,6 +15,10 @@ struct ArcFluidView: View {
     @State private var panelTab: FTab = .build
     @State private var expandedComponent: UUID? = nil
     @State private var showMantisSettings = false
+    @StateObject private var compoundLibrary = ArcCompoundLibrary.shared
+    @State private var showSaveCompoundPrompt = false
+    @State private var showCompoundLibrarySheet = false
+    @State private var newCompoundName = ""
 
     // "Build" merges in the element/compound-building flow (previously a
     // separate Atoms tab) so designing a compound and simulating its fluid
@@ -193,6 +197,60 @@ struct ArcFluidView: View {
                 }
             }
             .sheet(isPresented: $showMantisSettings) { MantisSettingsSheet(model: labVM.mantis) }
+
+            // Task #39: named/saved compound library — lets the user give
+            // whatever is currently on the canvas a scientific/display name
+            // and keep it forever, instead of it only existing as transient
+            // selectedElements state. Feeds task #40 (the component-fill
+            // picker) and the Mantis Nav propellant system.
+            DARTPanelCard(title: "Compound Library", icon: "flask.fill") {
+                VStack(spacing: 8) {
+                    HStack(spacing: 8) {
+                        Button {
+                            newCompoundName = ""
+                            showSaveCompoundPrompt = true
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "square.and.arrow.down").font(.system(size: 11))
+                                Text("Save Compound").font(.system(size: 10, weight: .bold, design: .monospaced))
+                            }
+                            .foregroundColor(.black).frame(maxWidth: .infinity).padding(.vertical, 9)
+                            .background(labVM.selectedElements.isEmpty ? Color.gray : themeVM.accent)
+                            .clipShape(RoundedRectangle(cornerRadius: 9))
+                        }
+                        .disabled(labVM.selectedElements.isEmpty)
+
+                        Button {
+                            showCompoundLibrarySheet = true
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "list.bullet.rectangle").font(.system(size: 11))
+                                Text("Manage (\(compoundLibrary.compounds.count))")
+                                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                            }
+                            .foregroundColor(.white.opacity(0.8)).frame(maxWidth: .infinity).padding(.vertical, 9)
+                            .background(Color.white.opacity(0.08))
+                            .clipShape(RoundedRectangle(cornerRadius: 9))
+                        }
+                    }
+                    Text("Saved compounds become selectable fills for any tank/channel in the 3D scene — tap a component, pick it under Propellant / Fluid.")
+                        .font(.system(size: 7, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.3))
+                        .multilineTextAlignment(.center)
+                }
+            }
+            .alert("Save Compound", isPresented: $showSaveCompoundPrompt) {
+                TextField("Compound name (e.g. \"My Fuel Mix\")", text: $newCompoundName)
+                Button("Save") {
+                    _ = compoundLibrary.save(name: newCompoundName, elements: labVM.selectedElements)
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Saves the \(labVM.selectedElements.count) atom(s) currently on the canvas as a named compound you can reuse later.")
+            }
+            .sheet(isPresented: $showCompoundLibrarySheet) {
+                ArcCompoundLibraryView()
+            }
 
             Text("Build a compound here, then switch to Setup to simulate its fluid behavior.")
                 .font(.system(size:8,design:.monospaced))

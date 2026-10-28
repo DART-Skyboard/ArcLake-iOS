@@ -56,12 +56,17 @@ struct ArcComponentConfigView: View {
     @EnvironmentObject var labVM: ArcLabViewModel
     @EnvironmentObject var themeVM: ArcThemeViewModel
     @StateObject private var eng = ArcFluidEngine.shared
+    @StateObject private var compoundLibrary = ArcCompoundLibrary.shared
     @Environment(\.dismiss) private var dismiss
 
     let nodeName: String
 
     @State private var specIdx: Int = 0     // index into componentSpecs
     @State private var selectedPropellant: ArcPropellant? = nil
+    // Task #40: a saved compound (task #39) selected as the fill instead
+    // of a hardcoded ArcPropellant preset. Mutually exclusive with
+    // selectedPropellant — selecting one clears the other.
+    @State private var selectedCompound: ArcSavedCompound? = nil
     @State private var particleDensityUnit: DensityUnit = .perCubicCm
     @State private var particleDensity: Double = 30     // particles per unit
     @State private var fillFraction: Double = 1.0       // 0-1 how full to fill
@@ -163,6 +168,7 @@ struct ArcComponentConfigView: View {
                     ForEach(ArcPropellant.presets) { prop in
                         Button {
                             selectedPropellant = prop
+                            selectedCompound = nil
                             applyPropellant(prop)
                         } label: {
                             HStack(spacing: 6) {
@@ -188,6 +194,45 @@ struct ArcComponentConfigView: View {
                         }
                     }
                 }
+
+                // Task #40: saved named compounds (task #39) — a selectable
+                // fill alongside the hardcoded presets above, not just the
+                // single live "custom" slot that read labVM.selectedElements
+                // with no persistence.
+                if !compoundLibrary.compounds.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("SAVED COMPOUNDS")
+                            .font(.system(size: 7, weight: .bold, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.35)).tracking(2)
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 2), spacing: 6) {
+                            ForEach(compoundLibrary.compounds) { compound in
+                                Button {
+                                    selectedCompound = compound
+                                    selectedPropellant = nil
+                                    applySavedCompound(compound)
+                                } label: {
+                                    HStack(spacing: 6) {
+                                        Circle().fill(compound.displayColor).frame(width: 8, height: 8)
+                                        VStack(alignment: .leading, spacing: 1) {
+                                            Text(compound.name)
+                                                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                                .foregroundColor(selectedCompound?.id == compound.id ? .black : .white.opacity(0.8))
+                                                .lineLimit(1)
+                                            Text("\(compound.displayFormula) · ~\(Int(compound.estimatedDensityKgM3)) kg/m³")
+                                                .font(.system(size: 7, design: .monospaced))
+                                                .foregroundColor(selectedCompound?.id == compound.id ? .black.opacity(0.7) : .white.opacity(0.35))
+                                        }
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.horizontal, 8).padding(.vertical, 6)
+                                    .background(selectedCompound?.id == compound.id ? themeVM.accent : Color.white.opacity(0.05))
+                                    .clipShape(RoundedRectangle(cornerRadius: 7))
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // Custom molecule from canvas
                 if selectedPropellant?.id == "custom" {
                     VStack(alignment: .leading, spacing: 4) {
@@ -372,17 +417,17 @@ struct ArcComponentConfigView: View {
                         .font(.system(size: 12, weight: .bold, design: .monospaced)).tracking(1)
                 }
                 .foregroundColor(.black).frame(maxWidth: .infinity).padding(.vertical, 14)
-                .background(selectedPropellant != nil ? themeVM.accent : Color.gray)
+                .background((selectedPropellant != nil || selectedCompound != nil) ? themeVM.accent : Color.gray)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
             }
-            .disabled(selectedPropellant == nil || filling)
+            .disabled((selectedPropellant == nil && selectedCompound == nil) || filling)
 
-            if let prop = selectedPropellant, let s = spec {
+            if let name = selectedPropellant?.name ?? selectedCompound?.name, let s = spec {
                 let vol = s.volumeM3
                 let volCm3 = vol * 1_000_000
                 let density = particleDensityUnit == .perCubicCm ? particleDensity : particleDensity / 1_000_000
                 let n = Int(volCm3 * density * fillFraction)
-                Text("Will spawn \(n.formatted()) \(prop.name) particles inside \(displayName)")
+                Text("Will spawn \(n.formatted()) \(name) particles inside \(displayName)")
                     .font(.system(size: 8, design: .monospaced)).foregroundColor(.white.opacity(0.35))
                     .multilineTextAlignment(.center)
             }
@@ -406,7 +451,26 @@ struct ArcComponentConfigView: View {
 
     // MARK: — Fill cavity action
     private func fillCavity() {
-        guard let prop = selectedPropellant, let s = spec else { return }
+        guard let s = spec else { return }
+        // Build a transient ArcPropellant either from the selected preset
+        // or from a saved compound (task #40) — fillComponentCavity's
+        // signature takes ArcPropellant, so a saved compound is adapted
+        // into one rather than changing that call's signature everywhere.
+        let prop: ArcPropellant
+        if let selectedCompound {
+            prop = ArcPropellant(
+                id: "compound:\(selectedCompound.id.uuidString)",
+                name: selectedCompound.name,
+                elements: selectedCompound.elementSymbols,
+                densityKgM3: selectedCompound.estimatedDensityKgM3,
+                baseColor: (0.6, 0.9, 0.6),
+                description: "Saved compound — \(selectedCompound.displayFormula)")
+        } else if let selectedPropellant {
+            prop = selectedPropellant
+        } else {
+            return
+        }
+
         filling = true
         let scene = labVM.scene
         let vol = s.volumeM3
@@ -414,9 +478,11 @@ struct ArcComponentConfigView: View {
         let density = particleDensityUnit == .perCubicCm ? particleDensity : particleDensity / 1_000_000
         let count = max(5, min(3000, Int(volCm3 * density * fillFraction)))
 
-        // Get element symbols — either from preset or molecule canvas
+        // Get element symbols — preset, saved compound, or live molecule canvas
         let syms: [String]
-        if prop.id == "custom" {
+        if let selectedCompound {
+            syms = selectedCompound.elementSymbols.isEmpty ? ["H","H","O"] : selectedCompound.elementSymbols
+        } else if prop.id == "custom" {
             syms = labVM.selectedElements.isEmpty ? ["H","H","O"] : labVM.selectedElements.map{$0.elementSymbol}
         } else {
             syms = prop.elements
@@ -454,6 +520,21 @@ struct ArcComponentConfigView: View {
         } else if prop.id != "custom" {
             updateSpec { $0.fluidType = .fuel }
         }
+    }
+
+    /// Task #40: a saved compound carries no oxidizer/fuel label, so infer
+    /// one from its element composition — presence of oxygen as the
+    /// dominant/characteristic atom reads as oxidizer, anything else
+    /// (particularly H/C-rich mixes) reads as fuel. This only drives the
+    /// cosmetic fluidType badge/icon and which of currentFuelSymbols/
+    /// currentOxidizerSymbols gets set for combustion coloring — it's a
+    /// heuristic, not real chemistry, same spirit as autoFillCombustionDemo's
+    /// keyword matching below.
+    private func applySavedCompound(_ compound: ArcSavedCompound) {
+        let syms = compound.elementSymbols
+        let oCount = syms.filter { $0 == "O" }.count
+        let looksOxidizer = syms.count > 0 && Double(oCount) / Double(syms.count) >= 0.4
+        updateSpec { $0.fluidType = looksOxidizer ? .oxidizer : .fuel }
     }
 
     private func applyFlowDir(_ dir: FlowDir) {
