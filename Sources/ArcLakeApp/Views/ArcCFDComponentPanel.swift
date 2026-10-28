@@ -338,7 +338,7 @@ struct ArcCFDComponentPanel: View {
                 .padding(.horizontal, 12).padding(.top, 8)
 
             Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 4) {
-                mRow("Particles",  "\(eng.measure.particleCount)")
+                mRow("Active Voxels",  "\(eng.measure.particleCount)")
                 mRow("Avg Temp",   String(format: "%.1f K", eng.measure.avgTempK))
                 mRow("Avg Speed",  String(format: "%.2f m/s", eng.measure.avgSpeed))
                 mRow("Reynolds",   String(format: "%.2e", eng.measure.reynoldsNum))

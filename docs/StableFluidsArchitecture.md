@@ -1,6 +1,11 @@
 # Arc Edge CFD v3.0 — Sparse Voxel Stable Fluids Architecture
 
-Status: design doc, pre-implementation. Build target: 1.5.9+.
+Status: v3.0 merged and live (build 390/1.5.9). This doc now also covers
+the v3.1 correctness-fix pass (CodeRabbit findings on PR #2 + the
+adaptive-collision-resolution addition) — see "v3.1: fixes and adaptive
+collision resolution" below.
+
+Build target: 1.5.9+.
 
 ## Why
 
@@ -132,6 +137,127 @@ MetalANGLE credit. Added to the existing section rather than building a new one:
   there that it was considered for the v3.0 Metal compute pass and not adopted
   (nothing legacy-GL to translate, this project targets Metal natively), rather
   than silently leaving the existing credit unexplained for this use case.
+
+## v3.1: fixes and adaptive collision resolution
+
+A round of correctness bugs found by CodeRabbit's automated review on
+the merged v3.0 PR (#2), verified against the actual code, fixed in a
+single follow-up branch (`fix/solver-correctness-batch`):
+
+1. **Stale-snapshot diffusion.** `diffuseVelocity`/`diffuseScalars` were
+   reading `velocityPrev`/`densityPrev`/(and `tempK`, which had no prior
+   field at all) as the Gauss-Seidel source term, but those were never
+   refreshed after advection ran that tick — diffusion kept relaxing
+   toward PRE-advection data every sweep. Fixed by snapshotting the
+   just-advected field into `velocityPrev`/`densityPrev`/`tempKPrev`
+   (new field on `ArcVoxelCell`) at the start of each diffuse call.
+2. **Wall cells reclaimed as empty, and reclaim timing was
+   per-write.** `ArcVoxelCell.isEmpty` now returns `false` whenever
+   `isSolid` is true. Separately, the empty-streak counter used to
+   advance on every subscript write — and the solver writes each active
+   cell many times per tick (once per Gauss-Seidel iteration) — so a
+   cell could hit the `reclaimAfterFrames` threshold within one tick
+   regardless of the isSolid fix. `ArcSparseVoxelGrid.advanceFrame()` now
+   owns advancing the streak, called exactly once per `stepGrid()` tick;
+   the subscript setter only stores/resets, never increments.
+3. **Advection samples through walls.** `trilinearSample` has no wall
+   awareness (by design — other callers want the raw interpolation), so
+   `advectVelocity`/`advectScalars` now walk a fixed number of steps from
+   the cell's world position toward its backward-traced sample position
+   and clip at the first solid cell (coarse `isSolid` or the new fine
+   lookup, see below) encountered, before calling `trilinearSample`.
+4. **Mesh-collision coverage gap (the actual root cause of visible
+   fluid-through-walls).** `syncMeshCollisionToGrid` used to sample only
+   7 points per triangle (corners + centroid + edge midpoints) and mark
+   one cell per sample — a triangle spanning multiple voxel widths left
+   most of the cells it crossed unmarked. It now rasterizes each
+   triangle into every cell its bounding box overlaps, keeping only
+   cells that pass a real triangle-vs-AABB separating-axis test
+   (Akenine-Möller), capped at `maxCellsPerTriangle` (400) per triangle
+   with a skip+warning for degenerate huge triangles.
+6. **Combustion heat/exhaust discarded on reseed.** `applyCombustionReaction`
+   used to write only to `pts[]`, which `reseedParticlesFromGrid()`
+   rebuilds from the grid every tick — the writes were a dead end. It now
+   also writes heat + downward exhaust velocity directly into the grid
+   cells under each reacting particle, which the *next* tick's
+   `velocityStep`/`scalarStep` then actually sees.
+7. **Domain remap on cavity expansion.** Cell keys are computed from
+   world position via the grid's CURRENT `domainMin`/`cellSize` at
+   lookup time — not fixed at insert time. `fitDomain` expanding the
+   domain on an already-populated grid (as `fillComponentCavity` can
+   trigger) used to silently orphan every existing cell's contents at
+   the wrong world position. `fitDomain` now detects a non-empty grid
+   and remaps every existing cell (and fine solid sub-cell) to the new
+   mapping before returning.
+8. **`fitVoxelDomainToScene` ignored non-identity node transforms.** It
+   merged each node's LOCAL `boundingBox` directly into the domain
+   bounds; now transforms all 8 corners of each node's local bounding
+   box through `node.worldTransform` first, matching (and extending —
+   8 corners vs. 2) the existing world-transform pattern used elsewhere
+   in the file.
+9. **Outlet drain only touched one cell.** The stream-preset outlet
+   drain read/halved a single cell at the outlet zone's exact center and
+   didn't check `isSolid`, so neighboring fluid within `outletRadius`
+   wasn't drained or counted, and a stale solid cell could falsely count
+   as draining. Ported the pre-rebuild SPH code's radius-based approach:
+   every non-solid cell whose world center falls within `outletRadius`
+   of the outlet zone is now drained and counted. `outletRadius`/
+   `outletZone` are plain world-space scene units — no `SCALE` factor
+   reintroduced (it's intentionally gone from the Swift sources).
+10. **Smaller items**, also fixed: projection's pressure-gradient step now
+    excludes solid neighbors the same way the Poisson solve does (mirrors
+    the opposite-side value instead of substituting pressure=0); the
+    implicit diffusion coefficient now includes the `1/cellSize²` term
+    the classic discretization calls for; the Measure panel's "Particles"
+    row is relabeled "Active Voxels" (the `eng.measure.particleCount`
+    field name is unchanged, per the compatibility contract);
+    `advectVelocity`/`advectScalars` now pre-materialize the 6-neighborhood
+    of active cells before sampling so fluid can flow into not-yet-active
+    neighbors; `uploadParticleCloud()`'s zero-point guard now clears
+    `cloudNode.geometry` instead of leaving the last nonempty cloud
+    visible; buoyancy and the ambient-relaxation term in `dissipateDensity`
+    now use a configurable `solver.ambientTempK` (set from `envTempK`)
+    instead of a hardcoded `293`.
+
+### Adaptive collision resolution (item 5)
+
+The user's explicit ask, folded into the item-4 mesh-sync rewrite rather
+than a separate pass: joints and narrow passages (pipe-to-tank
+interfaces, nozzle throats) need finer collision resolution than the
+bulk of the domain, without paying for a finer *simulation* grid
+everywhere.
+
+**Approach chosen:** a second, smaller-resolution lookup for solid
+boundary only — not a full octree, which stays out of scope per the
+"explicitly not done" section below; a genuinely adaptive
+simulation-cell-size approach would need `ArcVoxelCell`'s layout and the
+Gauss-Seidel stencils to vary resolution, which is a much larger change
+than this pass's bar (compile+archive correctness, not a redesign).
+
+- `ArcSparseVoxelGrid` gained a supplementary `fineSolidCells: Set<Int64>`
+  keyed at `fineSubdivision` (2×) the normal `cellSize` — i.e. half-size
+  virtual sub-cells — plus `markFineSolid(at:)` / `isFineSolid(at:)`.
+- During the triangle rasterization pass (item 4), `syncMeshCollisionToGrid`
+  counts how many triangles overlap each coarse cell. A cell crossing
+  `tightPassageTriangleThreshold` (6) triangles is flagged a tight
+  passage — multiple mesh surfaces converging inside one voxel, which is
+  exactly the joint/throat case. Its fine sub-cells are then also marked
+  solid via `markFineSolidSubcells`.
+- The fine lookup is consulted ONLY by the two places fluid could
+  otherwise leak through a sub-voxel gap: the wall-clipping walk in
+  `advectVelocity`/`advectScalars` (item 3) and `project()`'s boundary
+  handling (zeroing velocity in a fine-solid cell rather than trusting a
+  possibly-spurious pressure gradient there). The bulk Gauss-Seidel
+  stencils in diffuse/project keep using coarse `isSolid` exclusively —
+  so there is no perf regression to the main solve, and `ArcVoxelCell`'s
+  physics field layout is unchanged.
+- Net effect: the FLUID SIMULATION grid and the WALL BOUNDARY the fluid
+  can't cross are now two different resolutions by design. This keeps
+  cost bounded (the fine lookup only grows where triangle density is
+  genuinely high) while tightening exactly the crevices that were
+  letting fluid leak through narrow collision geometry.
+- `fitDomain`'s remap (item 7) carries `fineSolidCells` through a domain
+  expansion the same way it carries the main `cells` dictionary.
 
 ## Explicitly not done in this pass
 
