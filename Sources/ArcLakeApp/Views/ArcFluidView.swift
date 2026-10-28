@@ -441,13 +441,48 @@ struct ArcFluidView: View {
             demoLoadError = "Demo asset not found"; loadingDemo = false; return
         }
         Task(priority: .userInitiated) {
-            let nodeName: String? = await MainActor.run {
-                labVM.mantis.loadRemoteAsset(resource: demoAsset.resource, remoteURL: demoAsset.url)
+            // Download off the main actor first (cachedRemoteURL is
+            // `nonisolated`, so this blocking network call runs on this
+            // background Task's own thread, not the UI thread), THEN hop
+            // onto the main actor only to parse the GLB and mutate the
+            // scene graph — SceneKit scene access genuinely needs to be
+            // on-actor, but the multi-MB network fetch does not, and
+            // doing the fetch inside MainActor.run would freeze the UI
+            // for however long the download takes.
+            // Grab the (nonisolated-method-bearing) mantis reference while
+            // still on the main actor — this Task closure itself is NOT
+            // main-actor-isolated (a plain `Task { }` doesn't inherit the
+            // enclosing View's actor), so reaching `labVM.mantis` from
+            // inside it requires an isolation hop; doing that hop ONCE
+            // here (cheap: just reads a stored property) and then calling
+            // the nonisolated download method on the captured reference
+            // keeps the actual multi-MB network fetch off the main actor.
+            let mantis = await MainActor.run { labVM.mantis }
+            var downloadErr: String?
+            let preDownloadedURL: URL?
+            do {
+                preDownloadedURL = try mantis.cachedRemoteURL(resource: demoAsset.resource, remoteURL: demoAsset.url)
+            } catch {
+                preDownloadedURL = nil
+                downloadErr = (error as? ArcAssetDownloadError)?.userMessage ?? error.localizedDescription
+            }
+            var loadErr: String? = downloadErr
+            let nodeName: String? = preDownloadedURL == nil ? nil : await MainActor.run {
+                labVM.mantis.loadRemoteAsset(resource: demoAsset.resource, remoteURL: demoAsset.url, errorOut: &loadErr)
             }
             await MainActor.run {
                 loadingDemo = false
                 guard nodeName != nil else {
-                    demoLoadError = "Couldn't download the demo asset — check network connection"
+                    // Surface the REAL failure reason (download transport
+                    // error, bad HTTP status, or the file downloaded fine
+                    // but failed to parse as a GLB) instead of a blanket
+                    // "check network connection" — that message was
+                    // actively misleading when the real cause (confirmed
+                    // via direct curl of the asset URL: downloads cleanly,
+                    // 8.5MB, HTTP 200) was the old loader's use of
+                    // Data(contentsOf:), an unreliable synchronous
+                    // Foundation API, not an actual network problem.
+                    demoLoadError = loadErr ?? "Couldn't load the demo asset"
                     return
                 }
                 // Re-scan so the newly-added nodes are picked up as

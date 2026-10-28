@@ -701,8 +701,15 @@ struct ArcRenderPanel: View {
                     slider("Metalness",  value: entry.metalness,  range: 0...1, fmt: "%.2f", onChange: { mats.apply(entry.wrappedValue) })
                     slider("Roughness",  value: entry.roughness,  range: 0...1, fmt: "%.2f", onChange: { mats.apply(entry.wrappedValue) })
                     slider("Opacity",    value: entry.opacity,    range: 0...1, fmt: "%.2f", onChange: { mats.apply(entry.wrappedValue) })
-                    // Flags
-                    HStack(spacing: 12) {
+                    // Flags — stacked vertically, not side-by-side. Two
+                    // full-text Toggle labels ("Two Sided", "Cast Shadow")
+                    // sharing one HStack row in this panel's narrow sidebar
+                    // column (~380pt max) left each toggle only ~half the
+                    // row, so both labels truncated to unreadable
+                    // fragments (build 403 report: "...W...C...S...h...").
+                    // A full row per toggle gives each label all the
+                    // horizontal space the column actually has.
+                    VStack(alignment: .leading, spacing: 8) {
                         Toggle(isOn: entry.doubleSided) { monoLabel("Two Sided") }.tint(themeVM.accent)
                             .onChange(of: entry.wrappedValue.doubleSided) { _ in mats.apply(entry.wrappedValue) }
                         Toggle(isOn: entry.castsShadow) { monoLabel("Cast Shadow") }.tint(themeVM.accent)
@@ -758,11 +765,22 @@ struct ArcRenderPanel: View {
     private func slider(_ title: String, value: Binding<CGFloat>, range: ClosedRange<CGFloat>,
                         fmt: String, onChange: (() -> Void)? = nil) -> some View {
         HStack {
+            // Fixed width (sized for the longest label this panel actually
+            // uses, "Metalness") + lineLimit/minimumScaleFactor instead of
+            // letting the label flex — without this, the HStack gave the
+            // Slider layout priority and squeezed "Metalness"/"Roughness"
+            // onto two lines in the Materials panel (build 397/403 report:
+            // labels wrapping and the value column getting pushed out of
+            // the narrow sidebar). "Opacity" fit fine before only because
+            // it's short enough not to wrap — same underlying bug.
             monoLabel(title)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .frame(width: 64, alignment: .leading)
             Slider(value: value, in: range).tint(themeVM.accent)
                 .onChange(of: value.wrappedValue) { _ in onChange?() ?? vm.applyNow() }
             accentLabel(String(format: fmt, value.wrappedValue))
-                .frame(width: 44, alignment: .trailing)
+                .frame(width: 38, alignment: .trailing)
         }
     }
 

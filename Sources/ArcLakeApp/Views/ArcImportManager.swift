@@ -170,7 +170,7 @@ struct ArcImportManagerView: View {
                             Button {
                                 Task(priority: .userInitiated) {
                                     // Download + cache
-                                    guard let localURL = labVM.mantis.cachedRemoteURL(
+                                    guard let localURL = try? labVM.mantis.cachedRemoteURL(
                                         resource: ra.resource, remoteURL: ra.url) else { return }
                                     guard let node = ArcGLBImporter().importGLB(url: localURL)
                                     else { return }

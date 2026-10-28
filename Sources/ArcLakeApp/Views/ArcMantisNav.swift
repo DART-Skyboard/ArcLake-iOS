@@ -2,6 +2,33 @@ import SwiftUI
 import SceneKit
 import simd
 
+/// Specific, user-facing-able failure reasons for a remote asset
+/// download, so a caller can tell "no network" from "the server
+/// returned an error" from "the download succeeded but the response was
+/// empty/corrupt" — collapsing all of these into one generic message
+/// (as the previous `Data(contentsOf:)`-based loader did) is what made
+/// a successfully-fetchable asset ("Couldn't download the demo asset —
+/// check network connection", reported against a URL that downloads
+/// cleanly via curl) look like a connectivity problem when the real bug
+/// was in the loader itself.
+public enum ArcAssetDownloadError: Error {
+    case badURL(String)
+    case transport(Error)
+    case httpStatus(Int)
+    case emptyResponse
+    case writeFailed(Error)
+
+    public var userMessage: String {
+        switch self {
+        case .badURL: return "Invalid asset URL"
+        case .transport(let e): return "Download failed: \(e.localizedDescription)"
+        case .httpStatus(let code): return "Server returned HTTP \(code)"
+        case .emptyResponse: return "Server returned an empty response"
+        case .writeFailed: return "Couldn't save the downloaded file"
+        }
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // ArcMantisNav — Mantis Navigation, 1:1 port of MN.html.
 // Exact physics: baseGravity 0.00003 · drag 0.98 · baseMaxLift 0.03 ·
@@ -345,32 +372,120 @@ public final class MantisNavModel: ObservableObject {
 
     // ── Remote asset loader — download once, cache to Documents/ ────
     /// Returns the cached file URL if present, or downloads then caches.
-    public func cachedRemoteURL(resource: String, remoteURL: String) -> URL? {
+    /// Downloads (or returns the already-cached copy of) a remote GLB asset.
+    ///
+    /// Previously used `Data(contentsOf:)` — a synchronous, deprecated
+    /// Foundation API that does not follow the same networking stack as
+    /// URLSession and is known to fail unreliably on iOS for HTTPS URLs
+    /// that redirect through a presigned-URL host (exactly this asset's
+    /// path: github.com/.../releases/download/... 302s to a signed
+    /// objects.githubusercontent.com S3 URL). Confirmed via `curl` that
+    /// the asset itself downloads cleanly (8.5MB, HTTP 200) — the failure
+    /// the user hit ("Couldn't download the demo asset — check network
+    /// connection") was the loader's own fetch mechanism, not a real
+    /// network or asset problem, and the only diagnostic was a `print()`
+    /// nobody could see from the shipped app. Switched to a proper
+    /// synchronous URLSession data task with real HTTP status validation
+    /// and the underlying error returned to the caller instead of being
+    /// swallowed into a generic nil.
+    ///
+    /// `nonisolated` deliberately: this method touches no actor-isolated
+    /// state (pure FileManager/URLSession/local-variable work), so
+    /// marking it `nonisolated` lets the blocking semaphore wait inside
+    /// it actually run on a background thread when called from a
+    /// background `Task`, instead of being forced onto the main thread
+    /// just because `MantisNavModel` itself is `@MainActor`-isolated.
+    /// Calling `self.cachedRemoteURL(...)` from inside a `MainActor.run`
+    /// block (as an earlier version of `loadRemoteAsset` did) would hop
+    /// onto the actor and block the UI for the whole download — see
+    /// `loadRemoteAsset` below, which calls this OFF the actor and only
+    /// touches actor-isolated scene state once the bytes are on disk.
+    public nonisolated func cachedRemoteURL(resource: String, remoteURL: String) throws -> URL {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let local = docs.appendingPathComponent("\(resource).glb")
         if FileManager.default.fileExists(atPath: local.path) { return local }
-        guard let url = URL(string: remoteURL) else { return nil }
-        do {
-            let data = try Data(contentsOf: url)   // blocking — called from a Task
-            try data.write(to: local)
-            return local
-        } catch {
-            print("[Mantis] Remote asset download failed: \(error)")
-            return nil
+        guard let url = URL(string: remoteURL) else {
+            throw ArcAssetDownloadError.badURL(remoteURL)
         }
+        let semaphore = DispatchSemaphore(value: 0)
+        var resultData: Data?
+        var resultError: Error?
+        var httpStatus: Int?
+        let task = URLSession.shared.dataTask(with: url) { data, response, error in
+            resultData = data
+            resultError = error
+            httpStatus = (response as? HTTPURLResponse)?.statusCode
+            semaphore.signal()
+        }
+        task.resume()
+        semaphore.wait()
+        if let resultError {
+            throw ArcAssetDownloadError.transport(resultError)
+        }
+        if let httpStatus, !(200...299).contains(httpStatus) {
+            throw ArcAssetDownloadError.httpStatus(httpStatus)
+        }
+        guard let resultData, !resultData.isEmpty else {
+            throw ArcAssetDownloadError.emptyResponse
+        }
+        do {
+            try resultData.write(to: local)
+        } catch {
+            throw ArcAssetDownloadError.writeFailed(error)
+        }
+        return local
     }
 
     /// Load a remote-backed asset into the scene (downloads if not cached).
-    /// Call from a background Task to avoid blocking the main thread.
-    public func loadRemoteAsset(resource: String, remoteURL: String) -> String? {
+    /// Returns the loaded node's name on success, or a human-readable
+    /// failure reason via `errorOut` (instead of collapsing a download
+    /// failure, an HTTP error, and a GLB *parse* failure of an
+    /// already-downloaded file into the same generic nil — a caller
+    /// couldn't tell "no network" from "the file downloaded but
+    /// ArcGLBImporter choked on it," which were genuinely different
+    /// problems surfaced with the same misleading message).
+    ///
+    /// This method is itself main-actor-isolated (it's a method on
+    /// `@MainActor final class MantisNavModel`) and does the GLB parse +
+    /// scene-graph mutation synchronously, which is correct — SceneKit
+    /// node/scene access needs to happen on the main actor regardless.
+    /// What must NOT happen on the main actor is the network download
+    /// itself (tens of MB, blocking semaphore wait) — so callers from a
+    /// background `Task` should call `cachedRemoteURL` (which is
+    /// `nonisolated`) FIRST, off the actor, and only hop onto the actor
+    /// (e.g. via `MainActor.run`) to call this method with the already-
+    /// downloaded `localURL`. Calling THIS method directly from
+    /// `MainActor.run` with the download still happening inside it (the
+    /// pre-fix shape) blocks the UI for the whole download.
+    @discardableResult
+    public func loadRemoteAsset(resource: String, remoteURL: String, errorOut: inout String?) -> String? {
+        errorOut = nil
         let sc = labVM?.scene ?? self.scene
-        guard let sc else { return nil }
+        guard let sc else { errorOut = "No active scene"; return nil }
         let nodeName = "glb_import_\(resource)"
         if sc.rootNode.childNode(withName: nodeName, recursively: false) != nil {
             return nodeName
         }
-        guard let localURL = cachedRemoteURL(resource: resource, remoteURL: remoteURL),
-              let node = ArcGLBImporter().importGLB(url: localURL) else { return nil }
+        let localURL: URL
+        do {
+            // Already off-actor-safe to call here too (cachedRemoteURL is
+            // nonisolated), but by the time a background-Task caller
+            // reaches this synchronous method it has necessarily already
+            // hopped onto the main actor — so for a "downloads nothing
+            // new" cache-hit path this is instant and fine; for an actual
+            // fresh download, callers should prefer the two-step
+            // pattern documented above instead of relying on this call
+            // alone to stay off the main thread.
+            localURL = try cachedRemoteURL(resource: resource, remoteURL: remoteURL)
+        } catch {
+            errorOut = (error as? ArcAssetDownloadError)?.userMessage ?? error.localizedDescription
+            print("[Mantis] Remote asset download failed: \(error)")
+            return nil
+        }
+        guard let node = ArcGLBImporter().importGLB(url: localURL) else {
+            errorOut = "Downloaded file isn't a valid GLB"
+            return nil
+        }
         node.name = nodeName
         let ext = max(node.boundingBox.max.x - node.boundingBox.min.x,
                       max(node.boundingBox.max.y - node.boundingBox.min.y,
@@ -900,8 +1015,9 @@ struct MantisSettingsSheet: View {
                             ForEach(MantisNavModel.remoteAssets, id: \.resource) { ra in
                                 Button(ra.label + " (download)") {
                                     Task.detached(priority: .userInitiated) {
+                                        var err: String?
                                         let n = model.loadRemoteAsset(
-                                            resource: ra.resource, remoteURL: ra.url)
+                                            resource: ra.resource, remoteURL: ra.url, errorOut: &err)
                                         if let n { await MainActor.run { model.setActiveVehicle(n) } }
                                     }
                                 }
