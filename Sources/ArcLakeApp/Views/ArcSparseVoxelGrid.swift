@@ -63,6 +63,16 @@ public final class ArcSparseVoxelGrid {
     public private(set) var domainMin: SIMD3<Float> = .zero
     public private(set) var domainMax: SIMD3<Float> = .zero
 
+    /// Domain bounding-box volume in scene-unit³ (≈ m³, 1:1 scene-unit
+    /// convention used throughout ArcFluidEngine). Used to derive a
+    /// fallback visual particle density for grid cells with no owning
+    /// component (componentTag == -1) from the scene-wide particleCount
+    /// slider — see ArcFluidEngine.reseedParticlesFromGrid().
+    public var domainVolumeM3: Float {
+        let s = domainMax - domainMin
+        return abs(s.x * s.y * s.z)
+    }
+
     private var cells: [Int64: ArcVoxelCell] = [:]
 
     /// Frames an empty cell must stay empty before being reclaimed —

@@ -257,6 +257,27 @@ struct ArcCFDComponentPanel: View {
                             Text("\(spec.wrappedValue.particleCapacity) particles · \(String(format:"%.3f m³", spec.wrappedValue.volumeM3))")
                                 .font(.system(size:8,design:.monospaced)).foregroundColor(themeVM.accent)
                         }
+                        // Visual particle density for THIS component only —
+                        // separate from the physics, which stays accurate at
+                        // this component's real volume regardless of this
+                        // setting. Lets a user turn this down for a huge
+                        // tank (gallons of propellant would be an absurd
+                        // literal particle count to render) or up for a
+                        // small part they want to inspect closely, without
+                        // the underlying measurements losing accuracy — see
+                        // ArcFluidEngine.reseedParticlesFromGrid().
+                        VStack(spacing: 2) {
+                            HStack {
+                                Text("Visual Density").font(.system(size: 9, design: .monospaced))
+                                    .foregroundColor(.white.opacity(0.5))
+                                Slider(value: spec.particlesPerM3Visible, in: 1...500).tint(themeVM.accent)
+                                Text("\(Int(spec.wrappedValue.particlesPerM3Visible))/m³")
+                                    .font(.system(size:8,design:.monospaced)).foregroundColor(themeVM.accent)
+                                    .frame(width:52,alignment:.trailing)
+                            }
+                            Text("Rendered particles only — doesn't affect simulated physics")
+                                .font(.system(size:7,design:.monospaced)).foregroundColor(.white.opacity(0.35))
+                        }
                         if spec.wrappedValue.isCombustionChamber {
                             HStack(spacing:4) {
                                 Image(systemName:"flame.fill").font(.system(size:9)).foregroundColor(.orange)

@@ -38,12 +38,22 @@ public enum ArcParticleVisual: String, CaseIterable, Identifiable {
     case points    = "Points"    // fast dot particles
     case spheres   = "Spheres"   // larger spheres, metaball-like blend
     case arcWave   = "Arc Wave"  // arc traces that react to physics
+    // Per-particle 6-pole gradient sphere (see ArcGradientParticleRenderer):
+    // each particle is a small tessellated sphere whose 6 axis-aligned
+    // poles independently fade from full color/opacity at that pole to
+    // zero at the boundary with its neighbors, with pole assignment driven
+    // live by that particle's velocity/temperature. Heavier per-particle
+    // (real triangle mesh, not a point sprite) so capped at a lower count
+    // than the other modes — meant for a close, inspectable fluid-look
+    // demo rather than maximum bulk-fluid particle density.
+    case gradientSphere = "Gradient"
     public var id: String { rawValue }
     var icon: String {
         switch self {
         case .points:  return "circle.fill"
         case .spheres: return "circlebadge.fill"
         case .arcWave: return "wave.3.right"
+        case .gradientSphere: return "circle.hexagongrid.fill"
         }
     }
 }
@@ -173,6 +183,18 @@ public struct ArcComponentSpec: Identifiable {
     // Combustion flow
     public var fillLevel: Double = 0          // 0-1 fraction full
     public var particleCapacity: Int = 100    // max particles this cavity holds
+    // Visual particle density for THIS component, independent of the
+    // physics: the solver's grid cell size (and therefore the simulated
+    // math — velocity, pressure, temperature, flow rate) never changes
+    // with this value. It only scales how many dots reseedParticlesFromGrid()
+    // draws per unit of this component's real volume, so a user can turn
+    // this down for a huge fuel tank (gallons of propellant would be an
+    // absurd literal particle count) without the underlying measurements
+    // losing accuracy, or turn it up for a small part they want to inspect
+    // closely. Defaults to the same 30/m³ particleCapacity already used,
+    // but — unlike particleCapacity, which only seeds the grid's initial
+    // fill level — this is read every frame by reseedParticlesFromGrid().
+    public var particlesPerM3Visible: Float = 30
     public var pressurePsi: Double = 100      // operating pressure
     public var isCombustionChamber = false
     public var fluidType: ArcCombustionFlow.FluidType? = nil
@@ -982,18 +1004,66 @@ public final class ArcFluidEngine: ObservableObject {
     }
 
     /// Rebuild the visual particle array from the grid's current density/
-    /// velocity/color field. Count tracks `particleCount` (user-set target)
-    /// but distributes across active fluid-bearing cells so the point
-    /// cloud shows where the fluid actually is rather than a fixed lattice.
+    /// velocity/color field.
+    ///
+    /// Per-cell visual count is driven by the OWNING COMPONENT's
+    /// particlesPerM3Visible × this cell's real-world volume (cellSize³) —
+    /// NOT by dividing one flat global target across every active cell.
+    /// This is the fix for the long-standing disconnect where the "30
+    /// particles/m³" default (componentSpecs[i].particleCapacity, scanned
+    /// per-component at import time) only ever seeded a cavity's INITIAL
+    /// grid fill level and had no bearing on how many dots actually got
+    /// drawn each frame — that number came entirely from `particleCount`,
+    /// a flat scene-wide target with no connection to real volume or
+    /// per-compound settings at all. The SOLVER's math (grid cell size,
+    /// velocity/pressure/temperature fields) is completely unaffected by
+    /// any of this — this function only decides how many dots represent
+    /// that already-correct physics, so bulk-quantity scenes (gallons of
+    /// propellant) stay physically accurate without demanding a literal
+    /// per-molecule particle count.
+    ///
+    /// `particleCount` (the user-facing global slider) now acts as an
+    /// overall scene-wide multiplier/cap for performance headroom rather
+    /// than the sole source of truth: cells with no owning component
+    /// (componentTag == -1, e.g. the generic dam/wave/drop/orbital presets
+    /// that aren't tied to a scanned mesh) fall back to a density derived
+    /// from it, and the final total is capped at a hard ceiling regardless
+    /// of how high per-component settings are pushed.
     private func reseedParticlesFromGrid() {
         let active = voxelGrid.activeCoords().filter { voxelGrid[$0].density > 0.02 && !voxelGrid[$0].isSolid }
         guard !active.isEmpty else { pts.removeAll(keepingCapacity: true); return }
-        let perCell = max(1, particleCount / max(1, active.count))
+
+        let cellVolumeM3 = Float(voxelGrid.cellSize * voxelGrid.cellSize * voxelGrid.cellSize)
+        // Fallback density (particles/m³) for untagged cells, derived from
+        // the global slider against the domain's own volume — keeps the
+        // slider meaningful for generic presets that have no component scan.
+        let domainVol = max(0.001, voxelGrid.domainVolumeM3)
+        let fallbackPerM3 = Float(particleCount) / domainVol
+
+        // Hard performance ceiling independent of how per-component or
+        // fallback density settings are configured — a literal gallons-of-
+        // propellant particle count would be absurd to actually render.
+        let hardCap = max(500, particleCount * 4)
+
         var newPts: [ArcParticle] = []
-        newPts.reserveCapacity(active.count * perCell)
-        for c in active {
+        newPts.reserveCapacity(min(hardCap, active.count * 8))
+        outer: for c in active {
             let cell = voxelGrid[c]
             let center = voxelGrid.worldCenter(of: c)
+            let perM3: Float
+            if cell.componentTag >= 0, Int(cell.componentTag) < componentSpecs.count {
+                perM3 = max(0.01, componentSpecs[Int(cell.componentTag)].particlesPerM3Visible)
+            } else {
+                perM3 = max(0.01, fallbackPerM3)
+            }
+            // Expected particles in this cell's real volume; fractional part
+            // resolved probabilistically so low-density cells still get
+            // occasional particles rather than always rounding to 0.
+            let expected = perM3 * cellVolumeM3
+            let whole = Int(expected)
+            let frac = expected - Float(whole)
+            let perCell = whole + (Float.random(in: 0..<1) < frac ? 1 : 0)
+            guard perCell > 0 else { continue }
             for _ in 0..<perCell {
                 let jitter = SIMD3<Float>.random(in: -voxelGrid.cellSize/2...voxelGrid.cellSize/2)
                 let wp = center + jitter
@@ -1006,7 +1076,7 @@ public final class ArcFluidEngine: ObservableObject {
                 part.pressure = max(0, cell.pressure) * 1000
                 part.spd = simd_length(cell.velocity)
                 newPts.append(part)
-                if newPts.count >= max(particleCount, active.count) { break }
+                if newPts.count >= hardCap { break outer }
             }
         }
         pts = newPts
@@ -1413,6 +1483,21 @@ public final class ArcFluidEngine: ObservableObject {
         // visibly rendered even after reseedParticlesFromGrid() legitimately
         // emptied pts (e.g. all fluid drained/dissipated).
         guard n > 0 else { cloudNode.geometry = nil; return }
+
+        // Gradient-sphere mode is a completely different geometry
+        // construction (real per-particle triangle meshes with baked
+        // per-vertex pole-blended color, not a point-sprite cloud) — see
+        // ArcGradientParticleRenderer. Dispatch to it and return before any
+        // of the point-sprite-specific code below runs.
+        if particleVisual == .gradientSphere {
+            cloudNode.geometry = ArcGradientParticleRenderer.buildGeometry(
+                particles: pts,
+                baseColorFor: { SIMD3($0.r, $0.g, $0.b) },
+                envTempK: envTempK,
+                radius: max(0.08, voxelGrid.cellSize * 0.18))
+            return
+        }
+
         // Particles are in world space — arcFluidCloud is at scene root so no offset needed
         var rawPos=[Float](); rawPos.reserveCapacity(n*3)
         var rawCol=[Float](); rawCol.reserveCapacity(n*4)
@@ -1420,7 +1505,13 @@ public final class ArcFluidEngine: ObservableObject {
             rawPos += [p.x, p.y, p.z]  // world-space directly
             let heat = min(1, max(0,(p.tempK-envTempK)/max(1,2000-envTempK)))
             let hc = thermalColor(heat)
-            let alpha: Float = particleVisual == .arcWave ? 0.75 : 0.92
+            // Lower, mode-independent alpha now that ALL modes use additive
+            // blending (see uploadParticleCloud's material setup below):
+            // additive blending already brightens where particles overlap,
+            // so a lower per-particle alpha is what keeps a dense cluster
+            // reading as a soft continuous volume instead of blowing out to
+            // flat white — the old 0.92 was tuned for opaque-style blending.
+            let alpha: Float = 0.4
             rawCol += [p.r*(1-heat*0.6)+hc.x*heat*0.6,
                        p.g*(1-heat*0.6)+hc.y*heat*0.6,
                        p.b*(1-heat*0.6)+hc.z*heat*0.6, alpha]
@@ -1436,36 +1527,59 @@ public final class ArcFluidEngine: ObservableObject {
         let indices=(0..<n).map{UInt32($0)}
         let elem=SCNGeometryElement(indices:indices, primitiveType:.point)
 
-        // Visual mode determines point size
+        // Visual mode determines point size. Sizes here are deliberately
+        // smaller than the pre-density-fix defaults: now that particle
+        // COUNT actually scales with real density (reseedParticlesFromGrid),
+        // a dense region gets there by drawing more, smaller points that
+        // overlap and blend into a continuous surface — the FLIP/thin-
+        // liquid-sheet look referenced from Houdini — rather than fewer,
+        // large, flatly-colored dots reading as "bulky" individual blobs.
+        // Point size also scales DOWN slightly as local particle count
+        // rises (finer grain exactly where there's more fluid to render,
+        // same principle as a denser point cloud needing smaller splats to
+        // avoid a clumpy look), and screen-space min/max radii are tighter
+        // so points stay crisp at both close and far camera distances.
         let avgSpd = pts.isEmpty ? 0 : pts.map({$0.spd}).reduce(0,+)/Float(pts.count)
+        // Mild inverse-density scaling: more particles on screen → each one
+        // a touch smaller, clamped so it never vanishes or dominates.
+        let densityScale = Float(max(0.55, min(1.0, 1.0 - log10(Double(max(1, n))) * 0.08)))
         switch particleVisual {
         case .points:
-            let sz = Float(min(8, max(2, 2 + avgSpd * 0.15)))
+            let sz = Float(min(5, max(1.2, (1.4 + avgSpd * 0.08) * densityScale)))
             elem.pointSize = CGFloat(sz)
-            elem.minimumPointScreenSpaceRadius = 1.0
-            elem.maximumPointScreenSpaceRadius = CGFloat(sz * 2)
+            elem.minimumPointScreenSpaceRadius = 0.6
+            elem.maximumPointScreenSpaceRadius = CGFloat(sz * 1.8)
         case .spheres:
-            // Larger spheres that visually blend together
-            let sz = Float(min(20, max(6, 6 + avgSpd * 0.3)))
+            // Softened from the old "large blended spheres" default — still
+            // bigger than .points, but no longer chunky at realistic density.
+            let sz = Float(min(12, max(3.5, (4 + avgSpd * 0.18) * densityScale)))
             elem.pointSize = CGFloat(sz)
-            elem.minimumPointScreenSpaceRadius = 3.0
-            elem.maximumPointScreenSpaceRadius = CGFloat(sz * 3)
+            elem.minimumPointScreenSpaceRadius = 1.6
+            elem.maximumPointScreenSpaceRadius = CGFloat(sz * 2.2)
         case .arcWave:
             // Arc wave: medium size, velocity-elongated teardrop
-            let sz = Float(min(14, max(3, 3 + avgSpd * 0.25)))
+            let sz = Float(min(9, max(1.8, (2 + avgSpd * 0.15) * densityScale)))
             elem.pointSize = CGFloat(sz)
-            elem.minimumPointScreenSpaceRadius = 1.5
-            elem.maximumPointScreenSpaceRadius = CGFloat(sz * 2.5)
+            elem.minimumPointScreenSpaceRadius = 0.9
+            elem.maximumPointScreenSpaceRadius = CGFloat(sz * 2.0)
+        case .gradientSphere:
+            // Unreachable: handled by the early-return dispatch to
+            // ArcGradientParticleRenderer above, before this point-sprite
+            // code runs. Case kept only for switch exhaustiveness.
+            break
         }
 
         let geo=SCNGeometry(sources:[posSource,colSource], elements:[elem])
         let mat=SCNMaterial()
         mat.lightingModel = .constant
         mat.isDoubleSided = true
-        // Arc wave gets additive blending for glow-on-glow effect
-        if particleVisual == .arcWave {
-            mat.blendMode = .add
-        }
+        // Additive blending for ALL visual modes now, not just arcWave:
+        // overlapping translucent particles brighten and merge where they
+        // cluster, which is what reads as a continuous fluid/smoke surface
+        // instead of a field of separately-outlined opaque dots — the
+        // actual visual mechanism FLIP/volumetric renders rely on for a
+        // "fine smoke or liquid" look rather than a particle spray.
+        mat.blendMode = .add
         geo.firstMaterial = mat
         cloudNode.geometry = geo
     }
