@@ -576,6 +576,21 @@ struct DARTBottomPanel: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(Color(red:0.012,green:0.018,blue:0.035).opacity(0.95))
+        // Bug report (build 397 screenshot, Materials tab): left-aligned
+        // labels like "Oxidizer", "Fuel", "Alloy Preset", "Density" were
+        // missing their first 1-2 characters at the panel's left edge.
+        // Root cause: this whole panel's column (DARTRootView sizes it to
+        // min(geo.size.width*0.52,380), positioned flush at x=0 in an
+        // HStack with no leading padding of its own) starts at the
+        // screen's physical left edge with no margin at all. Individual
+        // tabs add their own interior .padding(.horizontal,10) around
+        // their own content, but on this device's curved-corner display
+        // that interior padding still isn't enough clearance from the
+        // true bezel — a few points of left-edge text get rendered right
+        // under the curve and read as clipped. Fixing it once here, at
+        // the shared panel container, covers every tab consistently
+        // instead of bumping each tab's own internal padding piecemeal.
+        .padding(.leading, 4)
     }
 }
 
