@@ -20,6 +20,18 @@ import SwiftUI
 // ═══════════════════════════════════════════════════════════════════
 
 public struct ArcSavedCompound: Identifiable, Codable, Equatable {
+    // Manual == instead of synthesized: ArcElement (Models/Element.swift)
+    // doesn't conform to Equatable, so Swift can't auto-derive this and
+    // the build fails (caught after CI broke on builds 398-400 — a
+    // prior pass declared this type Equatable without checking that its
+    // stored ArcElement array could actually satisfy it). Identity by id
+    // is correct for this type's actual uses (List selection/diffing in
+    // ArcCompoundLibraryView) — full deep element-array equality was
+    // never needed.
+    public static func == (lhs: ArcSavedCompound, rhs: ArcSavedCompound) -> Bool {
+        lhs.id == rhs.id
+    }
+
     public var id: UUID = UUID()
     public var name: String
     /// Full element set as designed on the canvas — same granularity as
