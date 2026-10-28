@@ -419,9 +419,33 @@ struct ArcFluidView: View {
                 .foregroundColor(.black).frame(maxWidth: .infinity).padding(.vertical, 11)
                 .background(Color.orange).clipShape(RoundedRectangle(cornerRadius: 10))
             }
-            .disabled(loadingDemo || eng.isRunning)
+            // Previously also `|| eng.isRunning`, which silently disabled
+            // this button with NO visual change (a disabled button here
+            // kept the exact same solid-orange look — SwiftUI's default
+            // .disabled() dims content via opacity, but this label was
+            // fully opaque black-on-orange either way) any time a sim was
+            // already running from an earlier tap/session — e.g. an
+            // earlier "Load & Ignite" attempt that actually succeeded in
+            // calling eng.start() before the user reopened this tab, or
+            // manually launching a sim another way first. The result
+            // looked exactly like "nothing happens when I tap it": no
+            // spinner, no error, no visible disabled state, because
+            // nothing actually happened — the tap never reached
+            // loadCombustionDemo() at all. Load & Ignite Demo should
+            // always be able to (re)start the demo, so it now just stops
+            // any existing sim first (loadCombustionDemo below calls
+            // eng.stop() before eng.start() runs) instead of refusing to
+            // run. .opacity(...) replaces the invisible .disabled() dimming
+            // so a genuinely busy state (mid-download) is visually obvious
+            // instead of silently absorbing the tap.
+            .disabled(loadingDemo)
+            .opacity(loadingDemo ? 0.6 : 1.0)
             if let err = demoLoadError {
                 Text(err).font(.system(size: 7, design: .monospaced)).foregroundColor(.red.opacity(0.8))
+            }
+            if eng.isRunning {
+                Text("A simulation is already running — tapping this restarts it with the demo scene.")
+                    .font(.system(size: 7, design: .monospaced)).foregroundColor(.white.opacity(0.35))
             }
         }
         .padding(10).background(Color.orange.opacity(0.08)).clipShape(RoundedRectangle(cornerRadius: 12))
@@ -493,6 +517,16 @@ struct ArcFluidView: View {
                     demoLoadError = loadErr ?? "Couldn't load the demo asset"
                     return
                 }
+                // Stop any already-running sim first: ArcFluidEngine.start()
+                // has `guard !isRunning else { return }` at its very top, so
+                // calling launchCFD() below while eng.isRunning was already
+                // true did nothing at all — no error, no state change, the
+                // exact "I hit the button and nothing happened" symptom,
+                // just one step further down the call chain than the
+                // previous async-hang bug this build also fixes. Load &
+                // Ignite Demo should always be able to (re)start the demo
+                // regardless of what was running before.
+                if eng.isRunning { eng.stop() }
                 // Re-scan so the newly-added nodes are picked up as
                 // components (hardcoded Combustion_flow.glb names resolve
                 // via ArcCombustionFlow.componentRoles as usual), then
