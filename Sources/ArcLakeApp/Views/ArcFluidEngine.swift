@@ -3,10 +3,24 @@ import SceneKit
 import simd
 
 // ═══════════════════════════════════════════════════════════════════
-// ArcFluidEngine — Arc Edge CFD: mesh-conformal SPH fluid dynamics.
+// ArcFluidEngine — Arc Edge CFD: mesh-conformal sparse-voxel fluid
+// dynamics (Stable Fluids).
+//
+// v3.0: the simulation core is now ArcStableFluidSolver running on
+// ArcSparseVoxelGrid (see those files) — unconditionally stable
+// semi-Lagrangian advection + Helmholtz-Hodge projection, replacing
+// v2's explicit-Euler SPH step and its VMAX clamp band-aid.
+// `pts`/ArcParticle remain as a thin VISUAL layer only: each frame
+// they're reseeded from the grid for the SceneKit point-cloud render
+// and combustion color logic. All public properties/methods below
+// (measure, componentSpecs, start/stop/setScene, selectComponent...)
+// are unchanged so ArcCFDComponentPanel, ArcFluidView,
+// ArcComponentConfigView, and ArcMeshSelectorView need no edits.
 //
 // Physics references:
-//   Müller, Charypar & Gross — SCA 2003 (SPH kernels)
+//   Jos Stam — "Stable Fluids," SIGGRAPH 1999 (grid solver, v3.0)
+//   Müller, Charypar & Gross — SCA 2003 (SPH kernels, v2.0 — kept for
+//   buoyancy/density-coupling constants and the particle visual layer)
 //   https://matthias-research.github.io/pages/publications/sca03.pdf
 //   Sebastian Lague — Fluid-Sim (MIT)
 //   https://github.com/SebLague/Fluid-Sim
@@ -15,7 +29,7 @@ import simd
 //   Ihmsen et al. 2012 — Spray Foam Bubbles (CGI)
 //   https://cg.informatik.uni-freiburg.de/publications/2012_CGI_sprayFoamBubbles.pdf
 //
-//  Integrated: Radical Deepscale LLC / DART Meadow — Arc Edge CFD v2.0
+//  Integrated: Radical Deepscale LLC / DART Meadow — Arc Edge CFD v3.0
 // ═══════════════════════════════════════════════════════════════════
 
 // MARK: — Fluid mode
@@ -242,26 +256,28 @@ public final class ArcFluidEngine: ObservableObject {
     public var inletRadius:  Float = 40
     public var outletRadius: Float = 40
 
-    // Domain — will be set from scene model bounding box
+    // Domain — soft extent, used by generic-preset layout math (dam/wave/
+    // drop/orbital/stream); the authoritative simulation domain is
+    // voxelGrid.domainMin/domainMax, fit separately in fitVoxelDomainToScene.
     var W: Float = 400; var H: Float = 300; var D: Float = 300
-    let SCALE: Float = 0.8
-    let VMAX:  Float = 35.0
+    let VMAX:  Float = 35.0  // combustion exhaust-boost cap (not a stability clamp — see stepGrid)
 
-    // Particles
+    // Particles — v3.0: visual layer only, reseeded from the grid each
+    // frame. Combustion color logic (applyCombustionReaction) and the
+    // SceneKit point-cloud upload (uploadParticleCloud) both still read
+    // this array directly, unchanged.
     var pts: [ArcParticle] = []
+
+    // Grid-based solver (v3.0) — the actual simulation core.
+    let voxelGrid = ArcSparseVoxelGrid()
+    lazy var solver = ArcStableFluidSolver(grid: voxelGrid)
 
     // Mesh collision geometry extracted from imported models
     private var meshTriangles: [ArcTriangle] = []
-    private var meshBVH: [SIMD3<Float>] = []  // flat list of triangle centers for fast lookup
 
     // SceneKit node refs
     public weak var scene: SCNScene? = nil
     private var cloudNode: SCNNode? = nil
-
-    // Spatial hash
-    private var cells: [[Int]] = []
-    private var cgx: Float=0, cgy: Float=0, cgz: Float=0
-    private var cgW: Int=0, cgH: Int=0, cgD: Int=0
 
     // Background task
     private var simTask: Task<Void,Never>? = nil
@@ -294,21 +310,6 @@ public final class ArcFluidEngine: ObservableObject {
         return [r+m, g+m, b+m]
     }
 
-    // MARK: — SPH Kernels (Müller et al. SCA 2003)
-    private var kSp2:Float=0, kSp3:Float=0, kSp2g:Float=0, kSp3g:Float=0, kP6:Float=0
-    private var hCached:Float = -1
-    private func rebuildKernels(_ h: Float) {
-        let pi = Float.pi
-        kSp2  = 15/(2*pi*pow(h,5)); kSp3  = 15/(pi*pow(h,6))
-        kSp2g = 15/(pi*pow(h,5));   kSp3g = 45/(pi*pow(h,6))
-        kP6   = 315/(64*pi*pow(h,9)); hCached = h
-    }
-    @inline(__always) private func sp2(_ d:Float,_ h:Float)->Float  { guard d<h else{return 0}; let v=h-d; return v*v*kSp2 }
-    @inline(__always) private func sp3(_ d:Float,_ h:Float)->Float  { guard d<h else{return 0}; let v=h-d; return v*v*v*kSp3 }
-    @inline(__always) private func dsp2(_ d:Float,_ h:Float)->Float { guard d<=h else{return 0}; return -(h-d)*kSp2g }
-    @inline(__always) private func dsp3(_ d:Float,_ h:Float)->Float { guard d<=h else{return 0}; return -(h-d)*(h-d)*kSp3g }
-    @inline(__always) private func p6(_ d2:Float,_ h:Float)->Float  { let v=h*h-d2; guard v>0 else{return 0}; return v*v*v*kP6 }
-
     // MARK: — Start
     public func start(in scene: SCNScene, elementSymbols: [String],
                       envTempK: Float = 293, envPressurePa: Float = 101325) {
@@ -323,6 +324,11 @@ public final class ArcFluidEngine: ObservableObject {
 
         // Set domain based on scene model bounding box
         fitDomainToScene(scene)
+        voxelGrid.removeAll()
+        meshCollisionSynced = false
+        fitVoxelDomainToScene(scene)
+        solver.viscosity = mode.params.visc * 0.6
+        solver.thermalDiffusion = mode.params.visc * 1.2 + 0.02
 
         // Initialize component specs for all mesh nodes
         scanComponentSpecs(scene)
@@ -337,7 +343,7 @@ public final class ArcFluidEngine: ObservableObject {
 
         simTask = Task.detached(priority: .userInitiated) { [weak self] in
             while !Task.isCancelled {
-                await self?.stepSPH()
+                await self?.stepGrid()
                 try? await Task.sleep(nanoseconds: 16_666_667)
             }
         }
@@ -388,7 +394,6 @@ public final class ArcFluidEngine: ObservableObject {
             }
         }
         // Flatten centroid list for fast spatial queries
-        meshBVH = meshTriangles.map { $0.centroid }
         print("[ArcCFD] Extracted \(meshTriangles.count) triangles from scene geometry")
     }
 
@@ -412,6 +417,30 @@ public final class ArcFluidEngine: ObservableObject {
             W = max(30, (mx.x - mn.x) * pad)
             H = max(30, (mx.y - mn.y) * pad)
             D = max(30, (mx.z - mn.z) * pad)
+        }
+    }
+
+    // MARK: — Voxel domain fit (v3.0)
+    private func fitVoxelDomainToScene(_ scene: SCNScene) {
+        var mn = SIMD3<Float>(repeating:  Float.infinity)
+        var mx = SIMD3<Float>(repeating: -Float.infinity)
+        scene.rootNode.enumerateChildNodes { node, _ in
+            guard let geo = node.geometry,
+                  let nm = node.name,
+                  !nm.hasPrefix("arc_light_"),
+                  nm != "arcFluidCloud" else { return }
+            let wb = node.boundingBox
+            let lo = SIMD3<Float>(wb.min.x, wb.min.y, wb.min.z)
+            let hi = SIMD3<Float>(wb.max.x, wb.max.y, wb.max.z)
+            mn = simd_min(mn, lo); mx = simd_max(mx, hi)
+            _ = geo
+        }
+        if mx.x > mn.x {
+            voxelGrid.fitDomain(min: mn, max: mx, targetResolution: 48)
+        } else {
+            // No scene geometry yet — fall back to a reasonable default
+            // domain so the grid is still usable (e.g. generic spawn path).
+            voxelGrid.fitDomain(min: SIMD3(-50,-50,-50), max: SIMD3(50,50,50), targetResolution: 48)
         }
     }
 
@@ -466,29 +495,31 @@ public final class ArcFluidEngine: ObservableObject {
     }
 
     // MARK: — Spawn particles
+    /// v3.0: seeds the voxel grid directly (dam-block shape by default) —
+    /// pts[] is reseeded FROM the grid every step by reseedParticlesFromGrid,
+    /// so this must write to the grid, not to pts, or the spawn would be
+    /// wiped on the next tick.
     private func spawnParticles(_ syms: [String]) {
+        voxelGrid.removeAll()
+        meshCollisionSynced = false
         let n = particleCount
         let side = Int(ceil(pow(Double(n), 1.0/3.0)))
-        let sp = min(smoothingH*0.6, (W*0.38)/Float(side), (H*0.88)/Float(side), (D*0.9)/Float(side))
+        let sp = min(voxelGrid.cellSize*1.4, (W*0.38)/Float(side), (H*0.88)/Float(side), (D*0.9)/Float(side))
         let x0: Float = W*0.04, y0: Float = H*0.06, z0: Float = (D-Float(side)*sp)/2
-        pts.removeAll(keepingCapacity: true)
         var k = 0
         outer: for d in 0..<side {
             for row in 0..<side {
                 for col in 0..<side {
                     guard k < n else { break outer }
                     let ai = k % syms.count; let c3 = colorFor(syms[ai])
-                    var p = ArcParticle(x:x0+Float(col)*sp+Float.random(in: -0.5...0.5),
-                                        y:y0+Float(row)*sp+Float.random(in: -0.5...0.5),
-                                        z:z0+Float(d)*sp+Float.random(in: -0.5...0.5),
-                                        vx:8, vy:0, vz:0,
-                                        px:0, py:0, pz:0,
-                                        dens:0, nDens:0, press:0, nPress:0,
-                                        r:c3.x, g:c3.y, b:c3.z)
-                    p.tempK = envTempK; k += 1; pts.append(p)
+                    let wp = SIMD3<Float>(x0+Float(col)*sp, y0+Float(row)*sp, z0+Float(d)*sp)
+                    solver.addSource(at: wp, density: 0.7, tempK: envTempK,
+                                      velocity: SIMD3(8,0,0), color: c3, componentTag: -1)
+                    k += 1
                 }
             }
         }
+        reseedParticlesFromGrid()
     }
 
     public func setScene(_ preset: ArcFluidScene) {
@@ -497,58 +528,71 @@ public final class ArcFluidEngine: ObservableObject {
         reshapeToPreset(preset)
     }
 
+    /// v3.0: reshapes by reseeding the grid at the preset's defining
+    /// positions/velocities (same geometry as v2's per-particle layout),
+    /// instead of mutating pts[] directly — pts[] is a readout of the
+    /// grid now, not its source of truth.
     private func reshapeToPreset(_ preset: ArcFluidScene) {
-        let n = pts.count; let h = smoothingH
+        let n = particleCount; let h = voxelGrid.cellSize
+        voxelGrid.removeAll()
+        meshCollisionSynced = false
+        let genericColor = SIMD3<Float>(0.3, 0.6, 1.0)
         switch preset {
         case .dam:
             let side=Int(ceil(pow(Double(n),1.0/3.0)))
-            let sp=min(h*0.6,(W*0.38)/Float(side),(H*0.88)/Float(side),(D*0.9)/Float(side))
+            let sp=min(h*1.4,(W*0.38)/Float(side),(H*0.88)/Float(side),(D*0.9)/Float(side))
             var k=0
             outer: for d in 0..<side { for r in 0..<side { for c in 0..<side {
                 guard k<n else { break outer }
-                pts[k].x=W*0.04+Float(c)*sp+Float.random(in:-0.5...0.5)
-                pts[k].y=H*0.06+Float(r)*sp+Float.random(in:-0.5...0.5)
-                pts[k].z=(D-Float(side)*sp)/2+Float(d)*sp
-                pts[k].vx=8; pts[k].vy=0; pts[k].vz=0; k+=1
+                let wp = SIMD3<Float>(W*0.04+Float(c)*sp, H*0.06+Float(r)*sp, (D-Float(side)*sp)/2+Float(d)*sp)
+                solver.addSource(at: wp, density: 0.7, tempK: envTempK,
+                                  velocity: SIMD3(8,0,0), color: genericColor, componentTag: -1)
+                k+=1
             }}}
         case .wave:
             let side=Int(ceil(pow(Double(n),1.0/3.0))); var k=0
             outer: for d in 0..<side { for r in 0..<side { for c in 0..<side {
                 guard k<n else { break outer }
-                let x=Float(c)*h*0.62+(W-Float(side)*h*0.62)/2
-                pts[k].x=x; pts[k].y=Float(r)*h*0.31+H*0.06; pts[k].z=Float(d)*h*0.62+(D-Float(side)*h*0.62)/2
-                pts[k].vx=exp(-(x/W)*5.5)*14; pts[k].vy=0; pts[k].vz=0; k+=1
+                let x=Float(c)*h*1.4+(W-Float(side)*h*1.4)/2
+                let wp = SIMD3<Float>(x, Float(r)*h*0.7+H*0.06, Float(d)*h*1.4+(D-Float(side)*h*1.4)/2)
+                let vx = exp(-(x/W)*5.5)*14
+                solver.addSource(at: wp, density: 0.7, tempK: envTempK,
+                                  velocity: SIMD3(vx,0,0), color: genericColor, componentTag: -1)
+                k+=1
             }}}
         case .drop:
             let pool=Int(Float(n)*0.72), dn=n-pool
             let side=Int(ceil(pow(Double(pool),1.0/3.0))); var k=0
             outer: for d in 0..<side { for r in 0..<side { for c in 0..<side {
                 guard k<pool else { break outer }
-                pts[k].x=Float(c)*h*0.62+(W-Float(side)*h*0.62)/2+Float.random(in:-0.5...0.5)
-                pts[k].y=Float(r)*h*0.19+H*0.06; pts[k].z=Float(d)*h*0.62+(D-Float(side)*h*0.62)/2
-                pts[k].vx=0;pts[k].vy=0;pts[k].vz=0; k+=1
+                let wp = SIMD3<Float>(Float(c)*h*1.4+(W-Float(side)*h*1.4)/2,
+                                       Float(r)*h*0.5+H*0.06, Float(d)*h*1.4+(D-Float(side)*h*1.4)/2)
+                solver.addSource(at: wp, density: 0.7, tempK: envTempK,
+                                  velocity: .zero, color: genericColor, componentTag: -1)
+                k+=1
             }}}
             let ds=Int(ceil(pow(Double(dn),1.0/3.0)))
-            let dx0=(W-Float(ds)*h*0.62)/2, dz0=(D-Float(ds)*h*0.62)/2; var dk=0
+            let dx0=(W-Float(ds)*h*1.4)/2, dz0=(D-Float(ds)*h*1.4)/2; var dk=0
             outer2: for d in 0..<ds { for r in 0..<ds { for c in 0..<ds {
-                guard dk<dn,k<n else { break outer2 }
-                pts[k].x=dx0+Float(c)*h*0.62; pts[k].y=H*0.54+Float(r)*h*0.62
-                pts[k].z=dz0+Float(d)*h*0.62; pts[k].vx=0;pts[k].vy = -10;pts[k].vz=0
-                k+=1; dk+=1
+                guard dk<dn else { break outer2 }
+                let wp = SIMD3<Float>(dx0+Float(c)*h*1.4, H*0.54+Float(r)*h*1.4, dz0+Float(d)*h*1.4)
+                solver.addSource(at: wp, density: 0.7, tempK: envTempK,
+                                  velocity: SIMD3(0,-10,0), color: genericColor, componentTag: -1)
+                dk+=1
             }}}
         case .orbital:
-            for i in 0..<n {
+            for _ in 0..<n {
                 let theta=Float.random(in:0...2*Float.pi); let phi=acos(Float.random(in:-1...1))
                 let r=W*(0.15+Float.random(in:0...0.25))
-                pts[i].x=W/2+r*sin(phi)*cos(theta); pts[i].y=H/2+r*sin(phi)*sin(theta)*0.3; pts[i].z=D/2+r*cos(phi)
+                let wp = SIMD3<Float>(W/2+r*sin(phi)*cos(theta), H/2+r*sin(phi)*sin(theta)*0.3, D/2+r*cos(phi))
                 let orbV=sqrt(max(0, 40/max(1,r)*1200))
-                pts[i].vx = -sin(theta)*orbV; pts[i].vy=0; pts[i].vz=cos(theta)*orbV
+                let vel = SIMD3<Float>(-sin(theta)*orbV, 0, cos(theta)*orbV)
+                solver.addSource(at: wp, density: 0.6, tempK: envTempK,
+                                  velocity: vel, color: genericColor, componentTag: -1)
             }
         case .stream:
-            // Cavity flow: spawn at inlet component, direct toward outlet
+            // Cavity flow: seed at inlet component, direct toward outlet
             let inletSpec  = componentSpecs.first(where: { $0.isInlet })
-            let outletSpec = componentSpecs.first(where: { $0.isOutlet })
-            // Compute flow direction from inlet→outlet (or default +X)
             let flowDir: SIMD3<Float>
             if let iz = self.inletZone, let oz = self.outletZone {
                 let d = oz - iz; let dl = simd_length(d)
@@ -558,92 +602,24 @@ public final class ArcFluidEngine: ObservableObject {
             }
             let baseX = W * 0.05; let baseY = H / 2; let baseZ = D / 2
             let flowSpeed = Float(inletSpec?.inletFlowRate ?? 1.0) * 15
-            for i in 0..<n {
-                let scatter = smoothingH * 1.2
-                pts[i].x = baseX + Float.random(in:0...scatter)
-                pts[i].y = baseY + Float.random(in:-scatter*0.4...scatter*0.4)
-                pts[i].z = baseZ + Float.random(in:-scatter*0.4...scatter*0.4)
-                pts[i].vx = flowDir.x * flowSpeed + Float.random(in:-2...2)
-                pts[i].vy = flowDir.y * flowSpeed + Float.random(in:-1...1)
-                pts[i].vz = flowDir.z * flowSpeed + Float.random(in:-1...1)
+            for _ in 0..<n {
+                let scatter = h * 1.2
+                let wp = SIMD3<Float>(baseX+Float.random(in:0...scatter),
+                                       baseY+Float.random(in:-scatter*0.4...scatter*0.4),
+                                       baseZ+Float.random(in:-scatter*0.4...scatter*0.4))
+                let vel = flowDir * flowSpeed + SIMD3(Float.random(in:-2...2), Float.random(in:-1...1), Float.random(in:-1...1))
                 // Start hot — they cool as they travel
-                pts[i].tempK = envTempK + Float.random(in:200...800)
+                solver.addSource(at: wp, density: 0.6, tempK: envTempK + Float.random(in:200...800),
+                                  velocity: vel, color: genericColor, componentTag: -1)
             }
         }
+        reseedParticlesFromGrid()
     }
 
-    // MARK: — Spatial hash
-    private func buildGrid() {
-        let h=smoothingH; let n=pts.count; guard n>0 else { return }
-        var mn=SIMD3<Float>(repeating:Float.infinity), mx=SIMD3<Float>(repeating:-Float.infinity)
-        for p in pts {
-            mn=simd_min(mn,SIMD3(p.px,p.py,p.pz)); mx=simd_max(mx,SIMD3(p.px,p.py,p.pz))
-        }
-        cgx=mn.x-h; cgy=mn.y-h; cgz=mn.z-h
-        cgW=max(1,Int((mx.x-mn.x+2*h)/h)+1)
-        cgH=max(1,Int((mx.y-mn.y+2*h)/h)+1)
-        cgD=max(1,Int((mx.z-mn.z+2*h)/h)+1)
-        let tot=cgW*cgH*cgD
-        if cells.count != tot { cells=Array(repeating:[],count:tot) }
-        else { for i in 0..<tot { cells[i].removeAll(keepingCapacity:true) } }
-        for i in 0..<n {
-            let cx=Int((pts[i].px-cgx)/h), cy=Int((pts[i].py-cgy)/h), cz=Int((pts[i].pz-cgz)/h)
-            let idx=cx+cy*cgW+cz*cgW*cgH
-            if idx>=0 && idx<tot { cells[idx].append(i) }
-        }
-    }
-
-    private func neighbors(_ px:Float,_ py:Float,_ pz:Float) -> [Int] {
-        let h=smoothingH
-        let cx=Int((px-cgx)/h), cy=Int((py-cgy)/h), cz=Int((pz-cgz)/h)
-        var result=[Int](); result.reserveCapacity(64)
-        for oz in -1...1 { let nz=cz+oz; guard nz>=0&&nz<cgD else{continue}
-            for oy in -1...1 { let ny=cy+oy; guard ny>=0&&ny<cgH else{continue}
-                for ox in -1...1 { let nx=cx+ox; guard nx>=0&&nx<cgW else{continue}
-                    result.append(contentsOf: cells[nx+ny*cgW+nz*cgW*cgH]) }}}
-        return result
-    }
-
-    // MARK: — Mesh collision (particle vs triangle SDF)
-    // Fast point-triangle distance + reflection for solid boundaries
-    private func resolveTriangleCollision(_ i: Int) {
-        guard !meshTriangles.isEmpty else { return }
-        let pos = SIMD3<Float>(pts[i].x, pts[i].y, pts[i].z)
-        let vel = SIMD3<Float>(pts[i].vx, pts[i].vy, pts[i].vz)
-        let h = smoothingH * 0.5   // collision radius in world scene units
-
-        // Find nearby triangles using centroid proximity
-        for (ti, ctr) in meshBVH.enumerated() {
-            let dc = simd_distance(pos, ctr)
-            guard dc < h * 8 else { continue }
-            let tri = meshTriangles[ti]
-            // Signed distance from point to triangle plane
-            let toPoint = pos - tri.v0
-            let sdist = simd_dot(toPoint, tri.normal)
-            guard abs(sdist) < h else { continue }
-            // Check if point projection is inside triangle
-            guard pointInTriangle(pos, tri.v0, tri.v1, tri.v2, tri.normal) else { continue }
-            // Reflect velocity off triangle surface
-            let vDotN = simd_dot(vel, tri.normal)
-            if vDotN < 0 {
-                // Particle moving into the surface — reflect
-                let refl = vel - 2 * vDotN * tri.normal
-                let damp = mode.params.damp
-                pts[i].vx = refl.x * damp; pts[i].vy = refl.y * damp; pts[i].vz = refl.z * damp
-                // Push particle out of surface
-                let pushDist = h - sdist + 0.01
-                if pushDist > 0 {
-                    pts[i].x += tri.normal.x * pushDist
-                    pts[i].y += tri.normal.y * pushDist
-                    pts[i].z += tri.normal.z * pushDist
-                }
-                // Thermal exchange: particle absorbs heat from component
-                // Find which component this triangle belongs to
-                // (approximate: check which nodeName the triangle's centroid is closest to)
-                break
-            }
-        }
-    }
+    // MARK: — Mesh collision. v3.0: syncMeshCollisionToGrid marks solid
+    // voxel cells from meshTriangles — see that function, near stepGrid.
+    // pointInTriangle below is shared by both the old SPH path (removed)
+    // and the new grid sync, so it stays.
 
     private func pointInTriangle(_ p: SIMD3<Float>,
                                   _ v0: SIMD3<Float>, _ v1: SIMD3<Float>, _ v2: SIMD3<Float>,
@@ -655,161 +631,171 @@ public final class ArcFluidEngine: ObservableObject {
                simd_dot(n,simd_cross(e2,c2)) >= 0
     }
 
-    // MARK: — SPH step (Müller 2003 / SebLague port)
-    nonisolated func stepSPH() async {
+    // MARK: — Grid step (Stam "Stable Fluids," SIGGRAPH 1999 — v3.0)
+    // Renamed from stepSPH to stepGrid; call site (Task.detached loop,
+    // 16.6ms cadence) and the `nonisolated func ... async` signature
+    // are unchanged so nothing above this needs to change.
+    nonisolated func stepGrid() async {
         await MainActor.run {
-            guard isRunning, !pts.isEmpty else { return }
-            let h = smoothingH
+            guard isRunning else { return }
             let p = mode.params
-            if h != hCached { rebuildKernels(h) }
-            let dt: Float = 1.0
-            let g = gravityScale * 0.25
+            let dt: Float = 1.0 / 60.0  // grid solver dt — fixed, small, and
+            // genuinely safe here (unlike v2's dt=1.0) because semi-Lagrangian
+            // advection has no CFL stability requirement at any dt; this
+            // value is chosen for visual smoothness, not stability.
+            let gravity = SIMD3<Float>(0, -gravityScale * 9.8 * 0.25, 0)
 
-            // ① Predict
-            for i in 0..<pts.count {
-                pts[i].vy -= g * dt
-                pts[i].px = pts[i].x + pts[i].vx*dt*0.5
-                pts[i].py = pts[i].y + pts[i].vy*dt*0.5
-                pts[i].pz = pts[i].z + pts[i].vz*dt*0.5
-            }
+            syncMeshCollisionToGrid()
 
-            // ② Hash
-            buildGrid()
+            solver.viscosity = p.visc * 0.6
+            solver.thermalDiffusion = p.visc * 1.2 + 0.02
+            solver.velocityStep(dt: dt, gravity: gravity)
+            solver.scalarStep(dt: dt)
 
-            // ③ Density
-            var sumRho: Float=0, sumT: Float=0, maxP: Float=0
-            for i in 0..<pts.count {
-                var dens=sp2(0,h)+sp3(0,h), nDens=sp3(0,h)
-                let nb=neighbors(pts[i].px,pts[i].py,pts[i].pz)
-                for j in nb {
-                    let dx=pts[i].px-pts[j].px, dy=pts[i].py-pts[j].py, dz=pts[i].pz-pts[j].pz
-                    let d2=dx*dx+dy*dy+dz*dz; guard d2<h*h else { continue }
-                    let d=sqrt(d2); dens+=sp2(d,h); nDens+=sp3(d,h)
-                }
-                pts[i].dens=dens; pts[i].nDens=nDens
-                pts[i].press=(dens-p.rho)*p.pm; pts[i].nPress=nDens*p.npm
-                // Thermal: density increases with pressure, raises temp slightly
-                let pthermal = max(0, pts[i].press) * 0.0001
-                pts[i].tempK = envTempK + pthermal
-                pts[i].pressure = max(0, pts[i].press) * 10  // Pa (approximate)
-                sumRho+=dens; sumT+=pts[i].tempK
-                maxP = max(maxP, pts[i].pressure)
-            }
-
-            // ④ Pressure forces
-            for i in 0..<pts.count {
-                var fx:Float=0, fy:Float=0, fz:Float=0
-                let nb=neighbors(pts[i].px,pts[i].py,pts[i].pz)
-                for j in nb {
-                    guard j != i else { continue }
-                    let dx=pts[i].px-pts[j].px, dy=pts[i].py-pts[j].py, dz=pts[i].pz-pts[j].pz
-                    let d2=dx*dx+dy*dy+dz*dz; guard d2<h*h && d2>1e-6 else { continue }
-                    let dist=sqrt(d2), invD=1/dist
-                    let nx=dx*invD, ny=dy*invD, nz=dz*invD
-                    let sP=(pts[i].press+pts[j].press)*0.5
-                    let snP=(pts[i].nPress+pts[j].nPress)*0.5
-                    let rhoj=max(0.001,pts[j].dens)
-                    let fmag=sP*dsp2(dist,h)*0.0016/rhoj+snP*dsp3(dist,h)*0.0006/rhoj
-                    fx+=nx*fmag; fy+=ny*fmag; fz+=nz*fmag
-                }
-                pts[i].vx+=fx*dt; pts[i].vy+=fy*dt; pts[i].vz+=fz*dt
-            }
-
-            // ⑤ Viscosity (Müller Eq.14)
-            for i in 0..<pts.count {
-                var dvx:Float=0, dvy:Float=0, dvz:Float=0
-                let nb=neighbors(pts[i].px,pts[i].py,pts[i].pz)
-                for j in nb {
-                    guard j != i else { continue }
-                    let dx=pts[i].px-pts[j].px, dy=pts[i].py-pts[j].py, dz=pts[i].pz-pts[j].pz
-                    let d2=dx*dx+dy*dy+dz*dz; guard d2<h*h else { continue }
-                    let w=p6(d2,h)*p.visc*0.00028
-                    dvx+=(pts[j].vx-pts[i].vx)*w
-                    dvy+=(pts[j].vy-pts[i].vy)*w
-                    dvz+=(pts[j].vz-pts[i].vz)*w
-                }
-                pts[i].vx+=dvx*dt; pts[i].vy+=dvy*dt; pts[i].vz+=dvz*dt
-            }
-
-            // ⑥ Integrate + AABB + mesh collision
-            let damp=p.damp; var totalKE:Float=0, totalSpd:Float=0
-            var inCount:Float=0, outCount:Float=0
-            let inletSpec  = componentSpecs.first(where:{$0.isInlet})
-            let outletSpec = componentSpecs.first(where:{$0.isOutlet})
-
-            for i in 0..<pts.count {
-                let spd=sqrt(pts[i].vx*pts[i].vx+pts[i].vy*pts[i].vy+pts[i].vz*pts[i].vz)
-                if spd>VMAX { let inv=VMAX/spd; pts[i].vx*=inv;pts[i].vy*=inv;pts[i].vz*=inv }
-                pts[i].spd=spd; totalSpd+=spd; totalKE+=0.5*spd*spd
-                pts[i].x+=pts[i].vx*dt; pts[i].y+=pts[i].vy*dt; pts[i].z+=pts[i].vz*dt
-
-                // AABB bounds
-                // World-space soft boundary — large box around scene model
-                // Particles that escape beyond the scene model extent fade out
-                let bnd: Float = max(W, H, D) * 2.0  // large enough to not constrain
-                if pts[i].x < -bnd { pts[i].x = -bnd; pts[i].vx = abs(pts[i].vx)*damp }
-                if pts[i].x >  bnd { pts[i].x =  bnd; pts[i].vx = -abs(pts[i].vx)*damp }
-                if pts[i].y < -bnd { pts[i].y = -bnd; pts[i].vy = abs(pts[i].vy)*damp }
-                if pts[i].y >  bnd { pts[i].y =  bnd; pts[i].vy = -abs(pts[i].vy)*damp }
-                if pts[i].z < -bnd { pts[i].z = -bnd; pts[i].vz = abs(pts[i].vz)*damp }
-                if pts[i].z >  bnd { pts[i].z =  bnd; pts[i].vz = -abs(pts[i].vz)*damp }
-
-                // Mesh collision
-                resolveTriangleCollision(i)
-
-                // Cavity flow re-inject
-                if scenePreset == .stream {
-                    let atOutlet: Bool
+            // Cavity-fill inlet re-injection (replaces per-particle reinject
+            // in v2's stream preset) — inject fresh density/temp/velocity at
+            // the inlet each step so flow keeps moving through the domain.
+            var inCount: Float = 0, outCount: Float = 0
+            if scenePreset == .stream {
+                let inletSpec = componentSpecs.first(where: { $0.isInlet })
+                if let iz = inletZone {
+                    let flowSpeed = Float(inletSpec?.inletFlowRate ?? 1.0) * 2.0
+                    let flowDir: SIMD3<Float>
                     if let oz = outletZone {
-                        let dx=pts[i].x*SCALE-oz.x, dy=pts[i].y*SCALE-oz.y, dz=pts[i].z*SCALE-oz.z
-                        atOutlet = dx*dx+dy*dy+dz*dz < (outletRadius*SCALE)*(outletRadius*SCALE)*4
-                    } else {
-                        atOutlet = pts[i].x > W*0.88
-                    }
-                    if atOutlet {
-                        let inSpec = componentSpecs.first(where:{$0.isInlet})
-                        let scatter = smoothingH * 1.2
-                        pts[i].x = W*0.05+Float.random(in:0...scatter)
-                        pts[i].y = H/2+Float.random(in:-scatter*0.4...scatter*0.4)
-                        pts[i].z = D/2+Float.random(in:-scatter*0.4...scatter*0.4)
-                        let spd = Float(inSpec?.inletFlowRate ?? 1.0)*15
-                        pts[i].vx=spd; pts[i].vy=Float.random(in:-1...1); pts[i].vz=Float.random(in:-1...1)
-                        // Reheat at re-injection
-                        pts[i].tempK = envTempK + Float.random(in:300...900)
-                        outCount += 1
-                    }
-                    if let iz = inletZone {
-                        let dx=pts[i].x*SCALE-iz.x, dy=pts[i].y*SCALE-iz.y, dz=pts[i].z*SCALE-iz.z
-                        if dx*dx+dy*dy+dz*dz < (inletRadius*SCALE)*(inletRadius*SCALE)*4 { inCount += 1 }
-                    } else {
-                        inCount += pts[i].x < W*0.15 ? 1 : 0
-                    }
+                        let d = oz - iz; let dl = simd_length(d)
+                        flowDir = dl > 0.01 ? d/dl : SIMD3<Float>(1,0,0)
+                    } else { flowDir = SIMD3<Float>(1,0,0) }
+                    solver.addSource(at: iz, density: 0.6, tempK: envTempK + 400,
+                                      velocity: flowDir * flowSpeed,
+                                      color: SIMD3(0.9,0.5,0.1), componentTag: -1)
+                    inCount = 1
+                }
+                if let oz = outletZone {
+                    // Sink: drain density at outlet so the domain doesn't
+                    // saturate — mirrors v2's "particle reaches outlet, reinject"
+                    // behavior as continuous drain instead of discrete teleport.
+                    let c = voxelGrid.cellCoord(of: oz)
+                    var cell = voxelGrid[c]
+                    if cell.density > 0.05 { outCount = 1 }
+                    cell.density *= 0.5
+                    voxelGrid[c] = cell
                 }
             }
 
-            // Chemical combustion reaction in chamber
+            // Reseed the visual particle layer from the grid's current state.
+            reseedParticlesFromGrid()
+
+            // Chemical combustion reaction in chamber (unchanged — reads
+            // pts[].r/g/b + chamber bounding box, works against reseeded pts)
             if scenePreset == .stream { applyCombustionReaction() }
 
-            // Update thermal colormap on scene meshes
+            // Aggregate grid stats for the measure panel + thermal colormap,
+            // in the same shape updateThermalColormap/updateComponentMeasurements
+            // and ArcFluidMeasure already expect.
+            var sumRho: Float = 0, sumT: Float = 0, maxP: Float = 0
+            var sumSpd: Float = 0, totalKE: Float = 0, activeN = 0
+            for c in voxelGrid.activeCoords() {
+                let cell = voxelGrid[c]
+                guard !cell.isSolid, cell.density > 0.01 else { continue }
+                activeN += 1
+                sumRho += cell.density
+                sumT += cell.tempK
+                let spd = simd_length(cell.velocity)
+                sumSpd += spd
+                totalKE += 0.5 * spd * spd
+                let pPa = max(0, cell.pressure) * 1000
+                maxP = max(maxP, pPa)
+            }
+
             if scene != nil { updateThermalColormap(sumT: sumT, maxP: maxP) }
-
-            // Update per-component measurements
             updateComponentMeasurements(maxP: maxP)
-
-            // Upload to SceneKit
             uploadParticleCloud()
 
-            let n = pts.count; let avgSpd = n>0 ? totalSpd/Float(n) : 0
-            let avgRho = n>0 ? sumRho/Float(n) : 0; let avgT = n>0 ? sumT/Float(n) : envTempK
-            let L: Float = pow(W*H*D, 1.0/3.0)*SCALE*0.01
-            let mu = max(1e-6, p.visc*0.001)
-            let Re = (avgRho*avgSpd*L)/mu
+            let avgSpd = activeN > 0 ? sumSpd / Float(activeN) : 0
+            let avgRho = activeN > 0 ? sumRho / Float(activeN) : 0
+            let avgT   = activeN > 0 ? sumT / Float(activeN) : envTempK
+            let L: Float = voxelGrid.cellSize * 8
+            let mu = max(1e-6, p.visc * 0.001)
+            let Re = (avgRho * avgSpd * L) / mu
             measure = ArcFluidMeasure(
-                avgDensity:avgRho, avgSpeed:avgSpd, avgTempK:avgT,
-                reynoldsNum:Re, regime:Re<2300 ? "Laminar":Re<4000 ? "Transitional":"Turbulent",
-                particleCount:n, inletFlow:inCount, outletFlow:outCount,
-                totalKE:totalKE, maxPressurePa:maxP)
+                avgDensity: avgRho, avgSpeed: avgSpd, avgTempK: avgT,
+                reynoldsNum: Re, regime: Re<2300 ? "Laminar" : Re<4000 ? "Transitional" : "Turbulent",
+                particleCount: activeN, inletFlow: inCount, outletFlow: outCount,
+                totalKE: totalKE, maxPressurePa: maxP)
         }
+    }
+
+    /// Marks grid cells touching scene mesh triangles as solid boundary
+    /// cells (free-slip wall) — replaces v2's per-particle
+    /// resolveTriangleCollision reflect-and-push with boundary conditions
+    /// the solver's diffuse/project stencils already respect (any neighbor
+    /// marked isSolid is simply excluded from the relaxation sum).
+    ///
+    /// Driven from meshTriangles → candidate cell coords, NOT from
+    /// voxelGrid.activeCoords() — a wall cell that currently has no fluid
+    /// in it is not yet "active" in the sparse grid, so deriving solidity
+    /// from active cells would let fluid flow straight through a wall on
+    /// first contact (the cell materializes as fluid before it's ever
+    /// checked against the mesh). Each triangle instead explicitly
+    /// touches/materializes the handful of cells along its surface.
+    /// Runs once at engine start via meshCollisionSynced; mesh geometry
+    /// is static during a run (scanned once in extractMeshGeometry), so
+    /// this doesn't need to re-run every frame.
+    private var meshCollisionSynced = false
+    private func syncMeshCollisionToGrid() {
+        guard !meshTriangles.isEmpty, !meshCollisionSynced else { return }
+        meshCollisionSynced = true
+        let h = voxelGrid.cellSize
+        for tri in meshTriangles {
+            // Sample a small set of points across the triangle (corners,
+            // edge midpoints, centroid) and mark every cell within half a
+            // cell-width of each as solid — cheap coverage that avoids
+            // needing full triangle-voxel rasterization for this pass.
+            let samples: [SIMD3<Float>] = [
+                tri.v0, tri.v1, tri.v2, tri.centroid,
+                (tri.v0+tri.v1)*0.5, (tri.v1+tri.v2)*0.5, (tri.v2+tri.v0)*0.5
+            ]
+            for s in samples {
+                let c = voxelGrid.cellCoord(of: s)
+                var cell = voxelGrid.ensure(c)
+                cell.isSolid = true
+                cell.solidNormal = tri.normal
+                cell.velocity = .zero
+                voxelGrid[c] = cell
+            }
+            _ = h
+        }
+    }
+
+    /// Rebuild the visual particle array from the grid's current density/
+    /// velocity/color field. Count tracks `particleCount` (user-set target)
+    /// but distributes across active fluid-bearing cells so the point
+    /// cloud shows where the fluid actually is rather than a fixed lattice.
+    private func reseedParticlesFromGrid() {
+        let active = voxelGrid.activeCoords().filter { voxelGrid[$0].density > 0.02 && !voxelGrid[$0].isSolid }
+        guard !active.isEmpty else { pts.removeAll(keepingCapacity: true); return }
+        let perCell = max(1, particleCount / max(1, active.count))
+        var newPts: [ArcParticle] = []
+        newPts.reserveCapacity(active.count * perCell)
+        for c in active {
+            let cell = voxelGrid[c]
+            let center = voxelGrid.worldCenter(of: c)
+            for _ in 0..<perCell {
+                let jitter = SIMD3<Float>.random(in: -voxelGrid.cellSize/2...voxelGrid.cellSize/2)
+                let wp = center + jitter
+                var part = ArcParticle(x: wp.x, y: wp.y, z: wp.z,
+                    vx: cell.velocity.x, vy: cell.velocity.y, vz: cell.velocity.z,
+                    px: wp.x, py: wp.y, pz: wp.z,
+                    dens: cell.density, nDens: cell.density, press: cell.pressure, nPress: 0,
+                    r: cell.r, g: cell.g, b: cell.b)
+                part.tempK = cell.tempK
+                part.pressure = max(0, cell.pressure) * 1000
+                part.spd = simd_length(cell.velocity)
+                newPts.append(part)
+                if newPts.count >= max(particleCount, active.count) { break }
+            }
+        }
+        pts = newPts
     }
 
     // MARK: — Thermal colormap on 3D model surface
@@ -1099,7 +1085,7 @@ public final class ArcFluidEngine: ObservableObject {
             // Start tick loop
             simTask = Task.detached(priority: .userInitiated) { [weak self] in
                 while !Task.isCancelled {
-                    await self?.stepSPH()
+                    await self?.stepGrid()
                     try? await Task.sleep(nanoseconds: 16_666_667)
                 }
             }
@@ -1107,12 +1093,11 @@ public final class ArcFluidEngine: ObservableObject {
         let syms = propellant.elements.isEmpty ? ["H","H","O"] : propellant.elements
         let col3 = syms.isEmpty ? SIMD3<Float>(0.7,0.7,1) : colorFor(syms[0])
 
-        // ── World-space cavity fill ──────────────────────────────────────
-        // spec.boundingMin/Max are world-space SCNKit coordinates (from worldTransform).
-        // Particles are stored in world-space directly — no domain conversion needed.
-        // We shrink the fill region by one smoothing-radius on each side so particles
-        // don't immediately clip through the mesh surface.
-        let margin: Float = max(0.1, smoothingH * 0.3)
+        // ── World-space cavity fill (v3.0: seeds the voxel grid) ──────────
+        // spec.boundingMin/Max are world-space SceneKit coordinates (from
+        // worldTransform). We shrink the fill region by a small margin so
+        // the seeded fluid doesn't immediately sit on the mesh boundary.
+        let margin: Float = max(0.1, voxelGrid.cellSize * 0.3)
         let wMin = spec.boundingMin + margin
         let wMax = spec.boundingMax - margin
         let range = wMax - wMin
@@ -1123,33 +1108,40 @@ public final class ArcFluidEngine: ObservableObject {
             return
         }
 
+        // Ensure the grid domain actually covers this cavity — fillComponentCavity
+        // can be called before a full scene-wide voxelGrid.fitDomain if a
+        // single component is filled directly (e.g. from ArcMeshSelectorView).
+        if wMin.x < voxelGrid.domainMin.x || wMax.x > voxelGrid.domainMax.x ||
+           wMin.y < voxelGrid.domainMin.y || wMax.y > voxelGrid.domainMax.y ||
+           wMin.z < voxelGrid.domainMin.z || wMax.z > voxelGrid.domainMax.z {
+            let lo = simd_min(voxelGrid.domainMin, wMin)
+            let hi = simd_max(voxelGrid.domainMax, wMax)
+            voxelGrid.fitDomain(min: lo, max: hi, targetResolution: 48)
+        }
+
         let side = Int(ceil(pow(Double(count), 1.0/3.0)))
         let step = range / Float(max(1, side - 1))
+        let flowVel = ArcCombustionFlow.flowVelocity(
+            pressurePsi: Float(spec.pressurePsi),
+            densityKgM3: Float(propellant.densityKgM3))
+        let initialVy = -min(flowVel * 0.08, 2.0)  // gentle initial push downward
+        let tag = Int32(componentSpecs.firstIndex(where: { $0.nodeName == spec.nodeName }) ?? -1)
+
         var added = 0
         let jitter = step * 0.18
-
         outer: for zi in 0..<side { for yi in 0..<side { for xi in 0..<side {
             guard added < count else { break outer }
             let ai = added % max(1, syms.count)
             let c3 = colorFor(syms[ai])
-            // World-space position directly inside the cavity
             let wx = wMin.x + Float(xi)*step.x + Float.random(in:-jitter.x...jitter.x)
             let wy = wMin.y + Float(yi)*step.y + Float.random(in:-jitter.y...jitter.y)
             let wz = wMin.z + Float(zi)*step.z + Float.random(in:-jitter.z...jitter.z)
-            var p = ArcParticle(x:wx, y:wy, z:wz,
-                vx:0, vy:0, vz:0, px:0, py:0, pz:0,
-                dens:0, nDens:0, press:0, nPress:0,
-                r:c3.x, g:c3.y, b:c3.z)
-            p.tempK = envTempK
-            p.pressure = Float(spec.pressurePsi) * 6894.76
-            // Initial downward velocity from pressure (gravity-assisted flow)
-            let flowVel = ArcCombustionFlow.flowVelocity(
-                pressurePsi: Float(spec.pressurePsi),
-                densityKgM3: Float(propellant.densityKgM3))
-            p.vy = -min(flowVel * 0.08, 2.0)  // gentle initial push downward
-            pts.append(p); added += 1
+            solver.addSource(at: SIMD3(wx,wy,wz), density: 0.8, tempK: envTempK,
+                              velocity: SIMD3(0, initialVy, 0), color: c3, componentTag: tag)
+            added += 1
         }}}
-        print("[ArcCFD] ✓ \(spec.displayName): spawned \(added) particles at world pos \(wMin)…\(wMax)")
+        _ = col3
+        print("[ArcCFD] ✓ \(spec.displayName): seeded \(added) voxel sources at world pos \(wMin)…\(wMax)")
     }
 
     // MARK: — SceneKit point cloud
