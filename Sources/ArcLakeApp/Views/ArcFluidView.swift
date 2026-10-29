@@ -308,6 +308,40 @@ struct ArcFluidView: View {
                     .multilineTextAlignment(.center)
             }
 
+            // Auto-seal joints (geometric intersection + through-cavity test)
+            card("JOINTS") {
+                VStack(alignment:.leading, spacing:6) {
+                    Toggle(isOn: $eng.autoSealEnabled) { mono("Auto-seal intersecting parts") }
+                        .tint(.green)
+                    if eng.joints.isEmpty {
+                        Text(eng.sealStatus.isEmpty
+                             ? "Starts with the simulation: overlapping parts whose hollow interiors connect become sealed fluid links."
+                             : eng.sealStatus)
+                            .font(.system(size:7,design:.monospaced))
+                            .foregroundColor(.white.opacity(0.35))
+                    } else {
+                        ForEach(eng.joints) { j in
+                            HStack(alignment:.top, spacing:5) {
+                                Text(j.sealed ? "✓" : "✕")
+                                    .font(.system(size:9,weight:.bold,design:.monospaced))
+                                    .foregroundColor(j.sealed ? .green : .red)
+                                VStack(alignment:.leading, spacing:1) {
+                                    Text("\(jointName(j.partA)) ↔ \(jointName(j.partB))")
+                                        .font(.system(size:8,design:.monospaced))
+                                        .foregroundColor(.white.opacity(0.8))
+                                    Text(j.sealed ? "sealed · auto, from mesh overlap" : "non-flowing · overlap, no fluid path")
+                                        .font(.system(size:7,design:.monospaced))
+                                        .foregroundColor(.white.opacity(0.4))
+                                }
+                            }
+                        }
+                        Text(eng.sealStatus)
+                            .font(.system(size:7,design:.monospaced))
+                            .foregroundColor(.white.opacity(0.3))
+                    }
+                }
+            }
+
             // Simulation parameters
             card("PARAMETERS") {
                 VStack(spacing:8) {
@@ -775,6 +809,10 @@ struct ArcFluidView: View {
     }
 
     // MARK: — Helpers
+    private func jointName(_ node: String) -> String {
+        eng.componentSpecs.first(where:{ $0.nodeName == node })?.displayName ?? node
+    }
+
     private func card<C:View>(_ title:String, @ViewBuilder content:()->C) -> some View {
         VStack(alignment:.leading, spacing:8) {
             Text(title).font(.system(size:8,weight:.bold,design:.monospaced))

@@ -316,6 +316,23 @@ public final class ArcFluidEngine: ObservableObject {
 
     // Mesh collision geometry extracted from imported models
     private var meshTriangles: [ArcTriangle] = []
+    /// Parallel to meshTriangles: index into sealPartNames of the part each
+    /// triangle belongs to (auto-seal ownership; see ArcAutoSeal.swift).
+    private var meshTriangleOwner: [Int32] = []
+    private var sealPartNames: [String] = []
+    private var sealRawVerts: [[SIMD3<Float>]] = []
+    /// Per solid cell: bitmask of owning part indices (parts 0..<64).
+    private var cellOwners: [SIMD3<Int32>: UInt64] = [:]
+
+    // MARK: — Auto-seal (geometric joint detection, step 1)
+    /// Detected joints (sealed = through-cavity link with implied cut-out;
+    /// not sealed = overlapping meshes with no fluid path, non-flowing).
+    @Published public var joints: [ArcSealJoint] = []
+    @Published public var autoSealEnabled = true
+    @Published public var sealStatus = ""
+    private var sealParts: [ArcSealPart] = []
+    private var sealGeneration = 0
+    private var sealApplied = false
 
     // SceneKit node refs
     public weak var scene: SCNScene? = nil
@@ -363,6 +380,7 @@ public final class ArcFluidEngine: ObservableObject {
 
         // Extract mesh geometry for collision
         extractMeshGeometry(from: scene)
+        beginAutoSeal()
 
         // Set domain based on scene model bounding box
         fitDomainToScene(scene)
@@ -395,6 +413,7 @@ public final class ArcFluidEngine: ObservableObject {
     public func stop() {
         simTask?.cancel(); simTask = nil
         isRunning = false
+        sealGeneration += 1   // invalidate any in-flight joint detection
         cloudNode?.removeFromParentNode(); cloudNode = nil
         volumetricNode?.removeFromParentNode(); volumetricNode = nil
         // Remove thermal coloring from all mesh nodes
@@ -408,11 +427,23 @@ public final class ArcFluidEngine: ObservableObject {
     // MARK: — Mesh geometry extraction for collision
     private func extractMeshGeometry(from scene: SCNScene) {
         meshTriangles.removeAll()
+        meshTriangleOwner.removeAll()
+        sealPartNames.removeAll()
+        sealRawVerts.removeAll()
         scene.rootNode.enumerateChildNodes { node, _ in
             guard let geo = node.geometry,
                   let name = node.name,
                   !name.hasPrefix("arc_light_"),
-                  name != "arcFluidCloud" else { return }
+                  name != "arcFluidCloud",
+                  name != "arcVolumetricFluid" else { return }
+            let ownerIdx: Int
+            if let existing = self.sealPartNames.firstIndex(of: name) {
+                ownerIdx = existing
+            } else {
+                self.sealPartNames.append(name)
+                self.sealRawVerts.append([])
+                ownerIdx = self.sealPartNames.count - 1
+            }
             let worldTx = node.worldTransform
             guard let posSrc = geo.sources(for: .vertex).first else { return }
             let verts = self.extractFloat3(from: posSrc)
@@ -434,6 +465,8 @@ public final class ArcFluidEngine: ObservableObject {
                     n /= nlen
                     let ctr = (v0+v1+v2)/3
                     self.meshTriangles.append(ArcTriangle(v0:v0,v1:v1,v2:v2,normal:n,centroid:ctr))
+                    self.meshTriangleOwner.append(Int32(ownerIdx))
+                    self.sealRawVerts[ownerIdx].append(contentsOf: [v0, v1, v2])
                 }
             }
         }
@@ -970,6 +1003,8 @@ public final class ArcFluidEngine: ObservableObject {
     private func syncMeshCollisionToGrid() {
         guard !meshTriangles.isEmpty, !meshCollisionSynced else { return }
         meshCollisionSynced = true
+        sealApplied = false
+        cellOwners.removeAll(keepingCapacity: true)
         let h = voxelGrid.cellSize
 
         // Triangle-density histogram, keyed by the same cell key scheme
@@ -979,7 +1014,12 @@ public final class ArcFluidEngine: ObservableObject {
         // find tight-passage cells during this one-time sync pass.
         var triangleDensity: [SIMD3<Int32>: Int] = [:]
 
-        for tri in meshTriangles {
+        for (triIdx, tri) in meshTriangles.enumerated() {
+            let ownerBit: UInt64 = {
+                guard triIdx < meshTriangleOwner.count else { return 0 }
+                let o = Int(meshTriangleOwner[triIdx])
+                return o < 64 ? (UInt64(1) << UInt64(o)) : 0
+            }()
             // Triangle bounding box → cell-coordinate range.
             let bboxMin = simd_min(tri.v0, simd_min(tri.v1, tri.v2))
             let bboxMax = simd_max(tri.v0, simd_max(tri.v1, tri.v2))
@@ -1011,6 +1051,7 @@ public final class ArcFluidEngine: ObservableObject {
                         voxelGrid[c] = cell
 
                         triangleDensity[c, default: 0] += 1
+                        cellOwners[c, default: 0] |= ownerBit
                     }
                 }
             }
@@ -1028,6 +1069,95 @@ public final class ArcFluidEngine: ObservableObject {
         if tightPassageCount > 0 {
             print("[ArcCFD] mesh sync: \(tightPassageCount) tight-passage cell(s) got fine-boundary refinement (\(voxelGrid.fineSolidCellCount) fine sub-cells total)")
         }
+        applySealCuts()
+    }
+
+    // MARK: — Auto-seal detection + implied boolean cut-out
+
+    /// Kick off joint detection on a background task. Result lands in
+    /// `joints`; the grid cut-out is applied as soon as both the result and
+    /// the mesh-collision sync are available (whichever finishes last).
+    private func beginAutoSeal() {
+        sealGeneration += 1
+        joints = []
+        sealParts = []
+        sealApplied = false
+        guard autoSealEnabled, sealPartNames.count >= 2 else {
+            sealStatus = autoSealEnabled ? "No overlapping parts" : "Auto-seal off"
+            return
+        }
+        sealStatus = "Detecting joints…"
+        let gen = sealGeneration
+        let names = sealPartNames
+        let raw = sealRawVerts
+        Task.detached(priority: .utility) { [weak self] in
+            var parts: [ArcSealPart] = []
+            for (i, nm) in names.enumerated() {
+                parts.append(ArcSealPart(name: nm, verts: raw[i]))
+            }
+            let found = ArcAutoSeal.detect(parts: parts)
+            await MainActor.run {
+                self?.finishAutoSeal(parts: parts, joints: found, generation: gen)
+            }
+        }
+    }
+
+    private func finishAutoSeal(parts: [ArcSealPart], joints found: [ArcSealJoint], generation: Int) {
+        guard generation == sealGeneration else { return }
+        sealParts = parts
+        joints = found
+        let nSealed = found.filter { $0.sealed }.count
+        sealStatus = found.isEmpty ? "No overlapping parts"
+            : "\(nSealed) sealed · \(found.count - nSealed) non-flowing"
+        applySealCuts()
+    }
+
+    /// Implied boolean cut: for each sealed joint, clear the receiver's
+    /// solid wall cells whose centers lie inside the other part's bore.
+    private func applySealCuts() {
+        guard !sealApplied, meshCollisionSynced, !joints.isEmpty, !sealParts.isEmpty else { return }
+        sealApplied = true
+        var cleared = 0
+        for j in joints where j.sealed {
+            guard let recvIdx = sealPartNames.firstIndex(of: j.receiver), recvIdx < 64,
+                  let other = sealParts.first(where: { $0.name == (j.receiver == j.partA ? j.partB : j.partA) })
+            else { continue }
+            let recvBit = UInt64(1) << UInt64(recvIdx)
+            let cMin = voxelGrid.cellCoord(of: j.zoneMin)
+            let cMax = voxelGrid.cellCoord(of: j.zoneMax)
+            let total = (Int(cMax.x - cMin.x) + 1) * (Int(cMax.y - cMin.y) + 1) * (Int(cMax.z - cMin.z) + 1)
+            guard total > 0, total <= 400_000 else { continue }
+            for zi in cMin.z...cMax.z {
+                for yi in cMin.y...cMax.y {
+                    for xi in cMin.x...cMax.x {
+                        let c = SIMD3<Int32>(xi, yi, zi)
+                        guard let owners = cellOwners[c], owners & recvBit != 0 else { continue }
+                        var cell = voxelGrid[c]
+                        guard cell.isSolid else { continue }
+                        let center = voxelGrid.worldCenter(of: c)
+                        guard other.isInside(center) else { continue }
+                        cell.isSolid = false
+                        cell.solidNormal = .zero
+                        voxelGrid[c] = cell
+                        unmarkFineSolidSubcells(of: c)
+                        cleared += 1
+                    }
+                }
+            }
+        }
+        print("[ArcCFD] auto-seal: cut \(cleared) wall cell(s) across \(joints.filter { $0.sealed }.count) sealed joint(s)")
+    }
+
+    private func unmarkFineSolidSubcells(of c: SIMD3<Int32>) {
+        let h = voxelGrid.cellSize
+        let sub = voxelGrid.fineSubdivision
+        let center = voxelGrid.worldCenter(of: c)
+        let coarseLo = center - SIMD3<Float>(repeating: h * 0.5)
+        let fineStep = h / Float(sub)
+        for zi in 0..<sub { for yi in 0..<sub { for xi in 0..<sub {
+            let p = coarseLo + SIMD3<Float>(Float(xi), Float(yi), Float(zi)) * fineStep + fineStep * 0.5
+            voxelGrid.unmarkFineSolid(at: p)
+        }}}
     }
 
     /// Mark every fine sub-cell within a coarse cell as solid in the

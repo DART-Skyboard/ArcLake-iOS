@@ -248,6 +248,11 @@ public final class ArcSparseVoxelGrid {
         fineSolidCells.contains(fineKey(of: worldPos))
     }
 
+    /// Inverse of markFineSolid — used by the auto-seal boolean cut-out.
+    public func unmarkFineSolid(at worldPos: SIMD3<Float>) {
+        fineSolidCells.remove(fineKey(of: worldPos))
+    }
+
     public var fineSolidCellCount: Int { fineSolidCells.count }
 
     // MARK: — Access
