@@ -83,6 +83,7 @@ public final class ArcAshSession: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private let monitor = NWPathMonitor()
 
+    public static let reopenLastKey = "arc_ash_reopen_last_session"
     private let currentKey = "arc_ash_current_session"
     private let restoringKey = "arc_ash_restoring"
 
@@ -140,6 +141,15 @@ public final class ArcAshSession: ObservableObject {
             } else {
                 toOpen = ArcAshStorage.readDocument(id: id)
             }
+        }
+        // A launch must never surprise the user with models from a previous run
+        // (e.g. a demo loaded last time). Unless "Reopen last session on launch"
+        // is switched on, a previous session that holds any models stays under
+        // Sessions and the app starts with an empty scene. A previous session
+        // with no models is still reused (it is already empty), which avoids
+        // piling up blank sessions.
+        if let doc = toOpen, !defaults.bool(forKey: Self.reopenLastKey), !doc.assets.isEmpty {
+            toOpen = nil
         }
         if let doc = toOpen {
             await open(doc)

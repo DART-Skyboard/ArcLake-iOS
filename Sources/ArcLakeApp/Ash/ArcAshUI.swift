@@ -195,7 +195,16 @@ struct ArcAshProjectSection: View {
         }
     }
 
+    @AppStorage(ArcAshSession.reopenLastKey) private var reopenLast: Bool = false
+
     private var sessionsMenu: some View {
+        VStack(alignment: .leading, spacing: 6) {
+        Toggle(isOn: $reopenLast) {
+            Text("Reopen last session on launch")
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundColor(.white.opacity(0.7))
+        }
+        .tint(themeVM.accent)
         HStack {
             Menu {
                 ForEach(session.sessions) { s in
@@ -223,6 +232,7 @@ struct ArcAshProjectSection: View {
                     .foregroundColor(themeVM.accent)
                 }
             }
+        }
         }
     }
 

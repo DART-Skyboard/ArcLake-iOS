@@ -311,7 +311,11 @@ public final class ArcFluidEngine: ObservableObject {
     @Published public var isRunning   = false
     @Published public var mode        = ArcFluidMode.liquid
     @Published public var scenePreset = ArcFluidScene.dam
-    @Published public var particleVisual = ArcParticleVisual.volumetric   // default ON (off switch: Setup > Volumetric render, or pick another visual)
+    @Published public var particleVisual = ArcParticleVisual.volumetric {   // default ON (off switch: Setup > Volumetric render, or pick another visual)
+        // Re-selecting Volumetric clears the old fallback note; a fresh
+        // self-test failure sets it again in uploadParticleCloud.
+        didSet { if particleVisual == .volumetric && oldValue != .volumetric { volumetricStatus = nil } }
+    }
     @Published public var particleCount = 500
     @Published public var gravityScale: Float = 1.0
     @Published public var smoothingH:   Float = 1.5   // scene-unit SPH radius
@@ -422,7 +426,61 @@ public final class ArcFluidEngine: ObservableObject {
     private let floorHeat = ArcFloorHeatMap()
     /// X-ray interior glow: fluid is drawn through opaque part walls with a
     /// soft interior glow (default ON, matching the web sandbox).
-    @Published public var xrayGlow = true
+    @Published public var xrayGlow = true {
+        didSet { if xrayGlow != oldValue { refreshXrayShells() } }
+    }
+
+    // MARK: — X-ray part shells
+    /// Original per-material state of every part shell made translucent while a
+    /// simulation runs (restored by stop() / when X-ray is switched off).
+    private struct ShellState {
+        let material: SCNMaterial
+        let transparency: CGFloat
+        let transparencyMode: SCNTransparencyMode
+        let writesDepth: Bool
+        let doubleSided: Bool
+    }
+    private var shellStates: [ShellState] = []
+    private static let xrayShellOpacity: CGFloat = 0.32
+
+    /// Main thread. Makes the simulated parts translucent so the fluid inside
+    /// containers, pipes and the chamber reads through the walls (web sandbox
+    /// X-ray look). Idempotent; original material state is remembered once.
+    private func applyXrayShells() {
+        guard let scene, xrayGlow, shellStates.isEmpty else { return }
+        let names = Set(mainPartNames)
+        guard !names.isEmpty else { return }
+        var seen = Set<ObjectIdentifier>()
+        scene.rootNode.enumerateChildNodes { node, _ in
+            guard let nm = node.name, names.contains(nm), let geo = node.geometry else { return }
+            for m in geo.materials where !seen.contains(ObjectIdentifier(m)) {
+                seen.insert(ObjectIdentifier(m))
+                self.shellStates.append(ShellState(material: m, transparency: m.transparency,
+                                                   transparencyMode: m.transparencyMode,
+                                                   writesDepth: m.writesToDepthBuffer,
+                                                   doubleSided: m.isDoubleSided))
+                m.transparency = ArcFluidEngine.xrayShellOpacity
+                m.transparencyMode = .dualLayer
+                m.writesToDepthBuffer = false
+                m.isDoubleSided = true
+            }
+        }
+    }
+
+    private func restoreXrayShells() {
+        for st in shellStates {
+            st.material.transparency = st.transparency
+            st.material.transparencyMode = st.transparencyMode
+            st.material.writesToDepthBuffer = st.writesDepth
+            st.material.isDoubleSided = st.doubleSided
+        }
+        shellStates.removeAll()
+    }
+
+    private func refreshXrayShells() {
+        guard isRunning else { return }
+        if xrayGlow { applyXrayShells() } else { restoreXrayShells() }
+    }
     /// One-line reason shown in the Render card when the volumetric shader
     /// failed on this device and the view fell back to point sprites.
     @Published public var volumetricStatus: String? = nil
@@ -629,6 +687,8 @@ public final class ArcFluidEngine: ObservableObject {
         await MainActor.run {
             self.buildCloudNode(scene)
             self.snapshotPartTransforms()
+            self.restoreXrayShells()
+            self.applyXrayShells()
         }
         await onSim { [weak self] in self?.beginLoopOnSim() }
         stageLog("Building volume")
@@ -681,6 +741,7 @@ public final class ArcFluidEngine: ObservableObject {
         leakNode?.removeFromParentNode(); leakNode = nil
         leakingJointIDs = []; leakInfo = [:]
         movedParts.removeAll(); liveBusy = false
+        restoreXrayShells()
         // Remove thermal coloring from all mesh nodes
         scene?.rootNode.enumerateChildNodes { node, _ in
             node.geometry?.materials.forEach { m in
@@ -2314,6 +2375,7 @@ public final class ArcFluidEngine: ObservableObject {
                 baseColorFor: { SIMD3($0.r, $0.g, $0.b) },
                 envTempK: envTempK,
                 radius: max(0.08, voxelGrid.cellSize * 0.18))
+            configureCloudDepth()
             return
         }
 
@@ -2420,6 +2482,20 @@ public final class ArcFluidEngine: ObservableObject {
         mat.diffuse.contents = ArcFluidEngine.softDotSprite
         geo.firstMaterial = mat
         cloudNode.geometry = geo
+        configureCloudDepth()
+    }
+
+    /// Fluid is drawn after the part shells and, with X-ray on, ignores the
+    /// wall depth so gas inside opaque or translucent walls stays visible
+    /// (matches the web sandbox: depthTest off for the X-ray gas).
+    private func configureCloudDepth() {
+        guard let cloudNode else { return }
+        let xr = xrayGlow
+        cloudNode.geometry?.materials.forEach { m in
+            m.readsFromDepthBuffer = !xr
+            m.writesToDepthBuffer = false
+        }
+        cloudNode.renderingOrder = 1000
     }
 
     // Cached once — a small (32×32) radial-gaussian-falloff white-on-

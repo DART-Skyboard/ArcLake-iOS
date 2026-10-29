@@ -135,18 +135,10 @@ struct ArcImportManagerView: View {
                         let label = MantisNavModel.builtInAssets
                             .first { $0.resource == resource }?.label ?? resource
                         Button {
-                            // Load directly from bundle into the active scene tab
-                            if let url = Bundle.main.url(forResource: resource, withExtension: "glb"),
-                               let node = ArcGLBImporter().importGLB(url: url) {
-                                node.name = "glb_import_\(resource)"
-                                // Auto-scale to reasonable size
-                                let bb = node.boundingBox
-                                let ext = max(bb.max.x - bb.min.x,
-                                             max(bb.max.y - bb.min.y, bb.max.z - bb.min.z))
-                                if ext > 0.01 { let s = Float(3.0/ext); node.scale = SCNVector3(s,s,s) }
-                                labVM.importAssetNode(node)
-                                refreshID = UUID()
-                            }
+                            // Same loader as the Assets menu (parked slot, grounded, ~3 units).
+                            if labVM.mantis.labVM == nil { labVM.mantis.labVM = labVM }
+                            _ = labVM.mantis.loadBuiltInAsset(resource)
+                            refreshID = UUID()
                         } label: {
                             HStack(spacing: 8) {
                                 Image(systemName: "arrow.counterclockwise")
@@ -169,17 +161,11 @@ struct ArcImportManagerView: View {
                         if missing {
                             Button {
                                 Task(priority: .userInitiated) {
-                                    // Download + cache
-                                    guard let localURL = try? await labVM.mantis.cachedRemoteURL(
-                                        resource: ra.resource, remoteURL: ra.url) else { return }
-                                    guard let node = ArcGLBImporter().importGLB(url: localURL)
-                                    else { return }
-                                    node.name = "glb_import_\(ra.resource)"
-                                    let bb = node.boundingBox
-                                    let ext = max(bb.max.x - bb.min.x,
-                                                 max(bb.max.y - bb.min.y, bb.max.z - bb.min.z))
-                                    if ext > 0.01 { let s = Float(3.0/ext); node.scale = SCNVector3(s,s,s) }
-                                    labVM.importAssetNode(node)
+                                    // Same loader as the Assets menu and the demo button.
+                                    if labVM.mantis.labVM == nil { labVM.mantis.labVM = labVM }
+                                    var err: String?
+                                    _ = await labVM.mantis.loadRemoteAsset(
+                                        resource: ra.resource, remoteURL: ra.url, errorOut: &err)
                                     await MainActor.run { refreshID = UUID() }
                                 }
                             } label: {

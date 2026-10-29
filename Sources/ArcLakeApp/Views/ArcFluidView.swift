@@ -537,6 +537,9 @@ struct ArcFluidView: View {
             if let err = eng.loadError ?? demoLoadError {
                 Text(err).font(.system(size: 7, design: .monospaced)).foregroundColor(.red.opacity(0.8))
             }
+            if let vmsg = eng.volumetricStatus {
+                Text(vmsg).font(.system(size: 7, design: .monospaced)).foregroundColor(.orange)
+            }
             if eng.isRunning {
                 Text("A simulation is already running — tapping this restarts it with the demo scene.")
                     .font(.system(size: 7, design: .monospaced)).foregroundColor(.white.opacity(0.35))
@@ -587,6 +590,18 @@ struct ArcFluidView: View {
             let mantis = await MainActor.run { () -> MantisNavModel in
                 let m = labVM.mantis
                 if m.labVM == nil { m.labVM = labVM }
+                // Clean reload: a previous copy of the demo (from an earlier tap)
+                // must go before loadRemoteAsset runs, otherwise it returns the
+                // stale node early and the tap would not reset anything. Specs are
+                // cleared too so no stale per-part state outlives the old node.
+                let demoNodeName = "glb_import_\(demoAsset.resource)"
+                for sc in labVM.allTabScenes() {
+                    while let old = sc.rootNode.childNode(withName: demoNodeName, recursively: false) {
+                        old.removeFromParentNode()
+                    }
+                }
+                if m.vehicleAsset == demoNodeName { m.vehicleAsset = nil }
+                eng.componentSpecs = []
                 return m
             }
             var downloadErr: String?
@@ -613,7 +628,7 @@ struct ArcFluidView: View {
             await MainActor.run {
                 loadingDemo = false
                 if eng.loadCancelled { return }        // user cancelled during download/parse
-                guard nodeName != nil else {
+                guard let loadedName = nodeName else {
                     // Surface the REAL failure reason (download transport
                     // error, bad HTTP status, or the file downloaded fine
                     // but failed to parse as a GLB) instead of a blanket
@@ -636,6 +651,10 @@ struct ArcFluidView: View {
                 // previous async-hang bug this build also fixes. Load &
                 // Ignite Demo should always be able to (re)start the demo
                 // regardless of what was running before.
+                // Exactly the Assets-menu path (loadRemoteAsset + setActiveVehicle):
+                // the demo becomes the active vehicle, so it sits at the origin with
+                // its nozzle base flush on the grid (y = 0) and rises along +Y.
+                mantis.setActiveVehicle(loadedName)
                 eng.loadBase = 0.15          // download + parse already accounted for
                 // Re-scan so the newly-added nodes are picked up as
                 // components (hardcoded Combustion_flow.glb names resolve
