@@ -39,10 +39,24 @@ struct ArcFluidView: View {
                     case .measure:   measurePanel
                     }
                     Spacer(minLength:20)
-                }.padding(10)
+                }
+                .padding(.horizontal, 12).padding(.vertical, 10)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(red:0.02,green:0.04,blue:0.09))
+        .overlay {
+            if eng.isLoading {
+                ZStack {
+                    Color.black.opacity(0.6).ignoresSafeArea()
+                    ArcLoadingOverlay(eng: eng, accent: themeVM.accent)
+                        .padding(.horizontal, 16)
+                }
+                .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: eng.isLoading)
     }
 
     private func launchCFD() {
@@ -52,6 +66,10 @@ struct ArcFluidView: View {
         let tempF = labVM.physics.temperature   // °F direct on PhysicsState
         let tempK = Float((tempF - 32.0) * 5.0/9.0 + 273.15)
         let pressurePa = Float(labVM.physics.pressure * 6894.76)
+        // Auto-play: when the simulation is up, start the bottom transport
+        // (play only — never auto-REC) so the module's own animation runs.
+        let vm = labVM
+        eng.onReady = { if !vm.isPlaying { vm.transportPlay() } }
         eng.start(in: labVM.scene, elementSymbols: syms,
                   envTempK: tempK, envPressurePa: pressurePa)
     }
@@ -67,6 +85,7 @@ struct ArcFluidView: View {
                 Text("Mesh-conformal SPH · Alloy specs · Thermal colormap")
                     .font(.system(size:7,design:.monospaced))
                     .foregroundColor(.white.opacity(0.3))
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
             if eng.isRunning {
@@ -77,7 +96,7 @@ struct ArcFluidView: View {
                         .foregroundColor(.green)
                 }
             }
-        }.padding(.horizontal,10).padding(.top,8)
+        }.padding(.horizontal,12).padding(.top,8)
     }
 
     private var tabBar: some View {
@@ -104,7 +123,7 @@ struct ArcFluidView: View {
         }
         .background(Color.white.opacity(0.05))
         .clipShape(RoundedRectangle(cornerRadius:8))
-        .padding(.horizontal,10).padding(.vertical,6)
+        .padding(.horizontal,12).padding(.vertical,6)
     }
 
     // MARK: — BUILD TAB (element/compound builder, merged in from the old
@@ -138,8 +157,7 @@ struct ArcFluidView: View {
             // Node Editor. Restored to the full original set; nothing
             // should be missing from what build 388 had.
             DARTPanelCard(title: "Build Actions", icon: "sparkles") {
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()),
-                                    GridItem(.flexible()), GridItem(.flexible())],
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 68, maximum: 120), spacing: 8)],
                           spacing: 8) {
                     DARTActionTile(label: "Periodic\nTable", icon: "tablecells",
                                    color: themeVM.accent) {
@@ -213,6 +231,7 @@ struct ArcFluidView: View {
                             HStack(spacing: 6) {
                                 Image(systemName: "square.and.arrow.down").font(.system(size: 11))
                                 Text("Save Compound").font(.system(size: 10, weight: .bold, design: .monospaced))
+                                    .lineLimit(1).minimumScaleFactor(0.7)
                             }
                             .foregroundColor(.black).frame(maxWidth: .infinity).padding(.vertical, 9)
                             .background(labVM.selectedElements.isEmpty ? Color.gray : themeVM.accent)
@@ -227,6 +246,7 @@ struct ArcFluidView: View {
                                 Image(systemName: "list.bullet.rectangle").font(.system(size: 11))
                                 Text("Manage (\(compoundLibrary.compounds.count))")
                                     .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                    .lineLimit(1).minimumScaleFactor(0.7)
                             }
                             .foregroundColor(.white.opacity(0.8)).frame(maxWidth: .infinity).padding(.vertical, 9)
                             .background(Color.white.opacity(0.08))
@@ -310,15 +330,11 @@ struct ArcFluidView: View {
 
             card("RENDER") {
                 VStack(alignment:.leading, spacing:6) {
-                    Toggle(isOn: Binding(
+                    toggleRow("Volumetric render", isOn: Binding(
                         get:{ eng.particleVisual == .volumetric },
-                        set:{ eng.particleVisual = $0 ? .volumetric : .points })) {
-                        mono("Volumetric render")
-                    }.tint(.green)
-                    Toggle(isOn: $eng.xrayGlow) { mono("X-ray interior glow") }
-                        .tint(.cyan)
-                    Toggle(isOn: $eng.floorHeatEnabled) { mono("Floor thermal map") }
-                        .tint(.orange)
+                        set:{ eng.particleVisual = $0 ? .volumetric : .points }), tint: .green)
+                    toggleRow("X-ray interior glow", isOn: $eng.xrayGlow, tint: .cyan)
+                    toggleRow("Floor thermal map", isOn: $eng.floorHeatEnabled, tint: .orange)
                     Text("Volumetric is on by default. Turn it off to fall back to point sprites if it runs choppy.")
                         .font(.system(size:7,design:.monospaced))
                         .foregroundColor(.white.opacity(0.3))
@@ -328,10 +344,8 @@ struct ArcFluidView: View {
             // Auto-seal joints (geometric intersection + through-cavity test)
             card("JOINTS") {
                 VStack(alignment:.leading, spacing:6) {
-                    Toggle(isOn: $eng.autoSealEnabled) { mono("Auto-seal intersecting parts") }
-                        .tint(.green)
-                    Toggle(isOn: $eng.liveLeaksEnabled) { mono("Live leaks when a seal breaks") }
-                        .tint(.red)
+                    toggleRow("Auto-seal intersecting parts", isOn: $eng.autoSealEnabled, tint: .green)
+                    toggleRow("Live leaks when a seal breaks", isOn: $eng.liveLeaksEnabled, tint: .red)
                     if eng.joints.isEmpty {
                         Text(eng.sealStatus.isEmpty
                              ? "Starts with the simulation: overlapping parts whose hollow interiors connect become sealed fluid links."
@@ -493,9 +507,29 @@ struct ArcFluidView: View {
             // run. .opacity(...) replaces the invisible .disabled() dimming
             // so a genuinely busy state (mid-download) is visually obvious
             // instead of silently absorbing the tap.
-            .disabled(loadingDemo)
-            .opacity(loadingDemo ? 0.6 : 1.0)
-            if let err = demoLoadError {
+            .disabled(loadingDemo || eng.isLoading)
+            .opacity(loadingDemo || eng.isLoading ? 0.6 : 1.0)
+            if eng.isLoading {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text(eng.loadStage)
+                            .font(.system(size: 8, weight: .bold, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.7))
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 8)
+                        Text("\(Int(eng.loadProgress * 100))%")
+                            .font(.system(size: 8, weight: .bold, design: .monospaced))
+                            .foregroundColor(.orange)
+                    }
+                    ProgressView(value: eng.loadProgress).tint(.orange)
+                    Button { eng.cancelLoading(); loadingDemo = false } label: {
+                        Text("CANCEL")
+                            .font(.system(size: 8, weight: .bold, design: .monospaced))
+                            .foregroundColor(.red.opacity(0.9))
+                    }
+                }
+            }
+            if let err = eng.loadError ?? demoLoadError {
                 Text(err).font(.system(size: 7, design: .monospaced)).foregroundColor(.red.opacity(0.8))
             }
             if eng.isRunning {
@@ -516,8 +550,12 @@ struct ArcFluidView: View {
     /// work before ever importing their own model.
     private func loadCombustionDemo() {
         loadingDemo = true; demoLoadError = nil
+        // Restart semantics: stop any running sim first, THEN show progress.
+        if eng.isRunning { eng.stop() }
+        eng.beginLoading(stage: "Downloading asset", progress: 0.02)
         guard let demoAsset = MantisNavModel.remoteAssets.first(where: { $0.resource == "Combustion_flow" }) else {
-            demoLoadError = "Demo asset not found"; loadingDemo = false; return
+            demoLoadError = "Demo asset not found"; loadingDemo = false
+            eng.failLoading("Demo asset not found"); return
         }
         Task(priority: .userInitiated) {
             // Download off the main actor first (cachedRemoteURL is
@@ -564,10 +602,12 @@ struct ArcFluidView: View {
                 preDownloadedURL = nil
                 downloadErr = (error as? ArcAssetDownloadError)?.userMessage ?? error.localizedDescription
             }
+            await MainActor.run { eng.updateLoading(stage: "Loading model", progress: 0.08) }
             var loadErr: String? = downloadErr
             let nodeName: String? = preDownloadedURL == nil ? nil : await mantis.loadRemoteAsset(resource: demoAsset.resource, remoteURL: demoAsset.url, errorOut: &loadErr)
             await MainActor.run {
                 loadingDemo = false
+                if eng.loadCancelled { return }        // user cancelled during download/parse
                 guard nodeName != nil else {
                     // Surface the REAL failure reason (download transport
                     // error, bad HTTP status, or the file downloaded fine
@@ -579,6 +619,7 @@ struct ArcFluidView: View {
                     // Data(contentsOf:), an unreliable synchronous
                     // Foundation API, not an actual network problem.
                     demoLoadError = loadErr ?? "Couldn't load the demo asset"
+                    eng.failLoading(demoLoadError ?? "Couldn't load the demo asset")
                     return
                 }
                 // Stop any already-running sim first: ArcFluidEngine.start()
@@ -590,7 +631,7 @@ struct ArcFluidView: View {
                 // previous async-hang bug this build also fixes. Load &
                 // Ignite Demo should always be able to (re)start the demo
                 // regardless of what was running before.
-                if eng.isRunning { eng.stop() }
+                eng.loadBase = 0.15          // download + parse already accounted for
                 // Re-scan so the newly-added nodes are picked up as
                 // components (hardcoded Combustion_flow.glb names resolve
                 // via ArcCombustionFlow.componentRoles as usual), then
@@ -672,8 +713,8 @@ struct ArcFluidView: View {
                 VStack(spacing:10) {
                     // Designation
                     HStack(spacing:12) {
-                        Toggle(isOn: spec.isInlet)  { mono("Inlet") }.tint(.green)
-                        Toggle(isOn: spec.isOutlet) { mono("Outlet") }.tint(.orange)
+                        toggleRow("Inlet", isOn: spec.isInlet, tint: .green)
+                        toggleRow("Outlet", isOn: spec.isOutlet, tint: .orange)
                     }
                     if spec.wrappedValue.isInlet {
                         sldrD("Flow m/s", val: spec.inletFlowRate, lo:0.1, hi:50, fmt:"%.1f")
@@ -839,7 +880,23 @@ struct ArcFluidView: View {
             Text(title).font(.system(size:8,weight:.bold,design:.monospaced))
                 .foregroundColor(.white.opacity(0.4)).tracking(2)
             content()
-        }.padding(10).background(Color.white.opacity(0.03)).clipShape(RoundedRectangle(cornerRadius:12))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12).background(Color.white.opacity(0.03)).clipShape(RoundedRectangle(cornerRadius:12))
+    }
+
+    /// Label (wraps, never pushes the control off-panel) + trailing control.
+    private func toggleRow(_ label: String, isOn: Binding<Bool>, tint: Color) -> some View {
+        HStack(alignment: .center, spacing: 8) {
+            Text(label)
+                .font(.system(size:10,design:.monospaced))
+                .foregroundColor(.white.opacity(0.65))
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .layoutPriority(1)
+            Toggle("", isOn: isOn).labelsHidden().tint(tint)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func mono(_ s:String) -> some View {
@@ -860,21 +917,21 @@ struct ArcFluidView: View {
         HStack {
             mono(label)
             Slider(value:val, in:lo...hi).tint(themeVM.accent)
-            accent(String(format:fmt,val.wrappedValue)).frame(width:44,alignment:.trailing)
+            accent(String(format:fmt,val.wrappedValue)).frame(minWidth:44,alignment:.trailing)
         }
     }
     private func sldrF(_ label:String, val:Binding<Float>, lo:Float, hi:Float, fmt:String) -> some View {
         HStack {
             mono(label)
             Slider(value:val, in:lo...hi).tint(themeVM.accent)
-            accent(String(format:fmt,val.wrappedValue)).frame(width:44,alignment:.trailing)
+            accent(String(format:fmt,val.wrappedValue)).frame(minWidth:44,alignment:.trailing)
         }
     }
     private func sldrD(_ label:String, val:Binding<Double>, lo:Double, hi:Double, fmt:String) -> some View {
         HStack {
             mono(label)
             Slider(value:val, in:lo...hi).tint(themeVM.accent)
-            accent(String(format:fmt,val.wrappedValue)).frame(width:44,alignment:.trailing)
+            accent(String(format:fmt,val.wrappedValue)).frame(minWidth:44,alignment:.trailing)
         }
     }
     private func propRow(_ label:String, val:Double, unit:String) -> some View {
@@ -905,3 +962,53 @@ extension ArcFluidEngine {
     }
 }
 
+
+
+// MARK: — Loading overlay (spinner + real percentage + stage name + cancel)
+struct ArcLoadingOverlay: View {
+    @ObservedObject var eng: ArcFluidEngine
+    let accent: Color
+    @State private var spin = false
+
+    var body: some View {
+        VStack(spacing: 14) {
+            ZStack {
+                Circle().stroke(Color.white.opacity(0.12), lineWidth: 5)
+                Circle()
+                    .trim(from: 0, to: 0.28)
+                    .stroke(accent, style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                    .rotationEffect(.degrees(spin ? 360 : 0))
+                    .animation(.linear(duration: 0.9).repeatForever(autoreverses: false), value: spin)
+                Text("\(Int(max(0, min(1, eng.loadProgress)) * 100))%")
+                    .font(.system(size: 16, weight: .bold, design: .monospaced))
+                    .foregroundColor(.white)
+            }
+            .frame(width: 84, height: 84)
+
+            Text(eng.loadStage.isEmpty ? "Working…" : eng.loadStage)
+                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                .foregroundColor(.white.opacity(0.9))
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+
+            ProgressView(value: max(0, min(1, eng.loadProgress)))
+                .tint(accent)
+                .frame(maxWidth: 260)
+
+            Button { eng.cancelLoading() } label: {
+                Text("CANCEL")
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundColor(.red.opacity(0.9))
+                    .padding(.horizontal, 18).padding(.vertical, 7)
+                    .background(Color.red.opacity(0.12))
+                    .clipShape(Capsule())
+            }
+        }
+        .padding(22)
+        .frame(maxWidth: 320)
+        .background(Color(red: 0.04, green: 0.07, blue: 0.14).opacity(0.96))
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+        .overlay(RoundedRectangle(cornerRadius: 18).stroke(accent.opacity(0.35), lineWidth: 1))
+        .onAppear { spin = true }
+    }
+}

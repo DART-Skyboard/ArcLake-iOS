@@ -69,11 +69,19 @@ final class ArcFloorHeatMap {
         return warm + (hot - warm) * ((t - 0.66) / 0.34)
     }
 
-    /// Tone-map the accumulators into the floor plane's texture. Call once
-    /// per sim tick; only actually refreshes every few ticks.
-    func refresh(in scene: SCNScene) {
+    struct Geometry {
+        var lo: SIMD2<Float>
+        var hi: SIMD2<Float>
+        var floorY: Float
+        var band: Float
+    }
+    var geometry: Geometry { Geometry(lo: lo, hi: hi, floorY: floorY, band: band) }
+
+    /// Sim queue: tone-map the accumulators into RGBA8 pixels. Returns nil
+    /// except every few ticks (the texture needn't update at full rate).
+    func tonemapIfDue() -> [UInt8]? {
         ticks += 1
-        guard ticks % 4 == 0 else { return }
+        guard ticks % 4 == 0 else { return nil }
         let n = Self.res
         var px = [UInt8](repeating: 0, count: n * n * 4)
         for i in 0..<(n * n) {
@@ -87,9 +95,13 @@ final class ArcFloorHeatMap {
             px[i * 4 + 2] = UInt8(max(0, min(255, c.z * 255)))
             px[i * 4 + 3] = UInt8(max(0, min(255, k * 0.85 * 255)))
         }
-        guard let image = Self.makeImage(px, n) else { return }
+        return px
+    }
 
-        let sx = max(0.001, hi.x - lo.x), sz = max(0.001, hi.y - lo.y)
+    /// Main thread: put a tone-mapped image on the floor plane.
+    func applyImage(_ px: [UInt8], geometry g: Geometry, in scene: SCNScene) {
+        guard let image = Self.makeImage(px, Self.res) else { return }
+        let sx = max(0.001, g.hi.x - g.lo.x), sz = max(0.001, g.hi.y - g.lo.y)
         let n3: SCNNode
         if let node {
             n3 = node
@@ -113,7 +125,7 @@ final class ArcFloorHeatMap {
             node = n3
         }
         n3.scale = SCNVector3(sx, sz, 1)
-        n3.position = SCNVector3((lo.x + hi.x) * 0.5, floorY + band * 0.02, (lo.y + hi.y) * 0.5)
+        n3.position = SCNVector3((g.lo.x + g.hi.x) * 0.5, g.floorY + g.band * 0.02, (g.lo.y + g.hi.y) * 0.5)
         n3.geometry?.firstMaterial?.diffuse.contents = image
     }
 

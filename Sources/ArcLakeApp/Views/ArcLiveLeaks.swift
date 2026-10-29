@@ -32,7 +32,8 @@ struct ArcLeakSplat {
 }
 
 final class ArcLiveLeaks {
-    static let maxParticles = 1600
+    /// Out-of-memory safety only, not a quality cap.
+    static let maxParticles = 2_000_000
     static let gradK: Float = 0.35
     static let dragInside: Float = 1.2
     static let vmax: Float = 22
@@ -115,7 +116,7 @@ final class ArcLiveLeaks {
                 if !cell.isSolid { mass += cell.density }
             }
             g.massNow = mass
-            var budget = 60
+            var budget = max(60, g.cells.count / 20)
             while budget > 0 && particles.count < Self.maxParticles && g.cursor < g.cells.count {
                 let c = g.cells[g.cursor]
                 g.cursor += 1
@@ -230,12 +231,10 @@ final class ArcLiveLeaks {
         }
     }
 
-    /// Point-cloud geometry for the non-volumetric visual modes.
-    func makePointGeometry(sprite: UIImage) -> SCNGeometry? {
-        let n = particles.count
-        guard n > 0 else { return nil }
-        var pos: [Float] = []; pos.reserveCapacity(n * 3)
-        var col: [Float] = []; col.reserveCapacity(n * 4)
+    /// Point-cloud arrays for the non-volumetric visual modes (sim queue).
+    func pointArrays() -> ([Float], [Float]) {
+        var pos: [Float] = []; pos.reserveCapacity(particles.count * 3)
+        var col: [Float] = []; col.reserveCapacity(particles.count * 4)
         for p in particles {
             pos += [p.pos.x, p.pos.y, p.pos.z]
             let fade: Float = p.state == 2 ? max(0, 1 - p.age / max(p.life, 0.01)) : 1
@@ -243,6 +242,13 @@ final class ArcLiveLeaks {
             let c = cool + (hot - cool) * p.heat
             col += [c.x, c.y, c.z, 0.5 * fade]
         }
+        return (pos, col)
+    }
+
+    /// Main thread: SceneKit geometry from point arrays.
+    static func pointGeometry(pos: [Float], col: [Float], sprite: UIImage) -> SCNGeometry? {
+        let n = pos.count / 3
+        guard n > 0, col.count >= n * 4 else { return nil }
         let ps = SCNGeometrySource(data: Data(bytes: pos, count: pos.count * 4), semantic: .vertex,
                                    vectorCount: n, usesFloatComponents: true, componentsPerVector: 3,
                                    bytesPerComponent: 4, dataOffset: 0, dataStride: 12)

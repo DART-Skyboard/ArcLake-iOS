@@ -71,8 +71,6 @@ public enum ArcVolumetricFluidRenderer {
     /// depth buffer so the fluid glows through opaque part walls.
     public static var xray: Bool = false
 
-    /// Live-leak plume splats for the next bake (set by ArcFluidEngine each tick).
-    static var leakSplats: [ArcLeakSplat] = []
 
     /// One frame's baked volume: RGBA32F texels packed as a tiled 2D atlas
     /// (Z-slices tiled left-to-right, top-to-bottom; each tile is resX x resY).
@@ -98,7 +96,7 @@ public enum ArcVolumetricFluidRenderer {
         return (r(span.x), r(span.y), r(span.z))
     }
 
-    public static func bakeVolume(from grid: ArcSparseVoxelGrid, envTempK: Float) -> BakedVolume {
+    static func bakeVolume(from grid: ArcSparseVoxelGrid, envTempK: Float, leakSplats: [ArcLeakSplat] = []) -> BakedVolume {
         let dMin = grid.domainMin
         let dMax = grid.domainMax
         let span = dMax - dMin
@@ -115,13 +113,38 @@ public enum ArcVolumetricFluidRenderer {
         let atlasH = rows * resY
         var texels = [Float](repeating: 0, count: atlasW * atlasH * 4)
 
-        for zi in 0..<resZ {
+        // Only voxels that can contain fluid are sampled: bound the bake by the
+        // active cells' extent (+1 cell margin). Same output, far fewer lookups.
+        let act = grid.activeCoords()
+        var zr = 0..<0, yr = 0..<0, xr = 0..<0
+        var fluidLo: SIMD3<Int32>? = nil, fluidHi: SIMD3<Int32>? = nil
+        for c in act {
+            let cell = grid[c]
+            guard !cell.isSolid, cell.density > 1e-4 else { continue }
+            if let l = fluidLo, let h = fluidHi {
+                fluidLo = SIMD3<Int32>(Swift.min(l.x, c.x), Swift.min(l.y, c.y), Swift.min(l.z, c.z))
+                fluidHi = SIMD3<Int32>(Swift.max(h.x, c.x), Swift.max(h.y, c.y), Swift.max(h.z, c.z))
+            } else { fluidLo = c; fluidHi = c }
+        }
+        if let lo = fluidLo, let hi = fluidHi {
+            let wLo = grid.worldCenter(of: lo) - SIMD3<Float>(repeating: grid.cellSize * 1.5)
+            let wHi = grid.worldCenter(of: hi) + SIMD3<Float>(repeating: grid.cellSize * 1.5)
+            func rng(_ a: Float, _ b: Float, _ d: Float, _ sp: Float, _ n: Int) -> Range<Int> {
+                let i0 = Swift.max(0, Int(floor((a - d) / sp * Float(n))) - 1)
+                let i1 = Swift.min(n, Int(ceil((b - d) / sp * Float(n))) + 1)
+                return i0 < i1 ? i0..<i1 : 0..<0
+            }
+            xr = rng(wLo.x, wHi.x, dMin.x, span.x, resX)
+            yr = rng(wLo.y, wHi.y, dMin.y, span.y, resY)
+            zr = rng(wLo.z, wHi.z, dMin.z, span.z, resZ)
+        }
+        for zi in zr {
             let wz = dMin.z + (Float(zi) + 0.5) / Float(resZ) * span.z
             let tileX = (zi % cols) * resX
             let tileY = (zi / cols) * resY
-            for yi in 0..<resY {
+            for yi in yr {
                 let wy = dMin.y + (Float(yi) + 0.5) / Float(resY) * span.y
-                for xi in 0..<resX {
+                for xi in xr {
                     let wx = dMin.x + (Float(xi) + 0.5) / Float(resX) * span.x
                     let worldPos = SIMD3<Float>(wx, wy, wz)
                     let texIdx = ((tileY + yi) * atlasW + tileX + xi) * 4
@@ -183,16 +206,16 @@ public enum ArcVolumetricFluidRenderer {
 
     private static var cachedBoxGeometry: SCNGeometry?
 
-    public static func updateVolumetricNode(in scene: SCNScene,
-                                              existingNode: SCNNode?,
-                                              grid: ArcSparseVoxelGrid,
-                                              envTempK: Float) -> SCNNode {
+    /// Main thread: put a baked volume (built on the sim queue) on the
+    /// bounding-box node. No grid access here.
+    public static func applyVolumetricNode(in scene: SCNScene,
+                                           existingNode: SCNNode?,
+                                           baked: BakedVolume) -> SCNNode {
         let node = existingNode ?? SCNNode()
         node.name = "arcVolumetricFluid"
         if existingNode == nil {
             scene.rootNode.addChildNode(node)
         }
-        let baked = bakeVolume(from: grid, envTempK: envTempK)
         let size = baked.domainMax - baked.domainMin
         let center = (baked.domainMin + baked.domainMax) * 0.5
 

@@ -484,7 +484,13 @@ public final class MantisNavModel: ObservableObject {
             print("[Mantis] Remote asset download failed: \(error)")
             return nil
         }
-        guard let node = ArcGLBImporter().importGLB(url: localURL) else {
+        // Parse the GLB OFF the main thread (multi-MB parse + SCNGeometry
+        // construction would otherwise freeze the UI); only the scene-graph
+        // attach below needs the main actor.
+        let imported: SCNNode? = await Task.detached(priority: .userInitiated) { () -> SCNNode? in
+            ArcGLBImporter().importGLB(url: localURL)
+        }.value
+        guard let node = imported else {
             errorOut = "Downloaded file isn't a valid GLB"
             return nil
         }

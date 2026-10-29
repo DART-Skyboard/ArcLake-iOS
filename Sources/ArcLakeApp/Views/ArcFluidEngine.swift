@@ -268,8 +268,43 @@ public struct ArcFluidMeasure {
     public var maxPressurePa: Float = 0
 }
 
+// MARK: — Scene snapshot value types (thread-safe hand-off from main to sim)
+struct ArcSrcSnap { let data: Data; let stride: Int; let offset: Int; let count: Int }
+struct ArcElemSnap { let data: Data; let bytesPerIndex: Int; let primitiveCount: Int }
+struct ArcMeshSnap { let name: String; let world: SCNMatrix4; let pos: ArcSrcSnap; let elems: [ArcElemSnap] }
+struct ArcSceneSnap { var meshes: [ArcMeshSnap]; var boundsMin: SIMD3<Float>; var boundsMax: SIMD3<Float> }
+struct ArcBuiltGeometry {
+    var tris: [ArcTriangle]
+    var owners: [Int32]
+    var names: [String]
+    var raw: [[SIMD3<Float>]]
+}
+
+/// One simulation tick's product, computed on the sim queue and applied on main.
+struct ArcSimFrame {
+    var measure: ArcFluidMeasure
+    var maxP: Float
+    var pts: [ArcParticle]
+    var baked: ArcVolumetricFluidRenderer.BakedVolume?
+    var floorPx: [UInt8]?
+    var floorGeom: ArcFloorHeatMap.Geometry
+    var leakPos: [Float]
+    var leakCol: [Float]
+    var leakInfo: [String: String]?
+}
+
 // MARK: — Main Engine
-@MainActor
+// Threading model (async pipeline, build 412+):
+//   * The class is NOT main-actor isolated. `simQueue` (serial) OWNS all
+//     simulation data: voxelGrid, solver, pts, mesh triangles, seal data,
+//     floor-heat accumulators, live-leak particles. Nothing else touches them.
+//   * The main thread owns SceneKit objects and every @Published property.
+//   * Start-up is a phased async pipeline (see runStartPipeline): geometry is
+//     snapshotted on main (cheap), then triangles / joint detection /
+//     collision rasterisation / cavity fill run off-main with real progress.
+//   * Each sim tick computes a value-type `ArcSimFrame` (measure, particle
+//     copy, baked volume, tone-mapped floor texture...) on simQueue and hands
+//     it to main, which only applies it to SceneKit.
 public final class ArcFluidEngine: ObservableObject {
     public static let shared = ArcFluidEngine()
 
@@ -285,7 +320,44 @@ public final class ArcFluidEngine: ObservableObject {
     @Published public var measure     = ArcFluidMeasure()
 
     // Component material specs — one per mesh node in scene
-    @Published public var componentSpecs: [ArcComponentSpec] = []
+    @Published public var componentSpecs: [ArcComponentSpec] = [] {
+        didSet {
+            let copy = componentSpecs
+            simQueue.async { [weak self] in self?.simSpecs = copy }
+        }
+    }
+
+    // ── Async load pipeline state (main-owned, @Published) ──
+    @Published public var isLoading = false
+    @Published public var loadStage = ""
+    @Published public var loadProgress: Double = 0
+    @Published public var loadError: String? = nil
+    /// Progress already consumed by work done before eng.start (download, GLB parse);
+    /// the engine pipeline maps its own 0...1 into [loadBase, 1].
+    public var loadBase: Double = 0
+    /// Called on main when the simulation is up and running.
+    public var onReady: (@MainActor () -> Void)? = nil
+    var loadCancelled = false
+    private var preparing = false
+    private var loadGeneration = 0
+
+    // ── Sim-queue-owned data ──
+    let simQueue = DispatchQueue(label: "com.dartmeadow.arclake.sim", qos: .userInitiated)
+    private var simSpecs: [ArcComponentSpec] = []
+    private var simFuel: [String] = ["H","H","C"]
+    private var simOx: [String] = ["O","O"]
+    private var simRunning = false
+    private var loopGen = 0
+    private var simTickCount = 0
+    private var simPartNames: [String] = []
+    private var simSealParts: [ArcSealPart] = []
+    private var simJoints: [ArcSealJoint] = []
+    private let frameLock = NSLock()
+    private var framePending = false
+    /// Main-side copy of the particle layer (for SceneKit upload / readouts).
+    var mainPts: [ArcParticle] = []
+    private var sealReady = false
+    private var mainPartNames: [String] = []
 
     // Inlet/outlet zone centers (set from ArcMeshSelectorView)
     public var inletZone:  SIMD3<Float>? = nil
@@ -319,7 +391,6 @@ public final class ArcFluidEngine: ObservableObject {
     /// Parallel to meshTriangles: index into sealPartNames of the part each
     /// triangle belongs to (auto-seal ownership; see ArcAutoSeal.swift).
     private var meshTriangleOwner: [Int32] = []
-    private var sealPartNames: [String] = []
     private var sealRawVerts: [[SIMD3<Float>]] = []
     /// Per solid cell: bitmask of owning part indices (parts 0..<64).
     private var cellOwners: [SIMD3<Int32>: UInt64] = [:]
@@ -330,7 +401,6 @@ public final class ArcFluidEngine: ObservableObject {
     @Published public var joints: [ArcSealJoint] = []
     @Published public var autoSealEnabled = true
     @Published public var sealStatus = ""
-    private var sealParts: [ArcSealPart] = []
     private var sealGeneration = 0
     private var sealApplied = false
 
@@ -390,59 +460,221 @@ public final class ArcFluidEngine: ObservableObject {
         return [r+m, g+m, b+m]
     }
 
-    // MARK: — Start
+    // MARK: — Start (phased async pipeline)
+
+    /// Begin the simulation. Returns immediately: heavy work runs off the
+    /// main thread in stages, reporting `loadStage` / `loadProgress`.
+    /// Cancel with `cancelLoading()`.
     public func start(in scene: SCNScene, elementSymbols: [String],
                       envTempK: Float = 293, envPressurePa: Float = 101325) {
-        guard !isRunning else { return }
+        guard !isRunning, !isLoading || preparing else { return }
+        preparing = false
         self.scene = scene
         self.envTempK = envTempK
         self.envPressurePa = envPressurePa
-        isRunning = true
-
-        // Extract mesh geometry for collision
-        extractMeshGeometry(from: scene)
-        beginAutoSeal()
-        snapshotPartTransforms()
-
-        // Set domain based on scene model bounding box
-        fitDomainToScene(scene)
-        voxelGrid.removeAll()
-        meshCollisionSynced = false
-        fitVoxelDomainToScene(scene)
-        floorHeat.remove()
-        floorHeat.configure(domainMin: voxelGrid.domainMin, domainMax: voxelGrid.domainMax,
-                            cellSize: voxelGrid.cellSize)
-        solver.viscosity = mode.params.visc * 0.6
-        solver.thermalDiffusion = mode.params.visc * 1.2 + 0.02
-        solver.ambientTempK = envTempK
-
-        // Initialize component specs for all mesh nodes
-        scanComponentSpecs(scene)
-
-        // If imported model has named components (Combustion_flow demo or any named model),
-        // fill cavities by component. Otherwise fall back to generic spawn.
-        if !autoFillCombustionDemo(scene: scene, envTempK: envTempK) {
-            let syms = elementSymbols.isEmpty ? ["O","H","H"] : elementSymbols
-            spawnParticles(syms)
-        }
-        buildCloudNode(scene)
-
-        simTask = Task.detached(priority: .userInitiated) { [weak self] in
-            while !Task.isCancelled {
-                await self?.stepGrid()
-                try? await Task.sleep(nanoseconds: 16_666_667)
-            }
+        loadGeneration += 1
+        let gen = loadGeneration
+        loadCancelled = false
+        loadError = nil
+        isLoading = true
+        loadStage = "Reading geometry"
+        loadProgress = max(loadProgress, loadBase)
+        Task.detached(priority: .userInitiated) { [weak self] in
+            await self?.runStartPipeline(scene: scene, elementSymbols: elementSymbols, gen: gen)
         }
     }
 
+    /// Called by the UI before eng.start for work it did itself (download / parse).
+    public func beginLoading(stage: String, progress: Double) {
+        isLoading = true
+        preparing = true
+        loadCancelled = false
+        loadError = nil
+        loadBase = 0
+        loadStage = stage
+        loadProgress = progress
+    }
+
+    public func updateLoading(stage: String, progress: Double) {
+        loadStage = stage
+        loadProgress = max(loadProgress, progress)
+    }
+
+    public func failLoading(_ message: String) {
+        isLoading = false
+        preparing = false
+        loadError = message
+        loadStage = "Failed"
+    }
+
+    public func cancelLoading() {
+        guard isLoading else { return }
+        preparing = false
+        loadCancelled = true
+        loadGeneration += 1
+        stop()
+        loadStage = "Cancelled"
+    }
+
+    /// Progress update from any thread (maps stage progress 0...1 into the overall bar).
+    private func setLoad(_ stage: String, _ p: Double) {
+        let base = loadBase
+        let mapped = base + (1 - base) * max(0, min(1, p))
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isLoading else { return }
+            self.loadStage = stage
+            self.loadProgress = max(self.loadProgress, mapped)
+        }
+    }
+
+    private func onSim<T>(_ work: @escaping () -> T) async -> T {
+        await withCheckedContinuation { (cont: CheckedContinuation<T, Never>) in
+            simQueue.async { cont.resume(returning: work()) }
+        }
+    }
+
+    private func runStartPipeline(scene: SCNScene, elementSymbols: [String], gen: Int) async {
+        let t0 = CACurrentMediaTime()
+        func stageLog(_ name: String) {
+            print(String(format: "[ArcCFD][timing] %@ done at +%.0f ms", name, (CACurrentMediaTime() - t0) * 1000))
+        }
+        func cancelled() -> Bool { loadCancelled || gen != loadGeneration }
+
+        // ── Stage 1: Reading geometry ──
+        setLoad("Reading geometry", 0.02)
+        let snap: ArcSceneSnap = await MainActor.run {
+            let sn = self.collectSceneSnapshot(scene)
+            self.scanComponentSpecs(scene)     // cheap: bounding boxes + classification
+            return sn
+        }
+        if cancelled() { return }
+        let built: ArcBuiltGeometry = await Task.detached(priority: .userInitiated) { [weak self] () -> ArcBuiltGeometry in
+            ArcFluidEngine.buildTriangles(from: snap) { frac in
+                self?.setLoad("Reading geometry", 0.02 + 0.13 * frac)
+            }
+        }.value
+        stageLog("Reading geometry")
+        if cancelled() { return }
+
+        // ── Stage 2: Detecting joints ──
+        setLoad("Detecting joints", 0.15)
+        let sealOn = autoSealEnabled
+        let names = built.names
+        let raw = built.raw
+        let sealResult: (parts: [ArcSealPart], joints: [ArcSealJoint]) = await Task.detached(priority: .userInitiated) { [weak self] () -> (parts: [ArcSealPart], joints: [ArcSealJoint]) in
+            guard sealOn, names.count >= 2 else { return ([], []) }
+            var parts: [ArcSealPart] = []
+            for (i, nm) in names.enumerated() {
+                parts.append(ArcSealPart(name: nm, verts: raw[i]))
+                self?.setLoad("Detecting joints", 0.15 + 0.10 * Double(i + 1) / Double(names.count))
+            }
+            let found = ArcAutoSeal.detect(parts: parts) { frac in
+                self?.setLoad("Detecting joints", 0.25 + 0.20 * frac)
+            }
+            return (parts, found)
+        }.value
+        stageLog("Detecting joints")
+        if cancelled() { return }
+
+        // ── Stage 3: Building collision volumes (sim queue) ──
+        setLoad("Building collision volumes", 0.45)
+        let bMin = snap.boundsMin, bMax = snap.boundsMax
+        let ok: Bool = await onSim { [weak self] in
+            guard let self else { return false }
+            self.installGeometry(built, parts: sealResult.parts, joints: sealResult.joints)
+            self.voxelGrid.removeAll()
+            self.meshCollisionSynced = false
+            self.fitDomains(boundsMin: bMin, boundsMax: bMax)
+            let p = self.mode.params
+            self.solver.viscosity = p.visc * 0.6
+            self.solver.thermalDiffusion = p.visc * 1.2 + 0.02
+            self.solver.ambientTempK = self.envTempK
+            self.floorHeat.configure(domainMin: self.voxelGrid.domainMin, domainMax: self.voxelGrid.domainMax,
+                                     cellSize: self.voxelGrid.cellSize)
+            self.syncMeshCollisionToGrid { frac in
+                self.setLoad("Building collision volumes", 0.45 + 0.40 * frac)
+            }
+            return !self.loadCancelled
+        }
+        stageLog("Building collision volumes")
+        if cancelled() || !ok { return }
+        await MainActor.run {
+            self.joints = sealResult.joints
+            let nSealed = sealResult.joints.filter { $0.sealed }.count
+            self.sealStatus = !sealOn ? "Auto-seal off"
+                : (sealResult.joints.isEmpty ? "No overlapping parts"
+                   : "\(nSealed) sealed · \(sealResult.joints.count - nSealed) non-flowing")
+            self.mainPartNames = names
+            self.sealReady = sealOn && names.count >= 2
+        }
+
+        // ── Stage 4: Filling cavities ──
+        setLoad("Filling cavities", 0.85)
+        let filled: Bool = await MainActor.run {
+            self.autoFillCombustionDemo(scene: scene, envTempK: self.envTempK)
+        }
+        if !filled {
+            let syms = elementSymbols.isEmpty ? ["O","H","H"] : elementSymbols
+            await onSim { [weak self] in self?.spawnParticles(syms) }
+        }
+        await onSim { }          // drain queued cavity-fill jobs
+        stageLog("Filling cavities")
+        if cancelled() { return }
+
+        // ── Stage 5: Building volume ──
+        setLoad("Building volume", 0.93)
+        await MainActor.run {
+            self.buildCloudNode(scene)
+            self.snapshotPartTransforms()
+        }
+        await onSim { [weak self] in self?.beginLoopOnSim() }
+        stageLog("Building volume")
+        await MainActor.run {
+            guard !self.loadCancelled, gen == self.loadGeneration else { return }
+            self.isRunning = true
+            self.isLoading = false
+            self.loadStage = "Ready"
+            self.loadProgress = 1
+            self.onReady?()
+        }
+    }
+
+    /// Sim-queue: adopt freshly built geometry + seal results.
+    private func installGeometry(_ built: ArcBuiltGeometry, parts: [ArcSealPart], joints: [ArcSealJoint]) {
+        meshTriangles = built.tris
+        meshTriangleOwner = built.owners
+        simPartNames = built.names
+        sealRawVerts = built.raw
+        simSealParts = parts
+        simJoints = joints
+        sealApplied = false
+    }
+
+    private func beginLoopOnSim() {
+        loopGen += 1
+        simRunning = true
+        simTickCount = 0
+        let g = loopGen
+        simQueue.asyncAfter(deadline: .now() + 0.016) { [weak self] in self?.simTick(gen: g) }
+    }
+
     public func stop() {
-        simTask?.cancel(); simTask = nil
+        loadCancelled = true
+        loadGeneration += 1
+        isLoading = false
         isRunning = false
-        sealGeneration += 1   // invalidate any in-flight joint detection
+        sealReady = false
+        sealGeneration += 1
+        simQueue.async { [weak self] in
+            guard let self else { return }
+            self.loopGen += 1
+            self.simRunning = false
+            self.leaks.reset()
+        }
+        frameLock.lock(); framePending = false; frameLock.unlock()
         cloudNode?.removeFromParentNode(); cloudNode = nil
         volumetricNode?.removeFromParentNode(); volumetricNode = nil
         floorHeat.remove()
-        leaks.reset()
         leakNode?.removeFromParentNode(); leakNode = nil
         leakingJointIDs = []; leakInfo = [:]
         movedParts.removeAll(); liveBusy = false
@@ -454,119 +686,127 @@ public final class ArcFluidEngine: ObservableObject {
         }
     }
 
-    // MARK: — Mesh geometry extraction for collision
-    private func extractMeshGeometry(from scene: SCNScene) {
-        meshTriangles.removeAll()
-        meshTriangleOwner.removeAll()
-        sealPartNames.removeAll()
-        sealRawVerts.removeAll()
+    // MARK: — Scene snapshot (main) + triangle build (any thread)
+
+    /// Main thread, cheap: capture immutable vertex/index data + transforms.
+    func collectSceneSnapshot(_ scene: SCNScene) -> ArcSceneSnap {
+        var meshes: [ArcMeshSnap] = []
+        var mn = SIMD3<Float>(repeating:  Float.infinity)
+        var mx = SIMD3<Float>(repeating: -Float.infinity)
         scene.rootNode.enumerateChildNodes { node, _ in
             guard let geo = node.geometry,
                   let name = node.name,
                   !name.hasPrefix("arc_light_"),
                   name != "arcFluidCloud",
-                  name != "arcVolumetricFluid" else { return }
-            let ownerIdx: Int
-            if let existing = self.sealPartNames.firstIndex(of: name) {
-                ownerIdx = existing
-            } else {
-                self.sealPartNames.append(name)
-                self.sealRawVerts.append([])
-                ownerIdx = self.sealPartNames.count - 1
-            }
-            let worldTx = node.worldTransform
-            guard let posSrc = geo.sources(for: .vertex).first else { return }
-            let verts = self.extractFloat3(from: posSrc)
-            for elem in geo.elements {
-                guard elem.primitiveType == .triangles else { continue }
-                let indices = self.extractIndices(from: elem)
-                var i = 0
-                while i + 2 < indices.count {
-                    let i0=indices[i], i1=indices[i+1], i2=indices[i+2]; i+=3
-                    guard i0 < verts.count, i1 < verts.count, i2 < verts.count else { continue }
-                    // Transform to world space
-                    let v0 = self.transformPoint(verts[i0], by: worldTx)
-                    let v1 = self.transformPoint(verts[i1], by: worldTx)
-                    let v2 = self.transformPoint(verts[i2], by: worldTx)
-                    let e1 = v1-v0, e2 = v2-v0
-                    var n = simd_cross(e1, e2)
-                    let nlen = simd_length(n)
-                    guard nlen > 1e-6 else { continue }
-                    n /= nlen
-                    let ctr = (v0+v1+v2)/3
-                    self.meshTriangles.append(ArcTriangle(v0:v0,v1:v1,v2:v2,normal:n,centroid:ctr))
-                    self.meshTriangleOwner.append(Int32(ownerIdx))
-                    self.sealRawVerts[ownerIdx].append(contentsOf: [v0, v1, v2])
-                }
-            }
-        }
-        // Flatten centroid list for fast spatial queries
-        print("[ArcCFD] Extracted \(meshTriangles.count) triangles from scene geometry")
-    }
-
-    // MARK: — Domain fit to scene model bounding box
-    private func fitDomainToScene(_ scene: SCNScene) {
-        var mn = SIMD3<Float>(repeating:  Float.infinity)
-        var mx = SIMD3<Float>(repeating: -Float.infinity)
-        scene.rootNode.enumerateChildNodes { node, _ in
-            guard let geo = node.geometry,
-                  let nm = node.name,
-                  !nm.hasPrefix("arc_light_"),
-                  nm != "arcFluidCloud" else { return }
-            let wb = node.boundingBox
-            let lo = SIMD3<Float>(wb.min.x, wb.min.y, wb.min.z)
-            let hi = SIMD3<Float>(wb.max.x, wb.max.y, wb.max.z)
-            mn = simd_min(mn, lo); mx = simd_max(mx, hi)
-        }
-        if mx.x > mn.x {
-            // W/H/D used only as soft boundary extent — match model scale
-            let pad: Float = 3.0
-            W = max(30, (mx.x - mn.x) * pad)
-            H = max(30, (mx.y - mn.y) * pad)
-            D = max(30, (mx.z - mn.z) * pad)
-        }
-    }
-
-    // MARK: — Voxel domain fit (v3.0)
-    // v3.1 fix (item 8): the old code merged each node's LOCAL
-    // boundingBox directly into the voxel domain bounds, as if it were
-    // already world-space — correct only when the node's transform is
-    // pure identity/translation. An imported node with a non-identity
-    // scale or rotation (common for GLB imports) then produces a
-    // domain that doesn't match the actually-rendered (world-space)
-    // model size. Fixed to transform all 8 corners of each node's local
-    // bounding box through node.worldTransform before merging, matching
-    // (and going one better than — scanComponentSpecs transforms only
-    // the min/max corners, which is sufficient for translation+uniform
-    // scale but not rotation) the existing worldTransform-based pattern
-    // elsewhere in this file.
-    private func fitVoxelDomainToScene(_ scene: SCNScene) {
-        var mn = SIMD3<Float>(repeating:  Float.infinity)
-        var mx = SIMD3<Float>(repeating: -Float.infinity)
-        scene.rootNode.enumerateChildNodes { node, _ in
-            guard let geo = node.geometry,
-                  let nm = node.name,
-                  !nm.hasPrefix("arc_light_"),
-                  nm != "arcFluidCloud" else { return }
-            let bb = node.boundingBox
+                  name != "arcVolumetricFluid",
+                  let posSrc = geo.sources(for: .vertex).first else { return }
             let wt = node.worldTransform
+            let bb = node.boundingBox
             let corners: [SIMD3<Float>] = [
                 SIMD3(bb.min.x, bb.min.y, bb.min.z), SIMD3(bb.max.x, bb.min.y, bb.min.z),
                 SIMD3(bb.min.x, bb.max.y, bb.min.z), SIMD3(bb.max.x, bb.max.y, bb.min.z),
                 SIMD3(bb.min.x, bb.min.y, bb.max.z), SIMD3(bb.max.x, bb.min.y, bb.max.z),
                 SIMD3(bb.min.x, bb.max.y, bb.max.z), SIMD3(bb.max.x, bb.max.y, bb.max.z),
             ]
-            for corner in corners {
-                let world = self.transformPoint(corner, by: wt)
-                mn = simd_min(mn, world); mx = simd_max(mx, world)
+            for c in corners {
+                let w = ArcFluidEngine.xform(c, wt)
+                mn = simd_min(mn, w); mx = simd_max(mx, w)
             }
-            _ = geo
+            var elems: [ArcElemSnap] = []
+            for e in geo.elements where e.primitiveType == .triangles {
+                elems.append(ArcElemSnap(data: e.data, bytesPerIndex: e.bytesPerIndex,
+                                         primitiveCount: e.primitiveCount))
+            }
+            meshes.append(ArcMeshSnap(
+                name: name, world: wt,
+                pos: ArcSrcSnap(data: posSrc.data, stride: posSrc.dataStride,
+                                offset: posSrc.dataOffset, count: posSrc.vectorCount),
+                elems: elems))
         }
+        return ArcSceneSnap(meshes: meshes, boundsMin: mn, boundsMax: mx)
+    }
+
+    static func xform(_ p: SIMD3<Float>, _ m: SCNMatrix4) -> SIMD3<Float> {
+        SIMD3<Float>(m.m11*p.x + m.m21*p.y + m.m31*p.z + m.m41,
+                     m.m12*p.x + m.m22*p.y + m.m32*p.z + m.m42,
+                     m.m13*p.x + m.m23*p.y + m.m33*p.z + m.m43)
+    }
+
+    static func floats(_ src: ArcSrcSnap) -> [SIMD3<Float>] {
+        var verts = [SIMD3<Float>](); verts.reserveCapacity(src.count)
+        src.data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+            for i in 0..<src.count {
+                let base = src.offset + i * src.stride
+                guard base + 12 <= raw.count else { continue }
+                let x = raw.loadUnaligned(fromByteOffset: base, as: Float.self)
+                let y = raw.loadUnaligned(fromByteOffset: base + 4, as: Float.self)
+                let z = raw.loadUnaligned(fromByteOffset: base + 8, as: Float.self)
+                verts.append(SIMD3<Float>(x, y, z))
+            }
+        }
+        return verts
+    }
+
+    static func indices(_ e: ArcElemSnap) -> [Int] {
+        let count = e.primitiveCount * 3
+        var out = [Int](); out.reserveCapacity(count)
+        e.data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+            if e.bytesPerIndex == 2 {
+                for i in 0..<count {
+                    let base = i * 2; if base + 2 > raw.count { break }
+                    out.append(Int(raw.loadUnaligned(fromByteOffset: base, as: UInt16.self)))
+                }
+            } else {
+                for i in 0..<count {
+                    let base = i * 4; if base + 4 > raw.count { break }
+                    out.append(Int(raw.loadUnaligned(fromByteOffset: base, as: UInt32.self)))
+                }
+            }
+        }
+        return out
+    }
+
+    /// Any thread: world-space triangles (+ per-part ownership) from a snapshot.
+    static func buildTriangles(from snap: ArcSceneSnap, progress: (Double) -> Void) -> ArcBuiltGeometry {
+        var out = ArcBuiltGeometry(tris: [], owners: [], names: [], raw: [])
+        let total = max(1, snap.meshes.count)
+        for (mi, m) in snap.meshes.enumerated() {
+            let ownerIdx: Int
+            if let ex = out.names.firstIndex(of: m.name) { ownerIdx = ex }
+            else { out.names.append(m.name); out.raw.append([]); ownerIdx = out.names.count - 1 }
+            let verts = floats(m.pos)
+            for el in m.elems {
+                let idx = indices(el)
+                var i = 0
+                while i + 2 < idx.count {
+                    let i0 = idx[i], i1 = idx[i+1], i2 = idx[i+2]; i += 3
+                    guard i0 < verts.count, i1 < verts.count, i2 < verts.count else { continue }
+                    let v0 = xform(verts[i0], m.world)
+                    let v1 = xform(verts[i1], m.world)
+                    let v2 = xform(verts[i2], m.world)
+                    var n = simd_cross(v1 - v0, v2 - v0)
+                    let nlen = simd_length(n)
+                    guard nlen > 1e-6 else { continue }
+                    n /= nlen
+                    out.tris.append(ArcTriangle(v0: v0, v1: v1, v2: v2, normal: n, centroid: (v0 + v1 + v2) / 3))
+                    out.owners.append(Int32(ownerIdx))
+                    out.raw[ownerIdx].append(contentsOf: [v0, v1, v2])
+                }
+            }
+            progress(Double(mi + 1) / Double(total))
+        }
+        return out
+    }
+
+    /// Sim queue: fit the soft preset extent + the voxel domain to world bounds.
+    private func fitDomains(boundsMin mn: SIMD3<Float>, boundsMax mx: SIMD3<Float>) {
         if mx.x > mn.x {
+            let pad: Float = 3.0
+            W = max(30, (mx.x - mn.x) * pad)
+            H = max(30, (mx.y - mn.y) * pad)
+            D = max(30, (mx.z - mn.z) * pad)
             voxelGrid.fitDomain(min: mn, max: mx, targetResolution: 48)
         } else {
-            // No scene geometry yet — fall back to a reasonable default
-            // domain so the grid is still usable (e.g. generic spawn path).
             voxelGrid.fitDomain(min: SIMD3(-50,-50,-50), max: SIMD3(50,50,50), targetResolution: 48)
         }
     }
@@ -713,8 +953,8 @@ public final class ArcFluidEngine: ObservableObject {
 
     public func setScene(_ preset: ArcFluidScene) {
         scenePreset = preset
-        guard !pts.isEmpty else { return }
-        reshapeToPreset(preset)
+        guard !mainPts.isEmpty else { return }
+        simQueue.async { [weak self] in self?.reshapeToPreset(preset) }
     }
 
     /// v3.0: reshapes by reseeding the grid at the preset's defining
@@ -821,167 +1061,150 @@ public final class ArcFluidEngine: ObservableObject {
     }
 
     // MARK: — Grid step (Stam "Stable Fluids," SIGGRAPH 1999 — v3.0)
-    // Renamed from stepSPH to stepGrid; call site (Task.detached loop,
-    // 16.6ms cadence) and the `nonisolated func ... async` signature
-    // are unchanged so nothing above this needs to change.
-    nonisolated func stepGrid() async {
-        await MainActor.run {
-            guard isRunning else { return }
-            let p = mode.params
-            let dt: Float = 1.0 / 60.0  // grid solver dt — fixed, small, and
-            // genuinely safe here (unlike v2's dt=1.0) because semi-Lagrangian
-            // advection has no CFL stability requirement at any dt; this
-            // value is chosen for visual smoothness, not stability.
-            let gravity = SIMD3<Float>(0, -gravityScale * 9.8 * 0.25, 0)
+    // v4: runs on simQueue (never on main). See the threading note on the class.
 
-            syncMeshCollisionToGrid()
+    private func simTick(gen: Int) {
+        guard simRunning, gen == loopGen else { return }
+        let t0 = CACurrentMediaTime()
+        computeFrame()
+        let spent = CACurrentMediaTime() - t0
+        let delay = max(0.001, 1.0 / 60.0 - spent)
+        simQueue.asyncAfter(deadline: .now() + delay) { [weak self] in self?.simTick(gen: gen) }
+    }
 
-            // v3.1 fix (item 6): apply any combustion heat/exhaust-velocity
-            // written to the grid by the PREVIOUS tick's applyCombustionReaction
-            // BEFORE this tick's velocityStep/scalarStep run, so the heat
-            // actually feeds the physics instead of being a dead-end visual
-            // write (see applyCombustionReaction below — it now writes into
-            // voxelGrid cells directly, not just pts[]).
+    private func computeFrame() {
+        let p = mode.params
+        let dt: Float = 1.0 / 60.0
+        let gravity = SIMD3<Float>(0, -gravityScale * 9.8 * 0.25, 0)
+        simTickCount += 1
 
-            solver.viscosity = p.visc * 0.6
-            solver.thermalDiffusion = p.visc * 1.2 + 0.02
-            solver.ambientTempK = envTempK
-            solver.velocityStep(dt: dt, gravity: gravity)
-            solver.scalarStep(dt: dt)
+        syncMeshCollisionToGrid()
 
-            // v3.1 fix (item 2): advance the grid's empty-streak reclaim
-            // counter exactly once per tick here — NOT per Gauss-Seidel
-            // iteration inside the solver's diffuse/project loops. See
-            // ArcSparseVoxelGrid.advanceFrame's doc comment.
-            voxelGrid.advanceFrame()
-            liveWatchTick()
-            stepLeaks(dt: dt, gravity: gravity)
+        solver.viscosity = p.visc * 0.6
+        solver.thermalDiffusion = p.visc * 1.2 + 0.02
+        solver.ambientTempK = envTempK
+        solver.velocityStep(dt: dt, gravity: gravity)
+        solver.scalarStep(dt: dt)
+        voxelGrid.advanceFrame()
+        stepLeaks(dt: dt, gravity: gravity)
 
-            // Cavity-fill inlet re-injection (replaces per-particle reinject
-            // in v2's stream preset) — inject fresh density/temp/velocity at
-            // the inlet each step so flow keeps moving through the domain.
-            var inCount: Float = 0, outCount: Float = 0
-            if scenePreset == .stream {
-                let inletSpec = componentSpecs.first(where: { $0.isInlet })
-                if let iz = inletZone {
-                    let flowSpeed = Float(inletSpec?.inletFlowRate ?? 1.0) * 2.0
-                    let flowDir: SIMD3<Float>
-                    if let oz = outletZone {
-                        let d = oz - iz; let dl = simd_length(d)
-                        flowDir = dl > 0.01 ? d/dl : SIMD3<Float>(1,0,0)
-                    } else { flowDir = SIMD3<Float>(1,0,0) }
-                    solver.addSource(at: iz, density: 0.6, tempK: envTempK + 400,
-                                      velocity: flowDir * flowSpeed,
-                                      color: SIMD3(0.9,0.5,0.1), componentTag: -1)
-                    inCount = 1
-                }
+        var inCount: Float = 0, outCount: Float = 0
+        if scenePreset == .stream {
+            let inletSpec = simSpecs.first(where: { $0.isInlet })
+            if let iz = inletZone {
+                let flowSpeed = Float(inletSpec?.inletFlowRate ?? 1.0) * 2.0
+                let flowDir: SIMD3<Float>
                 if let oz = outletZone {
-                    // Sink: drain density at the outlet so the domain
-                    // doesn't saturate — mirrors v2's "particle reaches
-                    // outlet, reinject" behavior as continuous drain
-                    // instead of discrete teleport.
-                    //
-                    // v3.1 fix (item 9): the old code only read/halved
-                    // the single cell at the outlet zone CENTER, and
-                    // counted outCount from that one cell without
-                    // checking isSolid — so (a) fluid in neighboring
-                    // cells within outletRadius wasn't drained or
-                    // counted (outletFlow could read near-zero while
-                    // fluid was actually exiting), and (b) a solid
-                    // outlet cell still holding stale density from
-                    // before mesh sync could incorrectly count as
-                    // draining. Ported the pre-rebuild SPH code's
-                    // radius-based approach (drain/count every PARTICLE
-                    // within outletRadius) to grid cells: iterate every
-                    // cell whose world center falls within outletRadius
-                    // of the outlet zone, skip isSolid cells, halve
-                    // density on each qualifying cell, and count/
-                    // accumulate from the whole set.
-                    //
-                    // Units: outletZone/outletRadius are both plain
-                    // world-space scene units (outletZone is set
-                    // directly from a world-space hit position in
-                    // ArcMeshSelectorView; outletRadius defaults to 40,
-                    // matching that scale) — no SCALE factor needed or
-                    // reintroduced here, consistent with it being
-                    // dropped from the Swift sources during the v3.0
-                    // rebuild.
-                    let radius = outletRadius
-                    let radiusSq = radius * radius
-                    let cellsPerAxis = max(1, Int(ceil(radius / voxelGrid.cellSize)))
-                    let centerCoord = voxelGrid.cellCoord(of: oz)
-                    var drainedAny = false
-                    for dz in -cellsPerAxis...cellsPerAxis {
-                        for dy in -cellsPerAxis...cellsPerAxis {
-                            for dx in -cellsPerAxis...cellsPerAxis {
-                                let c = centerCoord &+ SIMD3<Int32>(Int32(dx), Int32(dy), Int32(dz))
-                                var cell = voxelGrid[c]
-                                guard !cell.isSolid else { continue }
-                                let center = voxelGrid.worldCenter(of: c)
-                                let d = center - oz
-                                guard simd_length_squared(d) <= radiusSq else { continue }
-                                if cell.density > 0.05 {
-                                    drainedAny = true
-                                    outCount += 1
-                                }
-                                cell.density *= 0.5
-                                voxelGrid[c] = cell
-                            }
+                    let d = oz - iz; let dl = simd_length(d)
+                    flowDir = dl > 0.01 ? d/dl : SIMD3<Float>(1,0,0)
+                } else { flowDir = SIMD3<Float>(1,0,0) }
+                solver.addSource(at: iz, density: 0.6, tempK: envTempK + 400,
+                                  velocity: flowDir * flowSpeed,
+                                  color: SIMD3(0.9,0.5,0.1), componentTag: -1)
+                inCount = 1
+            }
+            if let oz = outletZone {
+                let radius = outletRadius
+                let radiusSq = radius * radius
+                let cellsPerAxis = max(1, Int(ceil(radius / voxelGrid.cellSize)))
+                let centerCoord = voxelGrid.cellCoord(of: oz)
+                for dz in -cellsPerAxis...cellsPerAxis {
+                    for dy in -cellsPerAxis...cellsPerAxis {
+                        for dx in -cellsPerAxis...cellsPerAxis {
+                            let c = centerCoord &+ SIMD3<Int32>(Int32(dx), Int32(dy), Int32(dz))
+                            var cell = voxelGrid[c]
+                            guard !cell.isSolid else { continue }
+                            let center = voxelGrid.worldCenter(of: c)
+                            let d = center - oz
+                            guard simd_length_squared(d) <= radiusSq else { continue }
+                            if cell.density > 0.05 { outCount += 1 }
+                            cell.density *= 0.5
+                            voxelGrid[c] = cell
                         }
                     }
-                    _ = drainedAny
                 }
             }
-
-            // Reseed the visual particle layer from the grid's current state.
-            reseedParticlesFromGrid()
-
-            // Chemical combustion reaction in chamber — reads pts[].r/g/b +
-            // chamber bounding box (works against reseeded pts), and as of
-            // v3.1 also writes heat/exhaust-velocity into the grid cells
-            // under each reacting particle (see applyCombustionReaction).
-            if scenePreset == .stream { applyCombustionReaction() }
-
-            // Aggregate grid stats for the measure panel + thermal colormap,
-            // in the same shape updateThermalColormap/updateComponentMeasurements
-            // and ArcFluidMeasure already expect.
-            var sumRho: Float = 0, sumT: Float = 0, maxP: Float = 0
-            var sumSpd: Float = 0, totalKE: Float = 0, activeN = 0
-            for c in voxelGrid.activeCoords() {
-                let cell = voxelGrid[c]
-                guard !cell.isSolid, cell.density > 0.01 else { continue }
-                if floorHeatEnabled {
-                    floorHeat.deposit(pos: voxelGrid.worldCenter(of: c), density: cell.density,
-                                      temp01: min(1, max(0, (cell.tempK - envTempK) / max(1, 2000 - envTempK))))
-                }
-                activeN += 1
-                sumRho += cell.density
-                sumT += cell.tempK
-                let spd = simd_length(cell.velocity)
-                sumSpd += spd
-                totalKE += 0.5 * spd * spd
-                let pPa = max(0, cell.pressure) * 1000
-                maxP = max(maxP, pPa)
-            }
-
-            if floorHeatEnabled, let sc = scene { floorHeat.refresh(in: sc) }
-            if scene != nil { updateThermalColormap(sumT: sumT, maxP: maxP) }
-            updateComponentMeasurements(maxP: maxP)
-            uploadParticleCloud()
-            updateLeakPoints()
-
-            let avgSpd = activeN > 0 ? sumSpd / Float(activeN) : 0
-            let avgRho = activeN > 0 ? sumRho / Float(activeN) : 0
-            let avgT   = activeN > 0 ? sumT / Float(activeN) : envTempK
-            let L: Float = voxelGrid.cellSize * 8
-            let mu = max(1e-6, p.visc * 0.001)
-            let Re = (avgRho * avgSpd * L) / mu
-            measure = ArcFluidMeasure(
-                avgDensity: avgRho, avgSpeed: avgSpd, avgTempK: avgT,
-                reynoldsNum: Re, regime: Re<2300 ? "Laminar" : Re<4000 ? "Transitional" : "Turbulent",
-                particleCount: activeN, inletFlow: inCount, outletFlow: outCount,
-                totalKE: totalKE, maxPressurePa: maxP)
         }
+
+        reseedParticlesFromGrid()
+        if scenePreset == .stream { applyCombustionReaction() }
+
+        var sumRho: Float = 0, sumT: Float = 0, maxP: Float = 0
+        var sumSpd: Float = 0, totalKE: Float = 0, activeN = 0
+        let heatOn = floorHeatEnabled
+        for c in voxelGrid.activeCoords() {
+            let cell = voxelGrid[c]
+            guard !cell.isSolid, cell.density > 0.01 else { continue }
+            if heatOn {
+                floorHeat.deposit(pos: voxelGrid.worldCenter(of: c), density: cell.density,
+                                  temp01: min(1, max(0, (cell.tempK - envTempK) / max(1, 2000 - envTempK))))
+            }
+            activeN += 1
+            sumRho += cell.density
+            sumT += cell.tempK
+            let spd = simd_length(cell.velocity)
+            sumSpd += spd
+            totalKE += 0.5 * spd * spd
+            maxP = max(maxP, max(0, cell.pressure) * 1000)
+        }
+
+        let avgSpd = activeN > 0 ? sumSpd / Float(activeN) : 0
+        let avgRho = activeN > 0 ? sumRho / Float(activeN) : 0
+        let avgT   = activeN > 0 ? sumT / Float(activeN) : envTempK
+        let L: Float = voxelGrid.cellSize * 8
+        let mu = max(1e-6, p.visc * 0.001)
+        let Re = (avgRho * avgSpd * L) / mu
+        let meas = ArcFluidMeasure(
+            avgDensity: avgRho, avgSpeed: avgSpd, avgTempK: avgT,
+            reynoldsNum: Re, regime: Re<2300 ? "Laminar" : Re<4000 ? "Transitional" : "Turbulent",
+            particleCount: activeN, inletFlow: inCount, outletFlow: outCount,
+            totalKE: totalKE, maxPressurePa: maxP)
+
+        // Hand a finished frame to main only when main has consumed the last one:
+        // natural back-pressure, no artificial throttle on the simulation itself.
+        frameLock.lock()
+        let canEmit = !framePending
+        if canEmit { framePending = true }
+        frameLock.unlock()
+        guard canEmit else { return }
+
+        let splats = leaks.isActive ? leaks.splats() : []
+        let baked: ArcVolumetricFluidRenderer.BakedVolume? = particleVisual == .volumetric
+            ? ArcVolumetricFluidRenderer.bakeVolume(from: voxelGrid, envTempK: envTempK, leakSplats: splats)
+            : nil
+        let px = heatOn ? floorHeat.tonemapIfDue() : nil
+        var lpos: [Float] = [], lcol: [Float] = []
+        if particleVisual != .volumetric { (lpos, lcol) = leaks.pointArrays() }
+        var info: [String: String]? = nil
+        if simTickCount % 16 == 0 {
+            var d: [String: String] = [:]
+            for id in leaks.activeJointIDs {
+                if let st = leaks.status(for: id) {
+                    d[id] = String(format: "%.0f psi left of %.0f", st.psiLeft, st.psi0)
+                }
+            }
+            info = d
+        }
+        let frame = ArcSimFrame(measure: meas, maxP: maxP, pts: pts, baked: baked, floorPx: px,
+                                floorGeom: floorHeat.geometry, leakPos: lpos, leakCol: lcol, leakInfo: info)
+        DispatchQueue.main.async { [weak self] in self?.applyFrame(frame) }
+    }
+
+    /// Main thread: apply a finished frame to SceneKit / published state.
+    private func applyFrame(_ f: ArcSimFrame) {
+        defer { frameLock.lock(); framePending = false; frameLock.unlock() }
+        guard isRunning else { return }
+        mainPts = f.pts
+        measure = f.measure
+        if scene != nil { updateThermalColormap(sumT: 0, maxP: f.maxP) }
+        updateComponentMeasurements(maxP: f.maxP)
+        if floorHeatEnabled, let sc = scene, let px = f.floorPx {
+            floorHeat.applyImage(px, geometry: f.floorGeom, in: sc)
+        }
+        uploadParticleCloud(baked: f.baked)
+        updateLeakPoints(pos: f.leakPos, col: f.leakCol)
+        if let info = f.leakInfo, info != leakInfo { leakInfo = info }
+        liveWatchTick()
     }
 
     /// Marks grid cells touching scene mesh triangles as solid boundary
@@ -1039,7 +1262,7 @@ public final class ArcFluidEngine: ObservableObject {
     /// for normal mesh geometry at the configured targetResolution.
     private let maxCellsPerTriangle = 400
 
-    private func syncMeshCollisionToGrid() {
+    private func syncMeshCollisionToGrid(progress: ((Double) -> Void)? = nil) {
         guard !meshTriangles.isEmpty, !meshCollisionSynced else { return }
         meshCollisionSynced = true
         sealApplied = false
@@ -1054,7 +1277,12 @@ public final class ArcFluidEngine: ObservableObject {
         // find tight-passage cells during this one-time sync pass.
         var triangleDensity: [SIMD3<Int32>: Int] = [:]
 
+        let triTotal = meshTriangles.count
         for (triIdx, tri) in meshTriangles.enumerated() {
+            if triIdx & 1023 == 0 {
+                if loadCancelled { return }
+                progress?(Double(triIdx) / Double(max(1, triTotal)))
+            }
             let ownerBit: UInt64 = {
                 guard triIdx < meshTriangleOwner.count else { return 0 }
                 let o = Int(meshTriangleOwner[triIdx])
@@ -1106,7 +1334,7 @@ public final class ArcFluidEngine: ObservableObject {
             print("[ArcCFD] mesh sync: \(tightPassageCount) tight-passage cell(s) got fine-boundary refinement (\(voxelGrid.fineSolidCellCount) fine sub-cells total)")
         }
         lastTriangleDensity = triangleDensity
-        adaptiveFinePass()
+        adaptiveFinePass(progress: { frac in progress?(0.85 + 0.15 * frac) })
         applySealCuts()
     }
 
@@ -1145,9 +1373,10 @@ public final class ArcFluidEngine: ObservableObject {
     /// cells at the chosen subdivision; the global subdivision is the max
     /// requirement, reduced until the estimated cell count fits the budget.
     private static let partMinCells: Float = 14
-    private static let fineBudget = 250_000
+    /// Out-of-memory safety only (NOT an accuracy cap): ~8M fine cells is a few hundred MB of keys.
+    private static let fineSafetyCells = 8_000_000
 
-    private func adaptiveFinePass() {
+    private func adaptiveFinePass(progress: ((Double) -> Void)? = nil) {
         let h = voxelGrid.cellSize
         guard h > 0, !sealRawVerts.isEmpty else { return }
         var need: [Int] = []          // per-part desired subdivision
@@ -1167,7 +1396,7 @@ public final class ArcFluidEngine: ObservableObject {
             let sorted = [e.x, e.y, e.z].sorted()
             let thin = max(sorted[0], sorted[1] * 0.2, 1e-4)
             let n = Int(ceil(Self.partMinCells * h / thin))
-            need.append(max(1, min(6, n)))
+            need.append(max(1, min(8, n)))
             area.append(a)
         }
         var n = max(2, need.max() ?? 2)
@@ -1179,14 +1408,20 @@ public final class ArcFluidEngine: ObservableObject {
             for (i, a) in area.enumerated() where need[i] > 2 { total += a / (fs * fs) * 1.5 }
             return Int(total)
         }
-        while n > 2 && estimate(n) > Self.fineBudget { n -= 1 }
+        let requested = n
+        while n > 2 && estimate(n) > Self.fineSafetyCells { n -= 1 }
+        if n != requested {
+            print("[ArcCFD] adaptive fine walls: reduced subdivision \(requested)x -> \(n)x ONLY to stay inside the ~\(Self.fineSafetyCells)-cell memory safety limit")
+        }
         // Changing subdivision invalidates the tight-passage fine cells
         // (different key space): rebuild them at the new subdivision.
         voxelGrid.setFineSubdivision(n)
         let fs = h / Float(n)
         let sub = n
         var fineMarked = 0
+        let triCount = meshTriangles.count
         for (ti, tri) in meshTriangles.enumerated() {
+            if ti & 1023 == 0 { progress?(Double(ti) / Double(max(1, triCount))) }
             guard ti < meshTriangleOwner.count else { break }
             let o = Int(meshTriangleOwner[ti])
             if o >= need.count { continue }
@@ -1211,62 +1446,21 @@ public final class ArcFluidEngine: ObservableObject {
         print("[ArcCFD] adaptive fine walls: subdivision \(sub)x, \(fineMarked) triangle-accurate fine cell(s) for thin parts")
     }
 
-    // MARK: — Auto-seal detection + implied boolean cut-out
+    // MARK: — Auto-seal cut-out (sim queue) + live leaks
 
-    /// Kick off joint detection on a background task. Result lands in
-    /// `joints`; the grid cut-out is applied as soon as both the result and
-    /// the mesh-collision sync are available (whichever finishes last).
-    private func beginAutoSeal() {
-        sealGeneration += 1
-        joints = []
-        sealParts = []
-        sealApplied = false
-        guard autoSealEnabled, sealPartNames.count >= 2 else {
-            sealStatus = autoSealEnabled ? "No overlapping parts" : "Auto-seal off"
-            return
-        }
-        sealStatus = "Detecting joints…"
-        let gen = sealGeneration
-        let names = sealPartNames
-        let raw = sealRawVerts
-        Task.detached(priority: .utility) { [weak self] in
-            var parts: [ArcSealPart] = []
-            for (i, nm) in names.enumerated() {
-                parts.append(ArcSealPart(name: nm, verts: raw[i]))
-            }
-            let found = ArcAutoSeal.detect(parts: parts)
-            let finalParts = parts
-            await MainActor.run {
-                self?.finishAutoSeal(parts: finalParts, joints: found, generation: gen)
-            }
-        }
-    }
-
-    private func finishAutoSeal(parts: [ArcSealPart], joints found: [ArcSealJoint], generation: Int) {
-        guard generation == sealGeneration else { return }
-        sealParts = parts
-        joints = found
-        let nSealed = found.filter { $0.sealed }.count
-        sealStatus = found.isEmpty ? "No overlapping parts"
-            : "\(nSealed) sealed · \(found.count - nSealed) non-flowing"
-        applySealCuts()
-    }
-
-    /// Implied boolean cut: for each sealed joint, clear the receiver's
-    /// solid wall cells whose centers lie inside the other part's bore.
+    /// Sim queue. Implied boolean cut: for each sealed joint, clear the
+    /// receiver's solid wall cells whose centers lie inside the other part's bore.
     private func applySealCuts() {
-        guard !sealApplied, meshCollisionSynced, !joints.isEmpty, !sealParts.isEmpty else { return }
+        guard !sealApplied, meshCollisionSynced, !simJoints.isEmpty, !simSealParts.isEmpty else { return }
         sealApplied = true
         var cleared = 0
-        for j in joints where j.sealed {
-            guard let recvIdx = sealPartNames.firstIndex(of: j.receiver), recvIdx < 64,
-                  let other = sealParts.first(where: { $0.name == (j.receiver == j.partA ? j.partB : j.partA) })
+        for j in simJoints where j.sealed {
+            guard let recvIdx = simPartNames.firstIndex(of: j.receiver), recvIdx < 64,
+                  let other = simSealParts.first(where: { $0.name == (j.receiver == j.partA ? j.partB : j.partA) })
             else { continue }
             let recvBit = UInt64(1) << UInt64(recvIdx)
             let cMin = voxelGrid.cellCoord(of: j.zoneMin)
             let cMax = voxelGrid.cellCoord(of: j.zoneMax)
-            let total = (Int(cMax.x - cMin.x) + 1) * (Int(cMax.y - cMin.y) + 1) * (Int(cMax.z - cMin.z) + 1)
-            guard total > 0, total <= 400_000 else { continue }
             for zi in cMin.z...cMax.z {
                 for yi in cMin.y...cMax.y {
                     for xi in cMin.x...cMax.x {
@@ -1285,17 +1479,18 @@ public final class ArcFluidEngine: ObservableObject {
                 }
             }
         }
-        print("[ArcCFD] auto-seal: cut \(cleared) wall cell(s) across \(joints.filter { $0.sealed }.count) sealed joint(s)")
+        print("[ArcCFD] auto-seal: cut \(cleared) wall cell(s) across \(simJoints.filter { $0.sealed }.count) sealed joint(s)")
     }
 
-    // MARK: — Live leaks: watch, detect, convert
+    // MARK: Live leaks: watch (main) -> detect (bg) -> convert (sim)
 
+    /// Main thread.
     private func snapshotPartTransforms() {
         partSnapshots.removeAll(); movedParts.removeAll()
         liveFirstChange = 0; liveLastChange = 0; liveBusy = false; liveTick = 0
-        leaks.reset(); leakingJointIDs = []; leakInfo = [:]
+        leakingJointIDs = []; leakInfo = [:]
         guard let scene else { return }
-        for nm in sealPartNames {
+        for nm in mainPartNames {
             if let node = scene.rootNode.childNode(withName: nm, recursively: true) {
                 partSnapshots[nm] = node.simdWorldTransform
             }
@@ -1307,15 +1502,14 @@ public final class ArcFluidEngine: ObservableObject {
         return true
     }
 
-    /// Poll part transforms (~every 8 ticks); once motion has settled
-    /// (250 ms quiet, or 700 ms max wait) re-run seal detection.
+    /// Main thread: poll part transforms (~every 8 frames); once motion has
+    /// settled (250 ms quiet, or 700 ms max wait) re-run seal detection.
     private func liveWatchTick() {
-        guard liveLeaksEnabled, autoSealEnabled, let scene, !liveBusy,
-              sealPartNames.count >= 2, !sealParts.isEmpty else { return }
+        guard liveLeaksEnabled, autoSealEnabled, let scene, !liveBusy, sealReady else { return }
         liveTick += 1
         guard liveTick % 8 == 0 else { return }
         let now = Date.timeIntervalSinceReferenceDate
-        for nm in sealPartNames {
+        for nm in mainPartNames {
             guard let node = scene.rootNode.childNode(withName: nm, recursively: true) else { continue }
             let m = node.simdWorldTransform
             if let old = partSnapshots[nm] {
@@ -1340,35 +1534,47 @@ public final class ArcFluidEngine: ObservableObject {
         let moved = movedParts
         movedParts.removeAll()
         liveFirstChange = 0
-        extractMeshGeometry(from: scene)          // fresh world-space triangles
-        let names = sealPartNames
-        let raw = sealRawVerts
-        let old = sealParts
+        let snap = collectSceneSnapshot(scene)       // main, cheap
         let gen = sealGeneration
-        Task.detached(priority: .utility) { [weak self] in
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self else { return }
+            let built = ArcFluidEngine.buildTriangles(from: snap) { _ in }
+            let oldParts: [ArcSealPart] = await self.onSim { self.simSealParts }
             var parts: [ArcSealPart] = []
-            for (i, nm) in names.enumerated() {
-                if !moved.contains(nm), let reuse = old.first(where: { $0.name == nm }) {
+            for (i, nm) in built.names.enumerated() {
+                if !moved.contains(nm), let reuse = oldParts.first(where: { $0.name == nm }) {
                     parts.append(reuse)
                 } else {
-                    parts.append(ArcSealPart(name: nm, verts: raw[i]))
+                    parts.append(ArcSealPart(name: nm, verts: built.raw[i]))
                 }
             }
             let found = ArcAutoSeal.detect(parts: parts, involving: moved)
             let finalParts = parts
+            let res: (joints: [ArcSealJoint], leaking: Set<String>, status: String)? = await self.onSim {
+                self.finishLiveUpdateOnSim(built: built, parts: finalParts, oldParts: oldParts,
+                                           found: found, moved: moved)
+            }
             await MainActor.run {
-                self?.finishLiveUpdate(parts: finalParts, found: found, moved: moved, generation: gen)
+                self.liveBusy = false
+                guard gen == self.sealGeneration, let res else { return }
+                self.joints = res.joints
+                self.leakingJointIDs = res.leaking
+                self.sealStatus = res.status
             }
         }
     }
 
-    private func finishLiveUpdate(parts: [ArcSealPart], found: [ArcSealJoint],
-                                  moved: Set<String>, generation: Int) {
-        defer { liveBusy = false }
-        guard generation == sealGeneration, isRunning else { return }
-        let oldParts = sealParts
-        let prev = joints
-        sealParts = parts
+    /// Sim queue.
+    private func finishLiveUpdateOnSim(built: ArcBuiltGeometry, parts: [ArcSealPart], oldParts: [ArcSealPart],
+                                       found: [ArcSealJoint], moved: Set<String>)
+        -> (joints: [ArcSealJoint], leaking: Set<String>, status: String)? {
+        guard simRunning else { return nil }
+        meshTriangles = built.tris
+        meshTriangleOwner = built.owners
+        simPartNames = built.names
+        sealRawVerts = built.raw
+        simSealParts = parts
+        let prev = simJoints
 
         var merged = prev.filter { !(moved.contains($0.partA) || moved.contains($0.partB)) }
         merged.append(contentsOf: found)
@@ -1386,11 +1592,11 @@ public final class ArcFluidEngine: ObservableObject {
                 if liveLeaksEnabled { openLeak(for: j, oldParts: oldParts, newParts: parts) }
             }
         }
-        joints = merged
+        simJoints = merged
 
         // Re-sealed joints: return unspent particles to the grid.
         for id in leaks.activeJointIDs {
-            if joints.first(where: { $0.id == id })?.sealed == true {
+            if merged.first(where: { $0.id == id })?.sealed == true {
                 let back = leaks.close(jointID: id)
                 for (pos, w) in back {
                     solver.addSource(at: pos, density: w, tempK: envTempK, velocity: .zero,
@@ -1398,21 +1604,23 @@ public final class ArcFluidEngine: ObservableObject {
                 }
             }
         }
-        leakingJointIDs = leaks.activeJointIDs
 
         // Re-rasterise walls from the moved geometry; the next tick's sync
         // also re-applies the cut-outs for whichever joints are sealed now.
         voxelGrid.clearSolidCells()
         meshCollisionSynced = false
         sealApplied = false
-        let nSealed = joints.filter { $0.sealed }.count
-        sealStatus = "\(nSealed) sealed · \(joints.count - nSealed) non-flowing"
-            + (leakingJointIDs.isEmpty ? "" : " · \(leakingJointIDs.count) leaking")
+        let nSealed = merged.filter { $0.sealed }.count
+        let leaking = leaks.activeJointIDs
+        let status = "\(nSealed) sealed · \(merged.count - nSealed) non-flowing"
+            + (leaking.isEmpty ? "" : " · \(leaking.count) leaking")
+        return (merged, leaking, status)
     }
 
+    /// Sim queue.
     private func openLeak(for j: ArcSealJoint, oldParts: [ArcSealPart], newParts: [ArcSealPart]) {
-        let pa = componentSpecs.first(where: { $0.nodeName == j.partA })?.pressurePsi ?? 0
-        let pb = componentSpecs.first(where: { $0.nodeName == j.partB })?.pressurePsi ?? 0
+        let pa = simSpecs.first(where: { $0.nodeName == j.partA })?.pressurePsi ?? 0
+        let pb = simSpecs.first(where: { $0.nodeName == j.partB })?.pressurePsi ?? 0
         let sourceName = pa >= pb ? j.partA : j.partB
         // Fluid still sits where the source part WAS, so test against its old mesh.
         guard let src = oldParts.first(where: { $0.name == sourceName }) else { return }
@@ -1430,8 +1638,6 @@ public final class ArcFluidEngine: ObservableObject {
         outDir = simd_length_squared(outDir) < 1e-8 ? SIMD3<Float>(0, -1, 0) : simd_normalize(outDir)
 
         let lo = voxelGrid.cellCoord(of: src.bmin), hi = voxelGrid.cellCoord(of: src.bmax)
-        let total = (Int(hi.x - lo.x) + 1) * (Int(hi.y - lo.y) + 1) * (Int(hi.z - lo.z) + 1)
-        guard total > 0, total <= 400_000 else { return }
         var found: [(SIMD3<Int32>, Float)] = []
         var mass: Float = 0
         for zi in lo.z...hi.z { for yi in lo.y...hi.y { for xi in lo.x...hi.x {
@@ -1445,35 +1651,27 @@ public final class ArcFluidEngine: ObservableObject {
         }}}
         guard mass > 0.05 else { return }
         found.sort { $0.1 < $1.1 }
-        let cells = found.prefix(4000).map { $0.0 }
+        let cells = found.map { $0.0 }
         leaks.open(jointID: j.id, source: sourceName, gap: gap, outDir: outDir,
-                   radius: j.radius, p0Psi: p0, cells: Array(cells), mass0: mass)
+                   radius: j.radius, p0Psi: p0, cells: cells, mass0: mass)
         print("[ArcCFD] live leak OPEN \(j.partA)<->\(j.partB): \(cells.count) source cells, P0 \(p0) psi")
     }
 
+    /// Sim queue.
     private func stepLeaks(dt: Float, gravity: SIMD3<Float>) {
         guard leaks.isActive else { return }
         let span = voxelGrid.domainMax - voxelGrid.domainMin
         let scale = max(0.05, max(span.x, max(span.y, span.z)) / 10)
         leaks.step(dt: dt, grid: voxelGrid, envTempK: envTempK, ambientPa: envPressurePa,
                    gravity: gravity * scale, scale: scale, floorY: voxelGrid.domainMin.y)
-        if liveTick % 16 == 0 {
-            var info: [String: String] = [:]
-            for id in leaks.activeJointIDs {
-                if let s = leaks.status(for: id) {
-                    info[id] = String(format: "%.0f psi left of %.0f", s.psiLeft, s.psi0)
-                }
-            }
-            if info != leakInfo { leakInfo = info }
-        }
     }
 
-    /// Plume as a point cloud in the non-volumetric visual modes (volumetric
-    /// mode splats it into the ray-march volume instead).
-    private func updateLeakPoints() {
+    /// Main thread: plume as a point cloud in the non-volumetric visual modes
+    /// (volumetric mode splats it into the ray-march volume instead).
+    private func updateLeakPoints(pos: [Float], col: [Float]) {
         guard let scene else { return }
-        guard particleVisual != .volumetric, leaks.isActive,
-              let geo = leaks.makePointGeometry(sprite: ArcFluidEngine.softDotSprite) else {
+        guard particleVisual != .volumetric, !pos.isEmpty,
+              let geo = ArcLiveLeaks.pointGeometry(pos: pos, col: col, sprite: ArcFluidEngine.softDotSprite) else {
             leakNode?.removeFromParentNode(); leakNode = nil
             return
         }
@@ -1601,8 +1799,8 @@ public final class ArcFluidEngine: ObservableObject {
             let cell = voxelGrid[c]
             let center = voxelGrid.worldCenter(of: c)
             let perM3: Float
-            if cell.componentTag >= 0, Int(cell.componentTag) < componentSpecs.count {
-                perM3 = max(0.01, componentSpecs[Int(cell.componentTag)].particlesPerM3Visible)
+            if cell.componentTag >= 0, Int(cell.componentTag) < simSpecs.count {
+                perM3 = max(0.01, simSpecs[Int(cell.componentTag)].particlesPerM3Visible)
             } else {
                 perM3 = max(0.01, fallbackPerM3)
             }
@@ -1627,8 +1825,8 @@ public final class ArcFluidEngine: ObservableObject {
             for nc in voxelGrid.neighbors6(of: c) {
                 let n = voxelGrid[nc]
                 guard n.isSolid else { continue }
-                if n.componentTag >= 0, Int(n.componentTag) < componentSpecs.count {
-                    componentHit = componentSpecs[Int(n.componentTag)].displayName
+                if n.componentTag >= 0, Int(n.componentTag) < simSpecs.count {
+                    componentHit = simSpecs[Int(n.componentTag)].displayName
                 } else {
                     componentHit = "wall"
                 }
@@ -1666,7 +1864,7 @@ public final class ArcFluidEngine: ObservableObject {
             // Find max temp/pressure of particles near this node
             var nearMaxT: Float = self.envTempK; var nearMaxP: Float = 0
             let searchR: Float = self.smoothingH * 4
-            for p in self.pts {
+            for p in self.mainPts {
                 let dx = p.x - worldPos.x
                 let dy = p.y - worldPos.y
                 let dz = p.z - worldPos.z
@@ -1719,7 +1917,7 @@ public final class ArcFluidEngine: ObservableObject {
             let wpos = node.worldPosition
             var nearMaxT: Float = envTempK; var nearMaxP: Float = 0; var hitCount = 0
             let r = smoothingH * 6
-            for p in pts {
+            for p in mainPts {
                 let dx=p.x-wpos.x, dy=p.y-wpos.y, dz=p.z-wpos.z
                 if dx*dx+dy*dy+dz*dz < r*r {
                     nearMaxT = max(nearMaxT, p.tempK)
@@ -1867,14 +2065,14 @@ public final class ArcFluidEngine: ObservableObject {
     // writes it makes are read by solver.velocityStep/scalarStep at the
     // START of the NEXT tick — see the comment at that call site.
     private func applyCombustionReaction() {
-        guard let chamberSpec = componentSpecs.first(where: { $0.isCombustionChamber }) else { return }
+        guard let chamberSpec = simSpecs.first(where: { $0.isCombustionChamber }) else { return }
         // Chamber bounds are in world space — particles are in world space
         let domMin = chamberSpec.boundingMin
         let domMax = chamberSpec.boundingMax
         let reactionHeat = ArcCombustionFlow.reactionHeat(
             fuel: .fuel, oxidizer: .oxidizer,
-            fuelMoleculeSymbols: currentFuelSymbols,
-            oxidizerMoleculeSymbols: currentOxidizerSymbols)
+            fuelMoleculeSymbols: simFuel,
+            oxidizerMoleculeSymbols: simOx)
 
         var fuelInChamber   = [Int]()
         var oxInChamber     = [Int]()
@@ -1929,8 +2127,12 @@ public final class ArcFluidEngine: ObservableObject {
     }
 
     // Molecule symbols for the active fuel/oxidizer — set externally
-    public var currentFuelSymbols:     [String] = ["H","H","C"]
-    public var currentOxidizerSymbols: [String] = ["O","O"]
+    public var currentFuelSymbols:     [String] = ["H","H","C"] {
+        didSet { let c = currentFuelSymbols; simQueue.async { [weak self] in self?.simFuel = c } }
+    }
+    public var currentOxidizerSymbols: [String] = ["O","O"] {
+        didSet { let c = currentOxidizerSymbols; simQueue.async { [weak self] in self?.simOx = c } }
+    }
 
     // MARK: — Normalize component origins to geometric center
     /// Resets each named mesh node's geometry so its pivot is at its bounding box center.
@@ -1968,21 +2170,26 @@ public final class ArcFluidEngine: ObservableObject {
                                      scene: SCNScene, gravityScale: Float,
                                      envTempK: Float) {
         guard count > 0 else { return }
-        // Ensure engine is started
-        if !isRunning {
+        // Ensure engine is started (UI-driven fill before any ignite): bring up
+        // the loop without the full pipeline.
+        if !isRunning && !isLoading {
             self.scene = scene
             self.envTempK = envTempK
             self.gravityScale = gravityScale
             isRunning = true
             buildCloudNode(scene)
-            // Start tick loop
-            simTask = Task.detached(priority: .userInitiated) { [weak self] in
-                while !Task.isCancelled {
-                    await self?.stepGrid()
-                    try? await Task.sleep(nanoseconds: 16_666_667)
-                }
-            }
+            simQueue.async { [weak self] in self?.beginLoopOnSim() }
         }
+        let tag = Int32(componentSpecs.firstIndex(where: { $0.nodeName == spec.nodeName }) ?? -1)
+        simQueue.async { [weak self] in
+            self?.fillCavityOnSim(spec: spec, count: count, propellant: propellant,
+                                  tag: tag, envTempK: envTempK)
+        }
+    }
+
+    /// Sim queue: seed the voxel grid for one component's cavity.
+    private func fillCavityOnSim(spec: ArcComponentSpec, count: Int, propellant: ArcPropellant,
+                                 tag: Int32, envTempK: Float) {
         let syms = propellant.elements.isEmpty ? ["H","H","O"] : propellant.elements
         let col3 = syms.isEmpty ? SIMD3<Float>(0.7,0.7,1) : colorFor(syms[0])
 
@@ -2018,7 +2225,6 @@ public final class ArcFluidEngine: ObservableObject {
             pressurePsi: Float(spec.pressurePsi),
             densityKgM3: Float(propellant.densityKgM3))
         let initialVy = -min(flowVel * 0.08, 2.0)  // gentle initial push downward
-        let tag = Int32(componentSpecs.firstIndex(where: { $0.nodeName == spec.nodeName }) ?? -1)
 
         var added = 0
         let jitter = step * 0.18
@@ -2043,7 +2249,7 @@ public final class ArcFluidEngine: ObservableObject {
         let node = SCNNode(); node.name = "arcFluidCloud"
         scene.rootNode.addChildNode(node)
         cloudNode = node
-        uploadParticleCloud()
+        uploadParticleCloud(baked: nil)
     }
 
     // Volumetric mode's own node, kept separate from cloudNode (the
@@ -2054,8 +2260,9 @@ public final class ArcFluidEngine: ObservableObject {
     // cloudNode and is torn down alongside it in stop().
     private var volumetricNode: SCNNode?
 
-    private func uploadParticleCloud() {
+    private func uploadParticleCloud(baked: ArcVolumetricFluidRenderer.BakedVolume?) {
         guard let cloudNode else { return }
+        let pts = mainPts   // main-side copy of the sim's particle layer
 
         // Volumetric mode reads voxelGrid directly, not pts — density
         // lives in the simulation grid every tick regardless of whether
@@ -2065,13 +2272,11 @@ public final class ArcFluidEngine: ObservableObject {
         if particleVisual == .volumetric {
             cloudNode.geometry = nil // no point-cloud geometry in this mode
             guard let scene else { return }
-            ArcVolumetricFluidRenderer.leakSplats = leaks.isActive ? leaks.splats() : []
             ArcVolumetricFluidRenderer.xray = xrayGlow
-            volumetricNode = ArcVolumetricFluidRenderer.updateVolumetricNode(
-                in: scene,
-                existingNode: volumetricNode,
-                grid: voxelGrid,
-                envTempK: envTempK)
+            if let baked {
+                volumetricNode = ArcVolumetricFluidRenderer.applyVolumetricNode(
+                    in: scene, existingNode: volumetricNode, baked: baked)
+            }
             return
         } else if let volumetricNode {
             // Switched away from volumetric mode — remove its node so it
@@ -2279,3 +2484,5 @@ public final class ArcFluidEngine: ObservableObject {
 
 
 
+
+extension ArcFluidEngine: @unchecked Sendable {}
