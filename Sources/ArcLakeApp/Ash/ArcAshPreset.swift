@@ -41,6 +41,7 @@ public enum ArcAshPresetError: LocalizedError {
     }
 }
 
+@MainActor
 public enum ArcModulePreset {
     public static let schemaID = "arclake.module-preset"
     public static let version = 1
