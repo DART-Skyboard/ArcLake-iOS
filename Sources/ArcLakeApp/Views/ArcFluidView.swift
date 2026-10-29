@@ -481,7 +481,16 @@ struct ArcFluidView: View {
             // here (cheap: just reads a stored property) and then calling
             // the nonisolated download method on the captured reference
             // keeps the actual multi-MB network fetch off the main actor.
-            let mantis = await MainActor.run { labVM.mantis }
+            // MantisNavModel.labVM is a weak back-reference that is normally only
+            // wired when the Mantis Nav panel appears. From the Fluid tab it is
+            // still nil, so loadRemoteAsset() saw no scene and failed with
+            // "No active scene" (the 404-406 'demo button does nothing' report).
+            // Link it here, on the main actor, before any load.
+            let mantis = await MainActor.run { () -> MantisNavModel in
+                let m = labVM.mantis
+                if m.labVM == nil { m.labVM = labVM }
+                return m
+            }
             var downloadErr: String?
             let preDownloadedURL: URL?
             do {
