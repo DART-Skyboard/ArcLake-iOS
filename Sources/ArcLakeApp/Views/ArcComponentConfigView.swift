@@ -358,7 +358,7 @@ struct ArcComponentConfigView: View {
                             .frame(width: 70)
                         Text("kg").font(.system(size: 9, design: .monospaced)).foregroundColor(.white.opacity(0.4))
                     }
-                    if let line = ArcFluidEngine.shared.tankStatus[s.nodeName] {
+                    if let line = eng.tankStatus[s.nodeName] {
                         Text(line).font(.system(size: 8, design: .monospaced)).foregroundColor(.cyan.opacity(0.8))
                     }
                     // Auto-detected flow info — hardcoded dictionary first,
@@ -417,6 +417,25 @@ struct ArcComponentConfigView: View {
                         GridRow {
                             mono("Max Pressure").frame(maxWidth:.infinity,alignment:.leading)
                             accent("\(Int(s.alloy.maxPressureMPa)) MPa")
+                        }
+                    }
+                    HStack {
+                        mono("Wall thickness")
+                        Slider(value: Binding(
+                            get: { s.wallMm },
+                            set: { v in updateSpec { $0.wallMm = v } }
+                        ), in: 0.2...40).tint(.orange)
+                        accent(String(format: "%.1f mm", s.wallMm))
+                    }
+                    mono(String(format: "E %.0f GPa · yield %.0f MPa · cp %.0f J/kg·K · ε %.2f",
+                                s.alloy.modulusGPa, s.alloy.tensileStrengthMPa, s.alloy.specificHeat, s.alloy.emissivity))
+                    if let w = eng.wallStatus[s.nodeName] {
+                        mono(String(format: "Wall %.0f K · hoop %.1f MPa · yield(T) %.0f MPa · %.0f%%",
+                                    w.tempK, w.hoopMPa, w.yieldMPa, w.ratio * 100))
+                        if let warn = w.warning {
+                            Text(warn)
+                                .font(.system(size: 8, weight: .bold, design: .monospaced))
+                                .foregroundColor(w.ratio >= 1 || w.tempRatio >= 1 ? .red : .orange)
                         }
                     }
                 }

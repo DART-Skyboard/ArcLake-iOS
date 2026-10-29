@@ -778,6 +778,8 @@ final class ArcAshFluidModule: ArcAshModule {
         b.num("maxPressureMPa", a.maxPressureMPa)
         b.num("specificHeat", a.specificHeat)
         b.num("emissivity", a.emissivity)
+        b.num("modulusGPa", a.modulusGPa)
+        b.str("matId", a.matId)
         return b.json
     }
     static func apply(alloy j: ArcJSON, to a: inout ArcAlloySpec) {
@@ -789,6 +791,8 @@ final class ArcAshFluidModule: ArcAshModule {
         if let v = j.dbl("maxPressureMPa") { a.maxPressureMPa = v }
         if let v = j.dbl("specificHeat") { a.specificHeat = v }
         if let v = j.dbl("emissivity") { a.emissivity = v }
+        if let v = j.dbl("modulusGPa") { a.modulusGPa = v }
+        if let v = j.str("matId") { a.matId = v }
     }
 
     /// Only user-configured fields — never the computed/live ones
@@ -806,6 +810,8 @@ final class ArcAshFluidModule: ArcAshModule {
         b.num("particlesPerM3Visible", s.particlesPerM3Visible)
         b.num("pressurePsi", s.pressurePsi)
         b.num("massKg", s.massKg)
+        b.str("matId", s.matId)
+        b.num("wallMm", s.wallMm)
         b.flag("isCombustionChamber", s.isCombustionChamber)
         if let f = s.fluidType { b.str("fluidType", f.rawValue) } else { b.set("fluidType", .null) }
         if let k = s.geometricKind { b.str("geometricKind", k.rawValue) } else { b.set("geometricKind", .null) }
@@ -816,6 +822,7 @@ final class ArcAshFluidModule: ArcAshModule {
     }
 
     static func apply(part j: ArcJSON, to s: inout ArcComponentSpec, alloyOnly: Bool = false) {
+        if let m = j.str("matId"), let pre = ArcAlloySpec.preset(id: m) { s.alloy = pre }
         if let a = j.dict("alloy") {
             var al = s.alloy
             apply(alloy: a, to: &al)
@@ -830,6 +837,7 @@ final class ArcAshFluidModule: ArcAshModule {
         if let v = j.first(["particlesPerM3Visible", "particleDensity"])?.doubleValue { s.particlesPerM3Visible = Float(v) }
         if let v = j.first(["pressurePsi", "pressure_psi"])?.doubleValue { s.pressurePsi = v }
         if let v = j.first(["massKg", "mass"])?.doubleValue { s.massKg = max(0, v) }
+        if let v = j.first(["wallMm", "wall_mm"])?.doubleValue { s.wallMm = min(200, max(0.05, v)) }
         if let v = j.first(["isCombustionChamber", "combustionChamber"])?.boolValue { s.isCombustionChamber = v }
         if let f = j.first(["fluidType", "fluid"])?.stringValue {
             s.fluidType = ArcCombustionFlow.FluidType(rawValue: f.capitalized)

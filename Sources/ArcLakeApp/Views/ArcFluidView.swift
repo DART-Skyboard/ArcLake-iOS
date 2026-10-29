@@ -380,6 +380,18 @@ struct ArcFluidView: View {
                             .font(.system(size:7,design:.monospaced))
                             .foregroundColor(.white.opacity(0.3))
                     }
+                    if !eng.linkDiag.isEmpty {
+                        Text("LINK DIAGNOSTIC")
+                            .font(.system(size:7,weight:.bold,design:.monospaced))
+                            .foregroundColor(.white.opacity(0.5))
+                        ForEach(eng.linkDiag) { d in
+                            Text(String(format: "%@ · bore r %.3f · %.1f voxels across · %@ · %@",
+                                        d.name, d.bore, d.voxelsAcross,
+                                        d.connected ? "connected" : "NOT connected", d.note))
+                                .font(.system(size:7,design:.monospaced))
+                                .foregroundColor(d.connected ? Color.green.opacity(0.75) : Color.red.opacity(0.85))
+                        }
+                    }
                 }
             }
 

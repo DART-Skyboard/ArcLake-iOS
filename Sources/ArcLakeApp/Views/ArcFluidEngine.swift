@@ -109,15 +109,36 @@ public struct ArcAlloySpec: Identifiable {
     public var specificHeat: Double = 500        // J/(kg·K)
     public var emissivity: Double = 0.85
 
-    // Common alloys
-    static let steel   = ArcAlloySpec(name:"Steel A36",    densityKgM3:7850, thermalConductivity:50,  tensileStrengthMPa:400, maxTempK:1700, maxPressureMPa:200, specificHeat:490)
-    static let titanium = ArcAlloySpec(name:"Ti-6Al-4V",   densityKgM3:4430, thermalConductivity:7.2, tensileStrengthMPa:950, maxTempK:1940, maxPressureMPa:400, specificHeat:560)
-    static let aluminum = ArcAlloySpec(name:"Al 6061-T6",  densityKgM3:2700, thermalConductivity:167, tensileStrengthMPa:310, maxTempK:900,  maxPressureMPa:120, specificHeat:896)
-    static let inconel  = ArcAlloySpec(name:"Inconel 718", densityKgM3:8190, thermalConductivity:11.4,tensileStrengthMPa:1240,maxTempK:2740, maxPressureMPa:600, specificHeat:435)
-    static let copper   = ArcAlloySpec(name:"Copper C110",  densityKgM3:8960, thermalConductivity:391,tensileStrengthMPa:220, maxTempK:1356, maxPressureMPa:80,  specificHeat:385)
-    static let carbon   = ArcAlloySpec(name:"Carbon Fiber", densityKgM3:1600, thermalConductivity:7,  tensileStrengthMPa:3500,maxTempK:700,  maxPressureMPa:250, specificHeat:710)
+    public var matId: String = "steel"
+    public var modulusGPa: Double = 200          // Young's modulus
+    /// maxTempK doubles as the service-temperature limit (yield derates to 0 there).
+    func yieldMPa(atK t: Double) -> Double {
+        let span = max(1, maxTempK - 293)
+        let x = min(1, max(0, (t - 293) / span))
+        return tensileStrengthMPa * max(0, 1 - x * x)
+    }
 
-    static let presets: [ArcAlloySpec] = [.steel, .titanium, .aluminum, .inconel, .copper, .carbon]
+    // Material presets: id, name, density, E, yield, k, cp, emissivity, service max T
+    fileprivate static func mat(_ id: String, _ name: String, rho: Double, E: Double, yield y: Double,
+                            k: Double, cp: Double, eps: Double, tmax: Double) -> ArcAlloySpec {
+        var a = ArcAlloySpec(name: name, densityKgM3: rho, thermalConductivity: k,
+                             tensileStrengthMPa: y, maxTempK: tmax,
+                             maxPressureMPa: max(20, y * 0.5), specificHeat: cp, emissivity: eps)
+        a.matId = id; a.modulusGPa = E
+        return a
+    }
+    static let steel    = ArcAlloySpec.mat("steel",     "Industrial steel", rho: 7850, E: 200, yield: 250,  k: 50,   cp: 490, eps: 0.80, tmax: 1050)
+    static let stainless = ArcAlloySpec.mat("ss316l",   "Stainless 316L",   rho: 8000, E: 193, yield: 170,  k: 16,   cp: 500, eps: 0.40, tmax: 1150)
+    static let titanium = ArcAlloySpec.mat("ti6al4v",   "Ti-6Al-4V",        rho: 4430, E: 114, yield: 880,  k: 6.7,  cp: 526, eps: 0.30, tmax: 900)
+    static let aluminum = ArcAlloySpec.mat("al7075",    "Al 7075-T6",       rho: 2810, E: 71.7, yield: 503, k: 130,  cp: 960, eps: 0.10, tmax: 450)
+    static let alli     = ArcAlloySpec.mat("al2195",    "Al-Li 2195",       rho: 2710, E: 76,  yield: 560,  k: 90,   cp: 900, eps: 0.10, tmax: 470)
+    static let copper   = ArcAlloySpec.mat("cucrzr",    "CuCrZr",           rho: 8900, E: 128, yield: 320,  k: 320,  cp: 390, eps: 0.30, tmax: 850)
+    static let inconel  = ArcAlloySpec.mat("inconel718", "Inconel 718",     rho: 8190, E: 200, yield: 1030, k: 11.4, cp: 435, eps: 0.50, tmax: 1250)
+    static let carbon   = ArcAlloySpec.mat("carbon",    "Carbon composite", rho: 1600, E: 70,  yield: 600,  k: 5,    cp: 800, eps: 0.85, tmax: 450)
+    static let glass    = ArcAlloySpec.mat("glass",     "Glass",            rho: 2500, E: 70,  yield: 50,   k: 1.1,  cp: 840, eps: 0.90, tmax: 800)
+
+    static let presets: [ArcAlloySpec] = [.steel, .stainless, .titanium, .aluminum, .alli, .copper, .inconel, .carbon, .glass]
+    static func preset(id: String) -> ArcAlloySpec? { presets.first { $0.matId == id } }
 }
 
 // MARK: — Combustion flow graph (pre-wired for Combustion_flow.glb)
@@ -206,6 +227,9 @@ public struct ArcComponentSpec: Identifiable {
     public var pressurePsi: Double = 100      // operating pressure
     /// Fluid mass in kg for a container (0 = derive from volume x density).
     public var massKg: Double = 0
+    /// Wall thickness for the hoop-stress / wall heat model (millimetres).
+    public var wallMm: Double = 3
+    public var matId: String { get { alloy.matId } set { if let a = ArcAlloySpec.preset(id: newValue) { alloy = a } } }
     public var isCombustionChamber = false
     public var fluidType: ArcCombustionFlow.FluidType? = nil
     public var boundingMin: SIMD3<Float> = .zero
@@ -376,8 +400,18 @@ public final class ArcFluidEngine: ObservableObject {
     public var modelUnitMeters: Float = 0.0254
     private var simContinuous = true
     private let finite = ArcFiniteFluid()
+    /// Fitted tube bores of thin / elongated parts (sim queue).
+    private var tubeBores: [String: ArcTubeBore] = [:]
+    /// Link diagnostic readout (bore, voxels across, connected, first failing spot).
+    @Published var linkDiag: [ArcLinkDiag] = []
     /// Main-thread readout of each container's live state (fill, psi, note).
     @Published public var tankStatus: [String: String] = [:]
+    /// Per-part wall temperature / hoop-stress state (materials model).
+    @Published var wallStatus: [String: ArcWallState] = [:]
+    private var wallTemps: [String: Float] = [:]
+    private var wallClock: CFTimeInterval = 0
+    private var wallTick = 0
+    private var wallBase: [ObjectIdentifier: (mat: SCNMaterial, color: UIColor)] = [:]
 
     // Inlet/outlet zone centers (set from ArcMeshSelectorView)
     public var inletZone:  SIMD3<Float>? = nil
@@ -760,6 +794,7 @@ public final class ArcFluidEngine: ObservableObject {
         leakingJointIDs = []; leakInfo = [:]
         movedParts.removeAll(); liveBusy = false
         restoreXrayShells()
+        restoreWallTint()
         // Remove thermal coloring from all mesh nodes
         scene?.rootNode.enumerateChildNodes { node, _ in
             node.geometry?.materials.forEach { m in
@@ -1174,7 +1209,7 @@ public final class ArcFluidEngine: ObservableObject {
         if finite.isActive, simTickCount % 2 == 0 {
             finite.step(dt: dt * 2, grid: voxelGrid, solver: solver, specs: simSpecs, joints: simJoints,
                         continuous: simContinuous, envPa: envPressurePa, unitM: modelUnitMeters,
-                        envTempK: envTempK)
+                        envTempK: envTempK, tubes: tubeBores)
         }
 
         var inCount: Float = 0, outCount: Float = 0
@@ -1289,6 +1324,7 @@ public final class ArcFluidEngine: ObservableObject {
         if scene != nil { updateThermalColormap(sumT: 0, maxP: f.maxP) }
         updateComponentMeasurements(maxP: f.maxP)
         if let ts = f.tankStates { applyTankStates(ts) }
+        updateWalls()
         if floorHeatEnabled, let sc = scene, let px = f.floorPx {
             floorHeat.applyImage(px, geometry: f.floorGeom, in: sc)
         }
@@ -1427,6 +1463,97 @@ public final class ArcFluidEngine: ObservableObject {
         lastTriangleDensity = triangleDensity
         adaptiveFinePass(progress: { frac in progress?(0.85 + 0.15 * frac) })
         applySealCuts()
+        applyTubeBores()
+    }
+
+    // MARK: — Thin-channel tube bores (sim queue)
+    private func applyTubeBores() {
+        tubeBores.removeAll()
+        guard !simSealParts.isEmpty else { return }
+        let h = voxelGrid.cellSize
+        var diags: [ArcLinkDiag] = []
+        for part in simSealParts {
+            guard let spec = simSpecs.first(where: { $0.nodeName == part.name }),
+                  !ArcFiniteFluid.isContainer(spec), !spec.isCombustionChamber else { continue }
+            let ln = spec.displayName.lowercased()
+            if ln.contains("chamber") || ln.contains("nozzle") || ln.contains("combustion") || ln.contains("throat") { continue }
+            guard ArcTubeFit.looksThin(name: spec.displayName, kind: spec.geometricKind,
+                                       ext: part.bmax - part.bmin),
+                  let tube = ArcTubeFit.fit(part: part) else { continue }
+            let bit: UInt64 = {
+                guard let i = simPartNames.firstIndex(of: part.name), i < 64 else { return 0 }
+                return UInt64(1) << UInt64(i)
+            }()
+            var fail: SIMD3<Float>? = nil
+            var usedCells: Float = 0
+            for f in [Float(0.75), 1.25, 2.0] {
+                let rFree = max(tube.bore, f * h)
+                carveTube(tube, free: rFree, ownerBit: bit)
+                usedCells = rFree / h
+                fail = firstBlocked(along: tube, ownerBit: bit)
+                if fail == nil { break }
+            }
+            tubeBores[tube.name] = tube
+            let across = 2 * tube.bore / h
+            var note = across < 2 ? String(format: "bore under 2 voxels, widened to %.1f cells in the grid", usedCells * 2) : "resolved"
+            if let fp = fail { note = String(format: "BLOCKED near (%.2f, %.2f, %.2f)", fp.x, fp.y, fp.z) }
+            diags.append(ArcLinkDiag(name: spec.displayName, bore: tube.bore, voxelsAcross: across,
+                                     connected: fail == nil, failAt: fail, note: note))
+        }
+        if !diags.isEmpty { print("[ArcCFD] tube bores fitted: \(diags.map { $0.name }.joined(separator: ", "))") }
+        DispatchQueue.main.async { [weak self] in self?.linkDiag = diags }
+    }
+
+    private func carveTube(_ tube: ArcTubeBore, free rFree: Float, ownerBit: UInt64) {
+        let h = voxelGrid.cellSize
+        let band = max(tube.outer, rFree + h * 0.9)
+        let pad = SIMD3<Float>(repeating: band + h)
+        let lo = voxelGrid.cellCoord(of: tube.bboxMin - pad)
+        let hi = voxelGrid.cellCoord(of: tube.bboxMax + pad)
+        guard lo.x <= hi.x, lo.y <= hi.y, lo.z <= hi.z else { return }
+        for zi in lo.z...hi.z { for yi in lo.y...hi.y { for xi in lo.x...hi.x {
+            let c = SIMD3<Int32>(xi, yi, zi)
+            let center = voxelGrid.worldCenter(of: c)
+            let d = tube.distance(to: center)
+            guard d.isFinite, d <= band else { continue }
+            let owners = cellOwners[c] ?? 0
+            let shared = ownerBit != 0 && (owners & ~ownerBit) != 0
+            var cell = voxelGrid[c]
+            if d <= rFree {
+                guard cell.isSolid, !shared else { continue }
+                cell.isSolid = false
+                cell.solidNormal = .zero
+                voxelGrid[c] = cell
+                unmarkFineSolidSubcells(of: c)
+            } else if !cell.isSolid {
+                // Analytic tube wall: keep fluid inside the bore.
+                cell = voxelGrid.ensure(c)
+                cell.isSolid = true
+                cell.density = 0
+                cell.velocity = .zero
+                let c2 = tube.pts.min(by: { simd_length_squared($0 - center) < simd_length_squared($1 - center) }) ?? center
+                let n = center - c2
+                cell.solidNormal = simd_length(n) > 1e-6 ? simd_normalize(n) : SIMD3<Float>(0, 1, 0)
+                voxelGrid[c] = cell
+            }
+        }}}
+    }
+
+    /// First solid cell along the bore centerline owned by something else
+    /// (a plug / wall in the way); nil when the channel is open end to end.
+    private func firstBlocked(along tube: ArcTubeBore, ownerBit: UInt64) -> SIMD3<Float>? {
+        let h = voxelGrid.cellSize
+        for i in 0..<(tube.pts.count - 1) {
+            let a = tube.pts[i], b = tube.pts[i + 1]
+            let len = simd_length(b - a)
+            let n = max(1, Int(len / (0.5 * h)))
+            for s in 0...n {
+                let p = a + (b - a) * (Float(s) / Float(n))
+                let c = voxelGrid.cellCoord(of: p)
+                if voxelGrid[c].isSolid { return p }
+            }
+        }
+        return nil
     }
 
     /// Bisect `tri` on its longest edge until each piece's cell span is
@@ -1964,26 +2091,33 @@ public final class ArcFluidEngine: ObservableObject {
                     nearMaxP = max(nearMaxP, p.pressure)
                 }
             }
-            // Map temp to color: cool=blue → warm=orange → hot=red/white
+            // Wall temperature + hoop stress drive the shell tint (visible through
+            // the translucent X-ray shells); fluid heat/pressure still contribute.
+            let ws = self.wallLatest[nm] ?? self.wallStatus[nm]
             let tNorm = min(1, max(0, (nearMaxT - self.envTempK) / max(1, 2000 - self.envTempK)))
             let pNorm = min(1, max(0, nearMaxP / max(1, maxP + 1)))
-            let heat  = max(tNorm, pNorm * 0.6)  // blend thermal + pressure
-            let heatColor = self.thermalColor(heat)
-            // Apply as emissive tint to give thermal glow without destroying diffuse
+            let wallT = ws.map { min(1, $0.tempRatio) } ?? tNorm
+            let stress = ws.map { min(1.2, $0.ratio) } ?? 0
+            let heat  = max(wallT, min(1, stress * 0.85), pNorm * 0.4)
+            var heatColor = self.thermalColor(heat)
+            if stress >= 1 { heatColor = SIMD3<Float>(1, 0.05, 0.45) }   // overstressed
             node.geometry?.materials.forEach { mat in
-                let orig = (mat.diffuse.contents as? UIColor) ?? .white
+                let key = ObjectIdentifier(mat)
+                if self.wallBase[key] == nil {
+                    self.wallBase[key] = (mat, (mat.diffuse.contents as? UIColor) ?? .white)
+                }
+                let orig = self.wallBase[key]?.color ?? .white
                 var r:CGFloat=0,g:CGFloat=0,b:CGFloat=0,a:CGFloat=1
                 orig.getRed(&r,green:&g,blue:&b,alpha:&a)
-                // Lerp toward heat color
-                let blend: CGFloat = CGFloat(heat) * 0.45
+                let blend: CGFloat = CGFloat(heat) * 0.55
                 let nr = r*(1-blend)+CGFloat(heatColor.x)*blend
                 let ng = g*(1-blend)+CGFloat(heatColor.y)*blend
                 let nb = b*(1-blend)+CGFloat(heatColor.z)*blend
                 mat.diffuse.contents = UIColor(red:nr,green:ng,blue:nb,alpha:a)
                 mat.emission.contents = UIColor(
-                    red:  CGFloat(heatColor.x)*CGFloat(heat)*0.3,
-                    green:CGFloat(heatColor.y)*CGFloat(heat)*0.1,
-                    blue: 0, alpha: 1)
+                    red:  CGFloat(heatColor.x)*CGFloat(heat)*0.6,
+                    green:CGFloat(heatColor.y)*CGFloat(heat)*0.6,
+                    blue: CGFloat(heatColor.z)*CGFloat(heat)*0.6, alpha: 1)
             }
         }
     }
@@ -2010,6 +2144,37 @@ public final class ArcFluidEngine: ObservableObject {
                                                        st.fill * 100, st.psi, st.massKg, st.note)
         }
         if lines != tankStatus { tankStatus = lines }
+    }
+
+    /// Main: advance each part's wall temperature and hoop stress.
+    private func updateWalls() {
+        let now = CACurrentMediaTime()
+        let dt = Float(min(0.1, max(0.001, wallClock == 0 ? 0.016 : now - wallClock)))
+        wallClock = now
+        var out: [String: ArcWallState] = [:]
+        for s in componentSpecs {
+            let tw0 = wallTemps[s.nodeName] ?? envTempK
+            let gaugePa = max(0, Float(s.currentPressureMPa) * 1e6 - envPressurePa)
+            let st = ArcWallModel.step(spec: s, wallK: tw0, gasK: Float(s.currentTempK),
+                                       gasPresent: s.currentTempK > Double(envTempK) + 5,
+                                       gaugePa: gaugePa, envK: envTempK, dt: dt,
+                                       unitM: modelUnitMeters)
+            wallTemps[s.nodeName] = st.tempK
+            out[s.nodeName] = st
+        }
+        wallTick += 1
+        if wallTick % 6 == 0 { wallStatus = out } else { wallLatest = out }
+    }
+    private var wallLatest: [String: ArcWallState] = [:]
+
+    /// Restore part colours tinted by the thermal / stress map.
+    private func restoreWallTint() {
+        for (_, e) in wallBase {
+            e.mat.diffuse.contents = e.color
+            e.mat.emission.contents = UIColor.black
+        }
+        wallBase.removeAll(); wallTemps.removeAll(); wallClock = 0
+        wallStatus = [:]; wallLatest = [:]
     }
 
     private func updateComponentMeasurements(maxP: Float) {

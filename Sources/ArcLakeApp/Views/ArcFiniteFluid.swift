@@ -87,7 +87,8 @@ final class ArcFiniteFluid {
 
     func step(dt: Float, grid: ArcSparseVoxelGrid, solver: ArcStableFluidSolver,
               specs: [ArcComponentSpec], joints: [ArcSealJoint],
-              continuous: Bool, envPa: Float, unitM: Float, envTempK: Float) {
+              continuous: Bool, envPa: Float, unitM: Float, envTempK: Float,
+              tubes: [String: ArcTubeBore] = [:]) {
         guard !tanks.isEmpty else { return }
         var specIdx: [String: Int] = [:]
         for (i, s) in specs.enumerated() { specIdx[s.nodeName] = i }
@@ -161,11 +162,30 @@ final class ArcFiniteFluid {
                     A = min(A, Float.pi * r * r)
                 }
             }
+            var segs: [(a: Float, len: Float)] = []
+            var bends = 0
             for nm in seq.dropFirst() where tanks[nm] == nil {
-                if let i = specIdx[nm] {
+                if let tb = tubes[nm] {
+                    let a = Float.pi * tb.bore * tb.bore * unitM * unitM
+                    A = min(A, a)
+                    segs.append((a, tb.length * unitM))
+                    bends += tb.bends
+                } else if let i = specIdx[nm] {
                     let s = specs[i].boundingMax - specs[i].boundingMin
                     let d = [abs(s.x), abs(s.y), abs(s.z)].sorted()
-                    A = min(A, 0.7854 * d[0] * d[1] * unitM * unitM)
+                    let a = 0.7854 * d[0] * d[1] * unitM * unitM
+                    A = min(A, a)
+                    if d[2] > 3 * max(1e-6, d[1]) { segs.append((a, d[2] * unitM)) }
+                }
+            }
+            // Direction changes between consecutive path parts count as bends.
+            if seq.count >= 3 {
+                for k in 1..<(seq.count - 1) {
+                    if let a = center(seq[k - 1]), let b = center(seq[k]), let c = center(seq[k + 1]) {
+                        let d0 = b - a, d1 = c - b
+                        if simd_length(d0) > 1e-6, simd_length(d1) > 1e-6,
+                           simd_dot(simd_normalize(d0), simd_normalize(d1)) < 0.866 { bends += 1 }
+                    }
                 }
             }
             guard A.isFinite, A > 1e-12 else { st.note = "no flow area"; continue }
@@ -202,15 +222,17 @@ final class ArcFiniteFluid {
                 }
             }
             guard dP > 50 else { st.note = "no pressure differential"; continue }
-            let mdot = 0.7 * A * sqrt(2 * t.rho * dP)
-            let mdot0 = 0.7 * A * sqrt(2 * t.rho * max(dP0, 1))
+            let fl = ArcChannelPhysics.flow(dP: dP, rho: t.rho, aRef: A, segments: segs, bends: bends, tempK: envTempK)
+            let fl0 = ArcChannelPhysics.flow(dP: max(dP0, 1), rho: t.rho, aRef: A, segments: segs, bends: bends, tempK: envTempK)
+            let mdot = fl.mdot
+            let mdot0 = fl0.mdot
             let ts = t.mass0 / (max(mdot0, 1e-9) * max(1, drainSeconds))
             var dm = mdot * ts * dt
             if f < 0.01 && !continuous { dm = t.mass }
             if !continuous { dm = min(dm, t.mass) }
             let take = dm / t.mass0 * t.d0
             let vmax = 45 * cellH
-            let vScene = vmax * min(1, max(0.25, sqrt(dP / max(dP0, 1))))
+            let vScene = vmax * min(1, max(0.25, fl.v / max(1e-6, fl0.v)))
             st.flowing = true
             st.note = goalTank ? "transfer" : "venting"
             plans.append(Plan(tank: name, seq: seq, toTank: goalTank, take: take, vScene: vScene,
