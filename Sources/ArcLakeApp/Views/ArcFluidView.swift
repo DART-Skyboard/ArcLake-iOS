@@ -335,6 +335,18 @@ struct ArcFluidView: View {
                         set:{ eng.particleVisual = $0 ? .volumetric : .points }), tint: .green)
                     toggleRow("X-ray interior glow", isOn: $eng.xrayGlow, tint: .cyan)
                     toggleRow("Continuous flow", isOn: $eng.continuousFlow, tint: .mint)
+                    HStack {
+                        Text("Propulsion").font(.system(size:10,design:.monospaced)).foregroundColor(.white.opacity(0.8))
+                        Spacer()
+                        Picker("Propulsion", selection: $eng.propulsion) {
+                            ForEach(ArcPropulsion.allCases) { p in Text(p.rawValue).tag(p) }
+                        }
+                        .pickerStyle(.menu)
+                        .tint(.orange)
+                    }
+                    Text(eng.propulsionSummary)
+                        .font(.system(size:7,design:.monospaced))
+                        .foregroundColor(.orange.opacity(0.8))
                     toggleRow("Floor thermal map", isOn: $eng.floorHeatEnabled, tint: .orange)
                     if let msg = eng.volumetricStatus {
                         Text(msg)

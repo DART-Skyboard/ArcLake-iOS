@@ -347,7 +347,7 @@ public final class ArcFluidEngine: ObservableObject {
     @Published public var gravityScale: Float = 1.0
     @Published public var smoothingH:   Float = 1.5   // scene-unit SPH radius
     @Published public var envTempK:     Float = 293    // from scene environment physics
-    @Published public var envPressurePa: Float = 101325
+    @Published public var envPressurePa: Float = 101325 { didSet { if envPressurePa != oldValue { syncPlume() } } }
     @Published public var measure     = ArcFluidMeasure()
 
     // Component material specs — one per mesh node in scene
@@ -400,6 +400,27 @@ public final class ArcFluidEngine: ObservableObject {
     public var modelUnitMeters: Float = 0.0254
     private var simContinuous = true
     private let finite = ArcFiniteFluid()
+    /// Rocket exhaust preset (nozzle physics + plume regime).
+    @Published public var propulsion = ArcPropulsion.bell {
+        didSet {
+            guard propulsion != oldValue else { return }
+            if let pa = propulsion.params.ambientPa { if oldValue.params.ambientPa == nil { savedEnvPa = envPressurePa }; envPressurePa = pa }
+            else if oldValue.params.ambientPa != nil { envPressurePa = savedEnvPa }
+            syncPlume()
+        }
+    }
+    private var savedEnvPa: Float = 101325
+    /// Ground restitution for the exhaust wall jet.
+    public var groundRestitution: Float = 0.25
+    private var simPlume: ArcPlumeParams? = nil
+    /// One-line nozzle readout (Me, ve, pe, Te, regime).
+    public var propulsionSummary: String {
+        ArcNozzle.plume(propulsion, ambientPa: envPressurePa)?.summary ?? "Legacy exhaust (no nozzle model)"
+    }
+    func syncPlume() {
+        let p = ArcNozzle.plume(propulsion, ambientPa: envPressurePa)
+        simQueue.async { [weak self] in self?.simPlume = p }
+    }
     /// Fitted tube bores of thin / elongated parts (sim queue).
     private var tubeBores: [String: ArcTubeBore] = [:]
     /// Link diagnostic readout (bore, voxels across, connected, first failing spot).
@@ -466,6 +487,8 @@ public final class ArcFluidEngine: ObservableObject {
     private let leaks = ArcLiveLeaks()
     private var leakNode: SCNNode?
     private var partSnapshots: [String: simd_float4x4] = [:]
+    /// Transform each part had when its fluid was last carried along (live update).
+    private var partApplied: [String: simd_float4x4] = [:]
     private var movedParts = Set<String>()
     private var liveFirstChange: TimeInterval = 0
     private var liveLastChange: TimeInterval = 0
@@ -695,6 +718,7 @@ public final class ArcFluidEngine: ObservableObject {
             self.installGeometry(built, parts: sealResult.parts, joints: sealResult.joints)
             self.voxelGrid.removeAll()
             self.finite.reset()
+            self.simPlume = ArcNozzle.plume(self.propulsion, ambientPa: self.envPressurePa)
             self.meshCollisionSynced = false
             self.fitDomains(boundsMin: bMin, boundsMax: bMax)
             let p = self.mode.params
@@ -1209,8 +1233,9 @@ public final class ArcFluidEngine: ObservableObject {
         if finite.isActive, simTickCount % 2 == 0 {
             finite.step(dt: dt * 2, grid: voxelGrid, solver: solver, specs: simSpecs, joints: simJoints,
                         continuous: simContinuous, envPa: envPressurePa, unitM: modelUnitMeters,
-                        envTempK: envTempK, tubes: tubeBores)
+                        envTempK: envTempK, tubes: tubeBores, plume: simPlume)
         }
+        if finite.isActive { applyGround() }
 
         var inCount: Float = 0, outCount: Float = 0
         if scenePreset == .stream && !finite.isActive {
@@ -1711,6 +1736,7 @@ public final class ArcFluidEngine: ObservableObject {
         for nm in mainPartNames {
             if let node = scene.rootNode.childNode(withName: nm, recursively: true) {
                 partSnapshots[nm] = node.simdWorldTransform
+                partApplied[nm] = node.simdWorldTransform
             }
         }
     }
@@ -1752,6 +1778,27 @@ public final class ArcFluidEngine: ObservableObject {
         let moved = movedParts
         movedParts.removeAll()
         liveFirstChange = 0
+        // Per-part transform delta since the fluid last followed it + refreshed bounds.
+        var deltas: [String: simd_float4x4] = [:]
+        for nm in moved {
+            guard let node = scene.rootNode.childNode(withName: nm, recursively: true) else { continue }
+            let cur = node.simdWorldTransform
+            if let old = partApplied[nm] { deltas[nm] = cur * old.inverse }
+            partApplied[nm] = cur
+            if let i = componentSpecs.firstIndex(where: { $0.nodeName == nm }) {
+                let bb = node.boundingBox
+                var lo = SIMD3<Float>(repeating: Float.infinity), hi = SIMD3<Float>(repeating: -Float.infinity)
+                for ix in 0..<2 { for iy in 0..<2 { for iz in 0..<2 {
+                    let lp = SIMD3<Float>(ix == 0 ? bb.min.x : bb.max.x, iy == 0 ? bb.min.y : bb.max.y,
+                                          iz == 0 ? bb.min.z : bb.max.z)
+                    let wp = self.transformPoint(lp, by: node.worldTransform)
+                    lo = simd_min(lo, wp); hi = simd_max(hi, wp)
+                }}}
+                componentSpecs[i].boundingMin = lo
+                componentSpecs[i].boundingMax = hi
+            }
+        }
+        let frozenDeltas = deltas
         let snap = collectSceneSnapshot(scene)       // main, cheap
         let gen = sealGeneration
         Task.detached(priority: .userInitiated) { [weak self] in
@@ -1770,7 +1817,7 @@ public final class ArcFluidEngine: ObservableObject {
             let finalParts = parts
             let res: (joints: [ArcSealJoint], leaking: Set<String>, status: String)? = await self.onSim {
                 self.finishLiveUpdateOnSim(built: built, parts: finalParts, oldParts: oldParts,
-                                           found: found, moved: moved)
+                                           found: found, moved: moved, deltas: frozenDeltas)
             }
             await MainActor.run {
                 self.liveBusy = false
@@ -1784,7 +1831,8 @@ public final class ArcFluidEngine: ObservableObject {
 
     /// Sim queue.
     private func finishLiveUpdateOnSim(built: ArcBuiltGeometry, parts: [ArcSealPart], oldParts: [ArcSealPart],
-                                       found: [ArcSealJoint], moved: Set<String>)
+                                       found: [ArcSealJoint], moved: Set<String>,
+                                       deltas: [String: simd_float4x4])
         -> (joints: [ArcSealJoint], leaking: Set<String>, status: String)? {
         guard simRunning else { return nil }
         meshTriangles = built.tris
@@ -1812,6 +1860,11 @@ public final class ArcFluidEngine: ObservableObject {
         }
         simJoints = merged
 
+        // Fluid follows its moved part (translation / rotation / scale), except the
+        // fluid of a part whose seal just broke: that hands off to the leak system.
+        moveFluidWithParts(oldParts: oldParts, deltas: deltas,
+                           skip: Set(leaks.groups.map { $0.source }))
+
         // Re-sealed joints: return unspent particles to the grid.
         for id in leaks.activeJointIDs {
             if merged.first(where: { $0.id == id })?.sealed == true {
@@ -1833,6 +1886,80 @@ public final class ArcFluidEngine: ObservableObject {
         let status = "\(nSealed) sealed · \(merged.count - nSealed) non-flowing"
             + (leaking.isEmpty ? "" : " · \(leaking.count) leaking")
         return (merged, leaking, status)
+    }
+
+    /// Sim queue: the domain floor is a collision body. Downward flow reflects with
+    /// restitution; the lost normal momentum feeds the tangential wall jet.
+    private func applyGround() {
+        let h = voxelGrid.cellSize
+        let fy = voxelGrid.domainMin.y
+        let e = groundRestitution
+        let axis = finite.lastExit
+        for c in voxelGrid.activeCoords() {
+            var cell = voxelGrid[c]
+            guard !cell.isSolid, cell.density > 0.003 else { continue }
+            let ctr = voxelGrid.worldCenter(of: c)
+            guard ctr.y < fy + 0.75 * h else { continue }
+            if cell.velocity.y < 0 {
+                let vn = -cell.velocity.y
+                cell.velocity.y = vn * e
+                var tx = cell.velocity.x, tz = cell.velocity.z
+                var tl = sqrt(tx * tx + tz * tz)
+                if tl < 1e-3 {
+                    let ox = ctr.x - (axis?.pos.x ?? ctr.x), oz = ctr.z - (axis?.pos.z ?? ctr.z)
+                    let ol = sqrt(ox * ox + oz * oz)
+                    if ol > 1e-4 { tx = ox / ol; tz = oz / ol; tl = 1 } else { tx = 0; tz = 0; tl = 0 }
+                }
+                if tl > 0 {
+                    let boost = (1 - e) * vn * 0.8
+                    cell.velocity.x += tx / tl * boost
+                    cell.velocity.z += tz / tl * boost
+                }
+            }
+            if ctr.y < fy - 0.25 * h {
+                // Below the floor: lift the fluid into the cell above instead of losing it.
+                let up = SIMD3<Int32>(c.x, c.y + 1, c.z)
+                var above = voxelGrid.ensure(up)
+                if !above.isSolid {
+                    above.density = min(1, above.density + cell.density)
+                    above.tempK = max(above.tempK, cell.tempK)
+                    voxelGrid[up] = above
+                    cell.density = 0
+                }
+            }
+            voxelGrid[c] = cell
+        }
+    }
+
+    /// Sim queue: carry the grid fluid that sits inside each moved part along with it.
+    private func moveFluidWithParts(oldParts: [ArcSealPart], deltas: [String: simd_float4x4], skip: Set<String>) {
+        struct Mv { var pos: SIMD3<Float>; var cell: ArcVoxelCell; var vel: SIMD3<Float> }
+        var moves: [Mv] = []
+        for (name, d) in deltas where !skip.contains(name) {
+            guard let src = oldParts.first(where: { $0.name == name }) else { continue }
+            let lo = voxelGrid.cellCoord(of: src.bmin), hi = voxelGrid.cellCoord(of: src.bmax)
+            guard lo.x <= hi.x, lo.y <= hi.y, lo.z <= hi.z else { continue }
+            for zi in lo.z...hi.z { for yi in lo.y...hi.y { for xi in lo.x...hi.x {
+                let c = SIMD3<Int32>(xi, yi, zi)
+                let cell = voxelGrid[c]
+                guard !cell.isSolid, cell.density > 0.02 else { continue }
+                let center = voxelGrid.worldCenter(of: c)
+                guard src.isInside(center) else { continue }
+                let np = d * SIMD4<Float>(center.x, center.y, center.z, 1)
+                let nv = d * SIMD4<Float>(cell.velocity.x, cell.velocity.y, cell.velocity.z, 0)
+                moves.append(Mv(pos: SIMD3<Float>(np.x, np.y, np.z), cell: cell,
+                                vel: SIMD3<Float>(nv.x, nv.y, nv.z)))
+                var cleared = cell
+                cleared.density = 0
+                cleared.velocity = .zero
+                voxelGrid[c] = cleared
+            }}}
+        }
+        for m in moves {
+            solver.addSource(at: m.pos, density: m.cell.density, tempK: m.cell.tempK, velocity: m.vel,
+                             color: SIMD3<Float>(m.cell.r, m.cell.g, m.cell.b), componentTag: m.cell.componentTag)
+        }
+        if !moves.isEmpty { print("[ArcCFD] fluid follows moved parts: \(moves.count) cell(s)") }
     }
 
     /// Sim queue.
@@ -2713,7 +2840,7 @@ public final class ArcFluidEngine: ObservableObject {
     // transparent sprite, used as the point-sprite texture for all
     // point-cloud visual modes so individual particles fade softly at
     // their edge instead of rendering as hard-edged squares/circles.
-    private static let softDotSprite: UIImage = {
+    static let softDotSprite: UIImage = {
         let size: CGFloat = 32
         let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size))
         return renderer.image { ctx in

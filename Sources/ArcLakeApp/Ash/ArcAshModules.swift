@@ -759,6 +759,7 @@ final class ArcAshFluidModule: ArcAshModule {
         engine.floorHeatEnabled = true
         engine.xrayGlow = true
         engine.continuousFlow = true
+        engine.propulsion = .bell
     }
 
     private func specsChanged(_ names: [String]) {
@@ -867,6 +868,7 @@ final class ArcAshFluidModule: ArcAshModule {
         g.flag("floorHeatEnabled", engine.floorHeatEnabled)
         g.flag("xrayGlow", engine.xrayGlow)
         g.flag("continuousFlow", engine.continuousFlow)
+        g.str("propulsion", engine.propulsion.rawValue)
         if !ArcAshFluidExtensions.registry.isEmpty {
             var ext: [String: ArcJSON] = [:]
             for (k, e) in ArcAshFluidExtensions.registry { ext[k] = e.capture() }
@@ -902,6 +904,7 @@ final class ArcAshFluidModule: ArcAshModule {
         if let v = g.flag("floorHeatEnabled") { engine.floorHeatEnabled = v }
         if let v = g.flag("xrayGlow") { engine.xrayGlow = v }
         if let v = g.flag("continuousFlow") { engine.continuousFlow = v }
+        if let v = arcAshEnum(g.str("propulsion"), ArcPropulsion.self) { engine.propulsion = v }
         if let ext = g.dict("extensions")?.objectValue {
             for (k, v) in ext { ArcAshFluidExtensions.registry[k]?.apply(v) }
         }

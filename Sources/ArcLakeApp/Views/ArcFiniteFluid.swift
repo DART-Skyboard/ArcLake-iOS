@@ -39,6 +39,8 @@ final class ArcFiniteFluid {
     /// real-time scale of the visual; the physics ratio is Bernoulli).
     var drainSeconds: Float = 60
     var isActive: Bool { !tanks.isEmpty }
+    /// Last exhaust mouth (position, direction) — used by the ground wall-jet.
+    private(set) var lastExit: (pos: SIMD3<Float>, dir: SIMD3<Float>)? = nil
 
     func reset() { tanks.removeAll(); states.removeAll() }
 
@@ -83,12 +85,13 @@ final class ArcFiniteFluid {
         var vScene: Float
         var exitPos: SIMD3<Float>
         var exitDir: SIMD3<Float>
+        var exitR: Float
     }
 
     func step(dt: Float, grid: ArcSparseVoxelGrid, solver: ArcStableFluidSolver,
               specs: [ArcComponentSpec], joints: [ArcSealJoint],
               continuous: Bool, envPa: Float, unitM: Float, envTempK: Float,
-              tubes: [String: ArcTubeBore] = [:]) {
+              tubes: [String: ArcTubeBore] = [:], plume: ArcPlumeParams? = nil) {
         guard !tanks.isEmpty else { return }
         var specIdx: [String: Int] = [:]
         for (i, s) in specs.enumerated() { specIdx[s.nodeName] = i }
@@ -193,6 +196,7 @@ final class ArcFiniteFluid {
             // Exit mouth (open end of the chain) + plug test.
             var exitPos = SIMD3<Float>.zero
             var exitDir = SIMD3<Float>(0, -1, 0)
+            var exitR: Float = cellH
             var dP: Float
             let dP0: Float = max(0, t.p0Psi - pEnvPsi) * 6894.76
             if goalTank, let ot = tanks[g] {
@@ -212,6 +216,9 @@ final class ArcFiniteFluid {
                     var dir = SIMD3<Float>.zero
                     dir[ax] = delta[ax] >= 0 ? 1 : -1
                     exitDir = dir
+                    let pe1 = (ax + 1) % 3, pe2 = (ax + 2) % 3
+                    exitR = max(cellH * 0.6, 0.25 * ((bmax[pe1] - bmin[pe1]) + (bmax[pe2] - bmin[pe2])))
+                    lastExit = (c + dir * ((bmax[ax] - bmin[ax]) * 0.5), dir)
                     let half = (bmax[ax] - bmin[ax]) * 0.5
                     exitPos = c + dir * (half + cellH * 1.2)
                     let pc = grid.cellCoord(of: exitPos + dir * cellH)
@@ -236,7 +243,7 @@ final class ArcFiniteFluid {
             st.flowing = true
             st.note = goalTank ? "transfer" : "venting"
             plans.append(Plan(tank: name, seq: seq, toTank: goalTank, take: take, vScene: vScene,
-                              exitPos: exitPos, exitDir: exitDir))
+                              exitPos: exitPos, exitDir: exitDir, exitR: exitR))
         }
 
         // ── Grid pass: density per member node ──
@@ -292,6 +299,35 @@ final class ArcFiniteFluid {
             }
         }
 
+        func injectPlume(_ q: Float, plume pm: ArcPlumeParams, pl: Plan) {
+            guard q > 1e-5 else { return }
+            let dir = pl.exitDir
+            let ref: SIMD3<Float> = abs(dir.y) < 0.9 ? SIMD3<Float>(0, 1, 0) : SIMD3<Float>(1, 0, 0)
+            let u = simd_normalize(simd_cross(dir, ref))
+            let w = simd_cross(dir, u)
+            let n = max(1, min(12, Int(ceil(q / 0.3))))
+            let per = q / Float(n)
+            let vmag = pl.vScene * pm.vScaleRel
+            let hot = SIMD3<Float>(1.0, 0.62, 0.2)
+            for _ in 0..<n {
+                let ang = Float.random(in: 0..<(2 * Float.pi))
+                let rr = sqrt(Float.random(in: 0..<1)) * pl.exitR * 0.85
+                let radial = u * cos(ang) + w * sin(ang)
+                let frac = rr / max(1e-6, pl.exitR)
+                let vel = dir * vmag + radial * (vmag * tan(pm.halfAngle) * frac)
+                solver.addSource(at: pl.exitPos + radial * rr, density: per, tempK: pm.Te,
+                                 velocity: vel, color: hot, componentTag: -1)
+            }
+            // Mach diamonds: hot spots along the axis at the shock-cell spacing.
+            if pm.diamondSpacing > 0 {
+                let spacing = pm.diamondSpacing * 2 * pl.exitR
+                for k in 1...4 {
+                    solver.addSource(at: pl.exitPos + dir * (spacing * Float(k)), density: 0,
+                                     tempK: pm.Te * 1.25, velocity: .zero, color: hot, componentTag: -1)
+                }
+            }
+        }
+
         // ── Apply plans ──
         for pl in plans {
             guard let t = tanks[pl.tank] else { continue }
@@ -321,8 +357,12 @@ final class ArcFiniteFluid {
                 let q = min(take, aL * 0.9)
                 if q > 0 {
                     scale(last, to: aL - q)
-                    inject(q, near: pl.exitPos, dir: pl.exitDir, vel: pl.exitDir * pl.vScene,
-                           color: t.color, tag: -1)
+                    if let pm = plume {
+                        injectPlume(q, plume: pm, pl: pl)
+                    } else {
+                        inject(q, near: pl.exitPos, dir: pl.exitDir, vel: pl.exitDir * pl.vScene,
+                               color: t.color, tag: -1)
+                    }
                 }
             }
             // Hops, descending, then the tank's own hop.
