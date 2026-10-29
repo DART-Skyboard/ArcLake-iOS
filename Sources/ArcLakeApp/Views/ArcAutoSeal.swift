@@ -136,12 +136,13 @@ enum ArcAutoSeal {
     static let minOverlap: Float = 1e-6
 
     /// Test every unordered part pair whose AABBs intersect.
-    static func detect(parts: [ArcSealPart]) -> [ArcSealJoint] {
+    static func detect(parts: [ArcSealPart], involving: Set<String>? = nil) -> [ArcSealJoint] {
         var out: [ArcSealJoint] = []
         guard parts.count >= 2 else { return out }
         for i in 0..<parts.count {
             for j in (i + 1)..<parts.count {
                 let a = parts[i], b = parts[j]
+                if let only = involving, !only.contains(a.name), !only.contains(b.name) { continue }
                 guard a.triangleCount > 0, b.triangleCount > 0 else { continue }
                 if a.bmin.x > b.bmax.x || b.bmin.x > a.bmax.x ||
                    a.bmin.y > b.bmax.y || b.bmin.y > a.bmax.y ||

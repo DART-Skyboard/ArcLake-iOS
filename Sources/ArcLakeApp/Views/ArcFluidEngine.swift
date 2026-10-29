@@ -334,6 +334,20 @@ public final class ArcFluidEngine: ObservableObject {
     private var sealGeneration = 0
     private var sealApplied = false
 
+    // MARK: — Live pressure-driven leaks (step 3)
+    @Published public var liveLeaksEnabled = true
+    /// Joint ids currently venting + a short status line per joint.
+    @Published public var leakingJointIDs: Set<String> = []
+    @Published public var leakInfo: [String: String] = [:]
+    private let leaks = ArcLiveLeaks()
+    private var leakNode: SCNNode?
+    private var partSnapshots: [String: simd_float4x4] = [:]
+    private var movedParts = Set<String>()
+    private var liveFirstChange: TimeInterval = 0
+    private var liveLastChange: TimeInterval = 0
+    private var liveBusy = false
+    private var liveTick = 0
+
     // MARK: — Floor thermal map (step 2)
     private let floorHeat = ArcFloorHeatMap()
     @Published public var floorHeatEnabled = true { didSet { if !floorHeatEnabled { floorHeat.remove() } } }
@@ -385,6 +399,7 @@ public final class ArcFluidEngine: ObservableObject {
         // Extract mesh geometry for collision
         extractMeshGeometry(from: scene)
         beginAutoSeal()
+        snapshotPartTransforms()
 
         // Set domain based on scene model bounding box
         fitDomainToScene(scene)
@@ -424,6 +439,10 @@ public final class ArcFluidEngine: ObservableObject {
         cloudNode?.removeFromParentNode(); cloudNode = nil
         volumetricNode?.removeFromParentNode(); volumetricNode = nil
         floorHeat.remove()
+        leaks.reset()
+        leakNode?.removeFromParentNode(); leakNode = nil
+        leakingJointIDs = []; leakInfo = [:]
+        movedParts.removeAll(); liveBusy = false
         // Remove thermal coloring from all mesh nodes
         scene?.rootNode.enumerateChildNodes { node, _ in
             node.geometry?.materials.forEach { m in
@@ -832,6 +851,8 @@ public final class ArcFluidEngine: ObservableObject {
             // iteration inside the solver's diffuse/project loops. See
             // ArcSparseVoxelGrid.advanceFrame's doc comment.
             voxelGrid.advanceFrame()
+            liveWatchTick()
+            stepLeaks(dt: dt, gravity: gravity)
 
             // Cavity-fill inlet re-injection (replaces per-particle reinject
             // in v2's stream preset) — inject fresh density/temp/velocity at
@@ -944,6 +965,7 @@ public final class ArcFluidEngine: ObservableObject {
             if scene != nil { updateThermalColormap(sumT: sumT, maxP: maxP) }
             updateComponentMeasurements(maxP: maxP)
             uploadParticleCloud()
+            updateLeakPoints()
 
             let avgSpd = activeN > 0 ? sumSpd / Float(activeN) : 0
             let avgRho = activeN > 0 ? sumRho / Float(activeN) : 0
@@ -1160,6 +1182,203 @@ public final class ArcFluidEngine: ObservableObject {
             }
         }
         print("[ArcCFD] auto-seal: cut \(cleared) wall cell(s) across \(joints.filter { $0.sealed }.count) sealed joint(s)")
+    }
+
+    // MARK: — Live leaks: watch, detect, convert
+
+    private func snapshotPartTransforms() {
+        partSnapshots.removeAll(); movedParts.removeAll()
+        liveFirstChange = 0; liveLastChange = 0; liveBusy = false; liveTick = 0
+        leaks.reset(); leakingJointIDs = []; leakInfo = [:]
+        guard let scene else { return }
+        for nm in sealPartNames {
+            if let node = scene.rootNode.childNode(withName: nm, recursively: true) {
+                partSnapshots[nm] = node.simdWorldTransform
+            }
+        }
+    }
+
+    private static func approxEqual(_ a: simd_float4x4, _ b: simd_float4x4) -> Bool {
+        for c in 0..<4 where simd_length(a[c] - b[c]) > 1e-4 { return false }
+        return true
+    }
+
+    /// Poll part transforms (~every 8 ticks); once motion has settled
+    /// (250 ms quiet, or 700 ms max wait) re-run seal detection.
+    private func liveWatchTick() {
+        guard liveLeaksEnabled, autoSealEnabled, let scene, !liveBusy,
+              sealPartNames.count >= 2, !sealParts.isEmpty else { return }
+        liveTick += 1
+        guard liveTick % 8 == 0 else { return }
+        let now = Date.timeIntervalSinceReferenceDate
+        for nm in sealPartNames {
+            guard let node = scene.rootNode.childNode(withName: nm, recursively: true) else { continue }
+            let m = node.simdWorldTransform
+            if let old = partSnapshots[nm] {
+                if !Self.approxEqual(old, m) {
+                    movedParts.insert(nm)
+                    partSnapshots[nm] = m
+                    if liveFirstChange == 0 { liveFirstChange = now }
+                    liveLastChange = now
+                }
+            } else {
+                partSnapshots[nm] = m
+            }
+        }
+        if !movedParts.isEmpty, now - liveLastChange > 0.25 || now - liveFirstChange > 0.7 {
+            runLiveUpdate()
+        }
+    }
+
+    private func runLiveUpdate() {
+        guard let scene else { return }
+        liveBusy = true
+        let moved = movedParts
+        movedParts.removeAll()
+        liveFirstChange = 0
+        extractMeshGeometry(from: scene)          // fresh world-space triangles
+        let names = sealPartNames
+        let raw = sealRawVerts
+        let old = sealParts
+        let gen = sealGeneration
+        Task.detached(priority: .utility) { [weak self] in
+            var parts: [ArcSealPart] = []
+            for (i, nm) in names.enumerated() {
+                if !moved.contains(nm), let reuse = old.first(where: { $0.name == nm }) {
+                    parts.append(reuse)
+                } else {
+                    parts.append(ArcSealPart(name: nm, verts: raw[i]))
+                }
+            }
+            let found = ArcAutoSeal.detect(parts: parts, involving: moved)
+            let finalParts = parts
+            await MainActor.run {
+                self?.finishLiveUpdate(parts: finalParts, found: found, moved: moved, generation: gen)
+            }
+        }
+    }
+
+    private func finishLiveUpdate(parts: [ArcSealPart], found: [ArcSealJoint],
+                                  moved: Set<String>, generation: Int) {
+        defer { liveBusy = false }
+        guard generation == sealGeneration, isRunning else { return }
+        let oldParts = sealParts
+        let prev = joints
+        sealParts = parts
+
+        var merged = prev.filter { !(moved.contains($0.partA) || moved.contains($0.partB)) }
+        merged.append(contentsOf: found)
+
+        for j in prev where moved.contains(j.partA) || moved.contains(j.partB) {
+            let nowSealed = found.first(where: { $0.id == j.id })?.sealed ?? false
+            if j.sealed && !nowSealed {
+                // Seal broke. Keep the joint listed (as non-sealed) even if the
+                // pair no longer overlaps at all, so the UI can show the leak.
+                if !merged.contains(where: { $0.id == j.id }) {
+                    merged.append(ArcSealJoint(partA: j.partA, partB: j.partB, receiver: j.receiver,
+                                               centroid: j.centroid, radius: j.radius,
+                                               zoneMin: j.zoneMin, zoneMax: j.zoneMax, sealed: false))
+                }
+                if liveLeaksEnabled { openLeak(for: j, oldParts: oldParts, newParts: parts) }
+            }
+        }
+        joints = merged
+
+        // Re-sealed joints: return unspent particles to the grid.
+        for id in leaks.activeJointIDs {
+            if joints.first(where: { $0.id == id })?.sealed == true {
+                let back = leaks.close(jointID: id)
+                for (pos, w) in back {
+                    solver.addSource(at: pos, density: w, tempK: envTempK, velocity: .zero,
+                                     color: SIMD3<Float>(0.7, 0.7, 1.0), componentTag: -1)
+                }
+            }
+        }
+        leakingJointIDs = leaks.activeJointIDs
+
+        // Re-rasterise walls from the moved geometry; the next tick's sync
+        // also re-applies the cut-outs for whichever joints are sealed now.
+        voxelGrid.clearSolidCells()
+        meshCollisionSynced = false
+        sealApplied = false
+        let nSealed = joints.filter { $0.sealed }.count
+        sealStatus = "\(nSealed) sealed · \(joints.count - nSealed) non-flowing"
+            + (leakingJointIDs.isEmpty ? "" : " · \(leakingJointIDs.count) leaking")
+    }
+
+    private func openLeak(for j: ArcSealJoint, oldParts: [ArcSealPart], newParts: [ArcSealPart]) {
+        let pa = componentSpecs.first(where: { $0.nodeName == j.partA })?.pressurePsi ?? 0
+        let pb = componentSpecs.first(where: { $0.nodeName == j.partB })?.pressurePsi ?? 0
+        let sourceName = pa >= pb ? j.partA : j.partB
+        // Fluid still sits where the source part WAS, so test against its old mesh.
+        guard let src = oldParts.first(where: { $0.name == sourceName }) else { return }
+        let ambientPsi = envPressurePa / 6894.76
+        var p0 = Float(max(pa, pb))
+        if p0 <= ambientPsi + 1 { p0 = ambientPsi + 50 }
+
+        func mid(_ p: ArcSealPart) -> SIMD3<Float> { (p.bmin + p.bmax) * 0.5 }
+        var gap = j.centroid
+        if let oR = oldParts.first(where: { $0.name == j.receiver }),
+           let nR = newParts.first(where: { $0.name == j.receiver }) {
+            gap += mid(nR) - mid(oR)
+        }
+        var outDir = gap - mid(src)
+        outDir = simd_length_squared(outDir) < 1e-8 ? SIMD3<Float>(0, -1, 0) : simd_normalize(outDir)
+
+        let lo = voxelGrid.cellCoord(of: src.bmin), hi = voxelGrid.cellCoord(of: src.bmax)
+        let total = (Int(hi.x - lo.x) + 1) * (Int(hi.y - lo.y) + 1) * (Int(hi.z - lo.z) + 1)
+        guard total > 0, total <= 400_000 else { return }
+        var found: [(SIMD3<Int32>, Float)] = []
+        var mass: Float = 0
+        for zi in lo.z...hi.z { for yi in lo.y...hi.y { for xi in lo.x...hi.x {
+            let c = SIMD3<Int32>(xi, yi, zi)
+            let cell = voxelGrid[c]
+            guard !cell.isSolid, cell.density > 0.02 else { continue }
+            let center = voxelGrid.worldCenter(of: c)
+            guard src.isInside(center) else { continue }
+            found.append((c, simd_length_squared(center - gap)))
+            mass += cell.density
+        }}}
+        guard mass > 0.05 else { return }
+        found.sort { $0.1 < $1.1 }
+        let cells = found.prefix(4000).map { $0.0 }
+        leaks.open(jointID: j.id, source: sourceName, gap: gap, outDir: outDir,
+                   radius: j.radius, p0Psi: p0, cells: Array(cells), mass0: mass)
+        print("[ArcCFD] live leak OPEN \(j.partA)<->\(j.partB): \(cells.count) source cells, P0 \(p0) psi")
+    }
+
+    private func stepLeaks(dt: Float, gravity: SIMD3<Float>) {
+        guard leaks.isActive else { return }
+        let span = voxelGrid.domainMax - voxelGrid.domainMin
+        let scale = max(0.05, max(span.x, max(span.y, span.z)) / 10)
+        leaks.step(dt: dt, grid: voxelGrid, envTempK: envTempK, ambientPa: envPressurePa,
+                   gravity: gravity * scale, scale: scale, floorY: voxelGrid.domainMin.y)
+        if liveTick % 16 == 0 {
+            var info: [String: String] = [:]
+            for id in leaks.activeJointIDs {
+                if let s = leaks.status(for: id) {
+                    info[id] = String(format: "%.0f psi left of %.0f", s.psiLeft, s.psi0)
+                }
+            }
+            if info != leakInfo { leakInfo = info }
+        }
+    }
+
+    /// Plume as a point cloud in the non-volumetric visual modes (volumetric
+    /// mode splats it into the ray-march volume instead).
+    private func updateLeakPoints() {
+        guard let scene else { return }
+        guard particleVisual != .volumetric, leaks.isActive,
+              let geo = leaks.makePointGeometry(sprite: ArcFluidEngine.softDotSprite) else {
+            leakNode?.removeFromParentNode(); leakNode = nil
+            return
+        }
+        if leakNode == nil {
+            let n = SCNNode(); n.name = "arc_light_leakPoints"
+            scene.rootNode.addChildNode(n)
+            leakNode = n
+        }
+        leakNode?.geometry = geo
     }
 
     private func unmarkFineSolidSubcells(of c: SIMD3<Int32>) {
@@ -1742,6 +1961,7 @@ public final class ArcFluidEngine: ObservableObject {
         if particleVisual == .volumetric {
             cloudNode.geometry = nil // no point-cloud geometry in this mode
             guard let scene else { return }
+            ArcVolumetricFluidRenderer.leakSplats = leaks.isActive ? leaks.splats() : []
             volumetricNode = ArcVolumetricFluidRenderer.updateVolumetricNode(
                 in: scene,
                 existingNode: volumetricNode,

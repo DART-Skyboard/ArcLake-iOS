@@ -253,6 +253,19 @@ public final class ArcSparseVoxelGrid {
         fineSolidCells.remove(fineKey(of: worldPos))
     }
 
+    /// Drop every solid-boundary flag (main + fine) so the mesh collision can
+    /// be re-rasterised after parts moved. Fluid state is left untouched.
+    public func clearSolidCells() {
+        for k in Array(cells.keys) {
+            if var c = cells[k], c.isSolid {
+                c.isSolid = false
+                c.solidNormal = .zero
+                cells[k] = c
+            }
+        }
+        fineSolidCells.removeAll(keepingCapacity: true)
+    }
+
     public var fineSolidCellCount: Int { fineSolidCells.count }
 
     // MARK: — Access

@@ -328,6 +328,8 @@ struct ArcFluidView: View {
                 VStack(alignment:.leading, spacing:6) {
                     Toggle(isOn: $eng.autoSealEnabled) { mono("Auto-seal intersecting parts") }
                         .tint(.green)
+                    Toggle(isOn: $eng.liveLeaksEnabled) { mono("Live leaks when a seal breaks") }
+                        .tint(.red)
                     if eng.joints.isEmpty {
                         Text(eng.sealStatus.isEmpty
                              ? "Starts with the simulation: overlapping parts whose hollow interiors connect become sealed fluid links."
@@ -337,16 +339,18 @@ struct ArcFluidView: View {
                     } else {
                         ForEach(eng.joints) { j in
                             HStack(alignment:.top, spacing:5) {
-                                Text(j.sealed ? "✓" : "✕")
+                                Text(j.sealed && !eng.leakingJointIDs.contains(j.id) ? "✓" : "✕")
                                     .font(.system(size:9,weight:.bold,design:.monospaced))
-                                    .foregroundColor(j.sealed ? .green : .red)
+                                    .foregroundColor(j.sealed && !eng.leakingJointIDs.contains(j.id) ? .green : .red)
                                 VStack(alignment:.leading, spacing:1) {
                                     Text("\(jointName(j.partA)) ↔ \(jointName(j.partB))")
                                         .font(.system(size:8,design:.monospaced))
                                         .foregroundColor(.white.opacity(0.8))
-                                    Text(j.sealed ? "sealed · auto, from mesh overlap" : "non-flowing · overlap, no fluid path")
+                                    Text(eng.leakingJointIDs.contains(j.id)
+                                         ? "LEAKING · " + (eng.leakInfo[j.id] ?? "venting")
+                                         : (j.sealed ? "sealed · auto, from mesh overlap" : "non-flowing · overlap, no fluid path"))
                                         .font(.system(size:7,design:.monospaced))
-                                        .foregroundColor(.white.opacity(0.4))
+                                        .foregroundColor(eng.leakingJointIDs.contains(j.id) ? Color.red.opacity(0.85) : Color.white.opacity(0.4))
                                 }
                             }
                         }

@@ -71,6 +71,9 @@ public enum ArcVolumetricFluidRenderer {
     /// depth buffer so the fluid glows through opaque part walls.
     public static var xray: Bool = false
 
+    /// Live-leak plume splats for the next bake (set by ArcFluidEngine each tick).
+    static var leakSplats: [ArcLeakSplat] = []
+
     /// One frame's baked volume: RGBA32F texels packed as a tiled 2D atlas
     /// (Z-slices tiled left-to-right, top-to-bottom; each tile is resX x resY).
     /// `.r` = density, `.gba` = density-weighted color.
@@ -142,6 +145,33 @@ public enum ArcVolumetricFluidRenderer {
                     texels[texIdx+3] = bright.z
                 }
             }
+        }
+        // Live-leak plume: trilinear density splat, applied AFTER the wall
+        // mask (the plume is outside the cavities the mask belongs to).
+        for sp in leakSplats where sp.w > 1e-5 {
+            let fx = (sp.pos.x - dMin.x) / span.x * Float(resX) - 0.5
+            let fy = (sp.pos.y - dMin.y) / span.y * Float(resY) - 0.5
+            let fz = (sp.pos.z - dMin.z) / span.z * Float(resZ) - 0.5
+            let ix = Int(floor(fx)), iy = Int(floor(fy)), iz = Int(floor(fz))
+            let tx = fx - Float(ix), ty = fy - Float(iy), tz = fz - Float(iz)
+            let cool = SIMD3<Float>(0.35, 0.65, 1.0), hot = SIMD3<Float>(1.0, 0.6, 0.2)
+            let col = cool + (hot - cool) * sp.heat
+            for dz in 0...1 { for dy in 0...1 { for dx in 0...1 {
+                let x = ix + dx, y = iy + dy, z = iz + dz
+                guard x >= 0, x < resX, y >= 0, y < resY, z >= 0, z < resZ else { continue }
+                let wgt = (dx == 1 ? tx : 1 - tx) * (dy == 1 ? ty : 1 - ty) * (dz == 1 ? tz : 1 - tz)
+                let add = sp.w * wgt
+                guard add > 1e-6 else { continue }
+                let idx = (((z / cols) * resY + y) * atlasW + (z % cols) * resX + x) * 4
+                let old = texels[idx]
+                let nd = min(4.0, old + add)
+                // density-weighted colour blend
+                let tot = max(old + add, 1e-6)
+                texels[idx + 1] = (texels[idx + 1] * old + col.x * add) / tot
+                texels[idx + 2] = (texels[idx + 2] * old + col.y * add) / tot
+                texels[idx + 3] = (texels[idx + 3] * old + col.z * add) / tot
+                texels[idx] = nd
+            }}}
         }
         let data = texels.withUnsafeBufferPointer { Data(buffer: $0) }
         return BakedVolume(atlasData: data, atlasWidth: atlasW, atlasHeight: atlasH,
