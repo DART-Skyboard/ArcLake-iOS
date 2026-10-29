@@ -40,6 +40,13 @@ public actor ArcVaultService {
             try? fm.removeItem(at: icloud)
         }
         _vaultURL = nil
+        // .ash project files, cached model files and sync bookkeeping
+        // (the private GitHub sync repo, if any, is the user's to delete on GitHub).
+        ArcAshStorage.wipeLocal()
+        Task { @MainActor in
+            ArcAshAssetIndex.shared.reset()
+            ArcAshSession.shared.accountWiped()
+        }
     }
 
     private func iCloudURL() -> URL? {
@@ -92,6 +99,50 @@ public actor ArcVaultService {
         guard let root = _vaultURL else { return }
         let url = root.appendingPathComponent(subfolder.path).appendingPathComponent(filename)
         try? data.write(to: url, options: .atomic)
+    }
+
+    // MARK: — .ash sync support (atomic, throwing, readable)
+    public func writeDataAtomic(subfolder: ArcVaultFolder, filename: String, data: Data) throws {
+        guard let root = _vaultURL else { throw CocoaError(.fileNoSuchFile) }
+        let dir = root.appendingPathComponent(subfolder.path, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try data.write(to: dir.appendingPathComponent(filename), options: .atomic)
+    }
+
+    /// Reads a vault file. For an iCloud file that exists only as a not-yet-downloaded
+    /// placeholder, kicks off the download and returns nil (the next sync picks it up).
+    public func readData(subfolder: ArcVaultFolder, filename: String) -> Data? {
+        guard let root = _vaultURL else { return nil }
+        let dir = root.appendingPathComponent(subfolder.path, isDirectory: true)
+        let url = dir.appendingPathComponent(filename)
+        if let d = try? Data(contentsOf: url) { return d }
+        let placeholder = dir.appendingPathComponent(".\(filename).icloud")
+        if FileManager.default.fileExists(atPath: placeholder.path) {
+            try? FileManager.default.startDownloadingUbiquitousItem(at: url)
+        }
+        return nil
+    }
+
+    public func fileExists(subfolder: ArcVaultFolder, filename: String) -> Bool {
+        guard let root = _vaultURL else { return false }
+        return FileManager.default.fileExists(atPath:
+            root.appendingPathComponent(subfolder.path).appendingPathComponent(filename).path)
+    }
+
+    /// Names of files in a vault folder, including iCloud placeholders (".x.icloud" → "x").
+    public func listNames(subfolder: ArcVaultFolder) -> [String] {
+        guard let root = _vaultURL else { return [] }
+        let dir = root.appendingPathComponent(subfolder.path)
+        let raw = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+        var out: [String] = []
+        for n in raw {
+            if n.hasPrefix(".") && n.hasSuffix(".icloud") {
+                out.append(String(n.dropFirst().dropLast(7)))
+            } else if !n.hasPrefix(".") {
+                out.append(n)
+            }
+        }
+        return out
     }
 
     // MARK: — Default export URL (for UIDocumentPickerViewController)

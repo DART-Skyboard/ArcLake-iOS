@@ -615,6 +615,9 @@ struct ArcAssetImporter: UIViewControllerRepresentable {
         func documentPicker(_: UIDocumentPickerViewController,
                             didPickDocumentsAt urls: [URL]) {
             guard let url = urls.first else { return }
+            // Remember the file's identity (name / size / SHA-256) + keep a cached
+            // copy so the project (.ash) can reference and restore this model.
+            ArcAshAssetIndex.ingest(url: url)
             // All loading is async — never blocks UI regardless of file size
             Task.detached(priority: .userInitiated) {
                 await self.loadAsset(url: url)

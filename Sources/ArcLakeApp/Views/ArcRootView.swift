@@ -127,6 +127,10 @@ public struct DARTRootView: View {
         .overlay(alignment: .bottomTrailing) {
             AutumnOverlay()
         }
+        // Tiny sync status (only visible while syncing / offline / error)
+        .overlay(alignment: .bottomLeading) {
+            ArcAshSyncBadge()
+        }
         // Camera gimbal — upper right of 3D viewport, below the sidebar tab bar
         .overlay(alignment: .topTrailing) {
             ArcGimbalOverlay()

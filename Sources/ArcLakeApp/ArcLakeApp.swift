@@ -21,10 +21,15 @@ struct DARTApp: App {
                     // data that shows whether the SHIPPED build actually carries
                     // the Sign in with Apple entitlement.
                     ArcDiagnostics.shared.captureEnvironment()
+                    // .ash project: restore the last session, start autosave + sync.
+                    ArcAshSession.shared.bind(labVM: labVM, themeVM: themeVM, authVM: authVM)
+                    await ArcAshSession.shared.start()
                 }
                 .preferredColorScheme(.dark)
                 // Google Sign-In OAuth callback (reversed client-ID URL scheme)
                 .onOpenURL { url in
+                    // *.ash project files (Files app / share sheet)
+                    if ArcAshSession.shared.handleOpenURL(url) { return }
                     #if canImport(GoogleSignIn)
                     GIDSignIn.sharedInstance.handle(url)
                     #endif

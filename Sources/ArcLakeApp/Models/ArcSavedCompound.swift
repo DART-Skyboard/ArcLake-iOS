@@ -137,6 +137,17 @@ public final class ArcCompoundLibrary: ObservableObject {
         return compound
     }
 
+    /// Additive merge used by .ash import: adds compounds whose id isn't
+    /// already present; never removes or overwrites the user's own library.
+    public func merge(_ incoming: [ArcSavedCompound]) {
+        var changed = false
+        for c in incoming where !compounds.contains(where: { $0.id == c.id }) {
+            compounds.append(c)
+            changed = true
+        }
+        if changed { persist() }
+    }
+
     public func delete(_ compound: ArcSavedCompound) {
         compounds.removeAll { $0.id == compound.id }
         persist()

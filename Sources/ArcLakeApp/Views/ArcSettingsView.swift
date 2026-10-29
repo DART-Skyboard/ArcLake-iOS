@@ -183,6 +183,9 @@ struct ArcSettingsView: View {
                         .onChange(of: labVM.meridianJoinZY)  { _ in labVM.rebuildGrid() }
                         .onChange(of: labVM.arcPhysicsPipe)  { _ in labVM.rebuildGrid() }
 
+                    // ── PROJECT (.ash) ────────────────────────────
+                    ArcAshProjectSection()
+
                     // ── ABOUT / OPEN SOURCE ───────────────────────
                     settingsCard("ABOUT · OPEN SOURCE") {
                         aboutRow("3D Engine",

@@ -64,7 +64,7 @@ targets:
         CODE_SIGN_ENTITLEMENTS: Sources/ArcLakeClip/ArcLakeClip.entitlements
         ENABLE_USER_SCRIPT_SANDBOXING: NO
         TARGETED_DEVICE_FAMILY: "1,2"
-        CURRENT_PROJECT_VERSION: "412"
+        CURRENT_PROJECT_VERSION: "413"
         MARKETING_VERSION: "1.5.9"
       configs:
         Debug:
@@ -112,6 +112,24 @@ targets:
         NSSpeechRecognitionUsageDescription: Autumn uses speech recognition to understand your voice commands for the ArcLake molecular lab
         UIAppFonts:
           - Orbitron-Regular.ttf
+        UTExportedTypeDeclarations:
+          - UTTypeIdentifier: com.dartmeadow.arclake.ash
+            UTTypeDescription: ArcLake Project
+            UTTypeConformsTo:
+              - public.json
+              - public.data
+            UTTypeTagSpecification:
+              public.filename-extension:
+                - ash
+              public.mime-type:
+                - application/vnd.arclake.ash+json
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: ArcLake Project
+            CFBundleTypeRole: Editor
+            LSHandlerRank: Owner
+            LSItemContentTypes:
+              - com.dartmeadow.arclake.ash
+        LSSupportsOpeningDocumentsInPlace: false
     entitlements:
       path: Sources/ArcLakeApp/ArcLakeApp.entitlements
       properties:
@@ -158,7 +176,7 @@ targets:
         ENABLE_USER_SCRIPT_SANDBOXING: NO
         SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
         TARGETED_DEVICE_FAMILY: "1,2"
-        CURRENT_PROJECT_VERSION: "412"
+        CURRENT_PROJECT_VERSION: "413"
         MARKETING_VERSION: "1.5.9"
       configs:
         Debug:

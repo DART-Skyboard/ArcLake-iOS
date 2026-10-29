@@ -118,3 +118,142 @@ public struct ArcDeviceFlowStart: Decodable, Sendable {
         case verificationUri = "verification_uri"; case expiresIn = "expires_in"; case interval
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// Status-aware helpers for the .ash sync layer.
+// The original helpers above never inspect the HTTP status (a 409 sha
+// conflict or a 404 looked like "success with unexpected JSON"); sync
+// needs the real status so it can retry, resolve conflicts or back off.
+// ═══════════════════════════════════════════════════════════════════
+
+public struct ArcGitHubHTTPError: Error, CustomStringConvertible, Sendable {
+    public let status: Int
+    public let message: String
+    /// Seconds to wait when GitHub asked us to back off (Retry-After / rate limit reset).
+    public let retryAfter: Int?
+    public var description: String { "GitHub HTTP \(status): \(message)" }
+}
+
+public struct ArcGitHubEntry: Decodable, Sendable {
+    public let name: String
+    public let path: String
+    public let sha: String
+    public let size: Int?
+    public let type: String?
+}
+
+public struct ArcGitHubRepoInfo: Decodable, Sendable {
+    public let name: String
+    public let isPrivate: Bool
+    enum CodingKeys: String, CodingKey { case name; case isPrivate = "private" }
+}
+
+extension ArcGitHubClient {
+    private func encodePath(_ p: String) -> String {
+        p.split(separator: "/", omittingEmptySubsequences: true)
+            .map { String($0).addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? String($0) }
+            .joined(separator: "/")
+    }
+
+    /// Performs a request and throws ArcGitHubHTTPError for any non-2xx status.
+    public func rawRequest(method: String, path: String, body: Data? = nil,
+                           accept: String = "application/vnd.github+json",
+                           timeout: TimeInterval = 60) async throws -> (data: Data, status: Int) {
+        guard let url = URL(string: base + path) else {
+            throw ArcGitHubHTTPError(status: 0, message: "bad URL", retryAfter: nil)
+        }
+        var req = URLRequest(url: url)
+        req.httpMethod = method
+        req.timeoutInterval = timeout
+        headers().forEach { req.setValue($1, forHTTPHeaderField: $0) }
+        req.setValue(accept, forHTTPHeaderField: "Accept")
+        if let body {
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.httpBody = body
+        }
+        let (data, resp) = try await session.data(for: req)
+        let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        if (200...299).contains(status) { return (data, status) }
+        var message = String(data: data.prefix(300), encoding: .utf8) ?? ""
+        if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let m = obj["message"] as? String { message = m }
+        var retry: Int? = nil
+        if let http = resp as? HTTPURLResponse {
+            if let ra = http.value(forHTTPHeaderField: "Retry-After"), let s = Int(ra) { retry = s }
+            else if status == 403 || status == 429,
+                    http.value(forHTTPHeaderField: "X-RateLimit-Remaining") == "0",
+                    let reset = http.value(forHTTPHeaderField: "X-RateLimit-Reset"),
+                    let t = TimeInterval(reset) {
+                retry = max(1, Int(t - Date().timeIntervalSince1970))
+            }
+        }
+        throw ArcGitHubHTTPError(status: status, message: message, retryAfter: retry)
+    }
+
+    public func hasToken() -> Bool { !(token ?? "").isEmpty }
+
+    /// nil when the repo does not exist.
+    public func repoInfo(owner: String, repo: String) async throws -> ArcGitHubRepoInfo? {
+        do {
+            let r = try await rawRequest(method: "GET", path: "/repos/\(owner)/\(repo)")
+            return try? JSONDecoder().decode(ArcGitHubRepoInfo.self, from: r.data)
+        } catch let e as ArcGitHubHTTPError where e.status == 404 {
+            return nil
+        }
+    }
+
+    public func createPrivateRepo(name: String, description: String) async throws {
+        let body: [String: Any] = ["name": name, "private": true, "description": description,
+                                   "auto_init": true]
+        let data = try JSONSerialization.data(withJSONObject: body)
+        _ = try await rawRequest(method: "POST", path: "/user/repos", body: data)
+    }
+
+    /// Directory listing (nil entries → empty). 404 → [].
+    public func listDirectory(owner: String, repo: String, path: String) async throws -> [ArcGitHubEntry] {
+        do {
+            let r = try await rawRequest(method: "GET",
+                path: "/repos/\(owner)/\(repo)/contents/\(encodePath(path))")
+            return (try? JSONDecoder().decode([ArcGitHubEntry].self, from: r.data)) ?? []
+        } catch let e as ArcGitHubHTTPError where e.status == 404 {
+            return []
+        }
+    }
+
+    /// Blob metadata for one file; nil when it doesn't exist.
+    public func fileEntry(owner: String, repo: String, path: String) async throws -> ArcGitHubEntry? {
+        do {
+            let r = try await rawRequest(method: "GET",
+                path: "/repos/\(owner)/\(repo)/contents/\(encodePath(path))")
+            return try? JSONDecoder().decode(ArcGitHubEntry.self, from: r.data)
+        } catch let e as ArcGitHubHTTPError where e.status == 404 {
+            return nil
+        }
+    }
+
+    /// Raw bytes (works past the 1 MB inline-content limit of the JSON form).
+    public func readRaw(owner: String, repo: String, path: String) async throws -> Data? {
+        do {
+            let r = try await rawRequest(method: "GET",
+                path: "/repos/\(owner)/\(repo)/contents/\(encodePath(path))",
+                accept: "application/vnd.github.raw+json", timeout: 120)
+            return r.data
+        } catch let e as ArcGitHubHTTPError where e.status == 404 {
+            return nil
+        }
+    }
+
+    /// Create/update a file. Returns the new blob sha. Throws ArcGitHubHTTPError
+    /// (409 / 422 on a stale or missing `sha` — the caller resolves the conflict).
+    public func putFile(owner: String, repo: String, path: String, data: Data,
+                        message: String, sha: String?) async throws -> String {
+        var body: [String: Any] = ["message": message, "content": data.base64EncodedString()]
+        if let sha { body["sha"] = sha }
+        let payload = try JSONSerialization.data(withJSONObject: body)
+        let r = try await rawRequest(method: "PUT",
+            path: "/repos/\(owner)/\(repo)/contents/\(encodePath(path))",
+            body: payload, timeout: 180)
+        struct Resp: Decodable { struct C: Decodable { let sha: String }; let content: C? }
+        return (try? JSONDecoder().decode(Resp.self, from: r.data))?.content?.sha ?? ""
+    }
+}
