@@ -758,6 +758,7 @@ final class ArcAshFluidModule: ArcAshModule {
         engine.liveLeaksEnabled = true
         engine.floorHeatEnabled = true
         engine.xrayGlow = true
+        engine.continuousFlow = true
     }
 
     private func specsChanged(_ names: [String]) {
@@ -804,6 +805,7 @@ final class ArcAshFluidModule: ArcAshModule {
         b.num("particleCapacity", s.particleCapacity)
         b.num("particlesPerM3Visible", s.particlesPerM3Visible)
         b.num("pressurePsi", s.pressurePsi)
+        b.num("massKg", s.massKg)
         b.flag("isCombustionChamber", s.isCombustionChamber)
         if let f = s.fluidType { b.str("fluidType", f.rawValue) } else { b.set("fluidType", .null) }
         if let k = s.geometricKind { b.str("geometricKind", k.rawValue) } else { b.set("geometricKind", .null) }
@@ -827,6 +829,7 @@ final class ArcAshFluidModule: ArcAshModule {
         if let v = j.integer("particleCapacity") { s.particleCapacity = max(1, v) }
         if let v = j.first(["particlesPerM3Visible", "particleDensity"])?.doubleValue { s.particlesPerM3Visible = Float(v) }
         if let v = j.first(["pressurePsi", "pressure_psi"])?.doubleValue { s.pressurePsi = v }
+        if let v = j.first(["massKg", "mass"])?.doubleValue { s.massKg = max(0, v) }
         if let v = j.first(["isCombustionChamber", "combustionChamber"])?.boolValue { s.isCombustionChamber = v }
         if let f = j.first(["fluidType", "fluid"])?.stringValue {
             s.fluidType = ArcCombustionFlow.FluidType(rawValue: f.capitalized)
@@ -855,6 +858,7 @@ final class ArcAshFluidModule: ArcAshModule {
         g.flag("liveLeaksEnabled", engine.liveLeaksEnabled)
         g.flag("floorHeatEnabled", engine.floorHeatEnabled)
         g.flag("xrayGlow", engine.xrayGlow)
+        g.flag("continuousFlow", engine.continuousFlow)
         if !ArcAshFluidExtensions.registry.isEmpty {
             var ext: [String: ArcJSON] = [:]
             for (k, e) in ArcAshFluidExtensions.registry { ext[k] = e.capture() }
@@ -889,6 +893,7 @@ final class ArcAshFluidModule: ArcAshModule {
         if let v = g.flag("liveLeaksEnabled") { engine.liveLeaksEnabled = v }
         if let v = g.flag("floorHeatEnabled") { engine.floorHeatEnabled = v }
         if let v = g.flag("xrayGlow") { engine.xrayGlow = v }
+        if let v = g.flag("continuousFlow") { engine.continuousFlow = v }
         if let ext = g.dict("extensions")?.objectValue {
             for (k, v) in ext { ArcAshFluidExtensions.registry[k]?.apply(v) }
         }

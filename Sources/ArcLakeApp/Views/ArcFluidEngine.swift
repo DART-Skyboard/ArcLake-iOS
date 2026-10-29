@@ -204,6 +204,8 @@ public struct ArcComponentSpec: Identifiable {
     // fill level — this is read every frame by reseedParticlesFromGrid().
     public var particlesPerM3Visible: Float = 30
     public var pressurePsi: Double = 100      // operating pressure
+    /// Fluid mass in kg for a container (0 = derive from volume x density).
+    public var massKg: Double = 0
     public var isCombustionChamber = false
     public var fluidType: ArcCombustionFlow.FluidType? = nil
     public var boundingMin: SIMD3<Float> = .zero
@@ -291,6 +293,7 @@ struct ArcSimFrame {
     var leakPos: [Float]
     var leakCol: [Float]
     var leakInfo: [String: String]?
+    var tankStates: [String: ArcFiniteFluid.State]?
 }
 
 // MARK: — Main Engine
@@ -362,6 +365,19 @@ public final class ArcFluidEngine: ObservableObject {
     var mainPts: [ArcParticle] = []
     private var sealReady = false
     private var mainPartNames: [String] = []
+
+    // MARK: — Finite fluid (containers only) + continuous flow
+    /// ON: containers are replenished while they feed the chain. OFF: they
+    /// deplete until empty. Saved in presets as global.continuousFlow.
+    @Published public var continuousFlow = true {
+        didSet { let v = continuousFlow; simQueue.async { [weak self] in self?.simContinuous = v } }
+    }
+    /// Scene units -> metres for mass / channel physics (web default: 1 unit = 25.4 mm).
+    public var modelUnitMeters: Float = 0.0254
+    private var simContinuous = true
+    private let finite = ArcFiniteFluid()
+    /// Main-thread readout of each container's live state (fill, psi, note).
+    @Published public var tankStatus: [String: String] = [:]
 
     // Inlet/outlet zone centers (set from ArcMeshSelectorView)
     public var inletZone:  SIMD3<Float>? = nil
@@ -644,6 +660,7 @@ public final class ArcFluidEngine: ObservableObject {
             guard let self else { return false }
             self.installGeometry(built, parts: sealResult.parts, joints: sealResult.joints)
             self.voxelGrid.removeAll()
+            self.finite.reset()
             self.meshCollisionSynced = false
             self.fitDomains(boundsMin: bMin, boundsMax: bMax)
             let p = self.mode.params
@@ -733,6 +750,7 @@ public final class ArcFluidEngine: ObservableObject {
             self.loopGen += 1
             self.simRunning = false
             self.leaks.reset()
+            self.finite.reset()
         }
         frameLock.lock(); framePending = false; frameLock.unlock()
         cloudNode?.removeFromParentNode(); cloudNode = nil
@@ -994,6 +1012,7 @@ public final class ArcFluidEngine: ObservableObject {
     /// wiped on the next tick.
     private func spawnParticles(_ syms: [String]) {
         voxelGrid.removeAll()
+        finite.reset()
         meshCollisionSynced = false
         let n = particleCount
         let side = Int(ceil(pow(Double(n), 1.0/3.0)))
@@ -1028,6 +1047,7 @@ public final class ArcFluidEngine: ObservableObject {
     private func reshapeToPreset(_ preset: ArcFluidScene) {
         let n = particleCount; let h = voxelGrid.cellSize
         voxelGrid.removeAll()
+        finite.reset()
         meshCollisionSynced = false
         let genericColor = SIMD3<Float>(0.3, 0.6, 1.0)
         switch preset {
@@ -1151,9 +1171,14 @@ public final class ArcFluidEngine: ObservableObject {
         solver.scalarStep(dt: dt)
         voxelGrid.advanceFrame()
         stepLeaks(dt: dt, gravity: gravity)
+        if finite.isActive, simTickCount % 2 == 0 {
+            finite.step(dt: dt * 2, grid: voxelGrid, solver: solver, specs: simSpecs, joints: simJoints,
+                        continuous: simContinuous, envPa: envPressurePa, unitM: modelUnitMeters,
+                        envTempK: envTempK)
+        }
 
         var inCount: Float = 0, outCount: Float = 0
-        if scenePreset == .stream {
+        if scenePreset == .stream && !finite.isActive {
             let inletSpec = simSpecs.first(where: { $0.isInlet })
             if let iz = inletZone {
                 let flowSpeed = Float(inletSpec?.inletFlowRate ?? 1.0) * 2.0
@@ -1250,7 +1275,8 @@ public final class ArcFluidEngine: ObservableObject {
             info = d
         }
         let frame = ArcSimFrame(measure: meas, maxP: maxP, pts: pts, baked: baked, floorPx: px,
-                                floorGeom: floorHeat.geometry, leakPos: lpos, leakCol: lcol, leakInfo: info)
+                                floorGeom: floorHeat.geometry, leakPos: lpos, leakCol: lcol, leakInfo: info,
+                                tankStates: finite.isActive ? finite.states : nil)
         DispatchQueue.main.async { [weak self] in self?.applyFrame(frame) }
     }
 
@@ -1262,6 +1288,7 @@ public final class ArcFluidEngine: ObservableObject {
         measure = f.measure
         if scene != nil { updateThermalColormap(sumT: 0, maxP: f.maxP) }
         updateComponentMeasurements(maxP: f.maxP)
+        if let ts = f.tankStates { applyTankStates(ts) }
         if floorHeatEnabled, let sc = scene, let px = f.floorPx {
             floorHeat.applyImage(px, geometry: f.floorGeom, in: sc)
         }
@@ -1973,6 +2000,18 @@ public final class ArcFluidEngine: ObservableObject {
     }
 
     // MARK: — Per-component measurement update
+    /// Main: publish container fill / pressure into the specs and a status line per container.
+    private func applyTankStates(_ ts: [String: ArcFiniteFluid.State]) {
+        var lines: [String: String] = [:]
+        for i in 0..<componentSpecs.count {
+            guard let st = ts[componentSpecs[i].nodeName] else { continue }
+            componentSpecs[i].currentPressureMPa = Double(st.psi) * 0.00689476
+            lines[componentSpecs[i].nodeName] = String(format: "%.0f%% full · %.0f psi · %.1f kg · %@",
+                                                       st.fill * 100, st.psi, st.massKg, st.note)
+        }
+        if lines != tankStatus { tankStatus = lines }
+    }
+
     private func updateComponentMeasurements(maxP: Float) {
         guard let scene else { return }
         for i in 0..<componentSpecs.count {
@@ -2057,6 +2096,9 @@ public final class ArcFluidEngine: ObservableObject {
         var filledCount = 0
 
         for spec in namedSpecs {
+            // Finite fluid: only containers hold fluid. Pipes, chambers and
+            // the nozzle start empty and fill as mass drains through them.
+            guard ArcFiniteFluid.isContainer(spec) else { continue }
             let n = spec.displayName.lowercased()
             let prop: ArcPropellant
             let pressure: Float
@@ -2106,7 +2148,7 @@ public final class ArcFluidEngine: ObservableObject {
         }
         scenePreset = .stream
         print("[ArcCFD] autoFill: \(filledCount) component cavities filled from world-space bounding volumes")
-        return filledCount > 0
+        return true   // named parts exist: containers filled, the rest start empty
     }
 
     // MARK: — Chemical combustion reaction
@@ -2304,6 +2346,10 @@ public final class ArcFluidEngine: ObservableObject {
             added += 1
         }}}
         _ = col3
+        if added > 0 {
+            finite.register(spec: spec, rho: Float(propellant.densityKgM3), color: col3,
+                            grid: voxelGrid, unitM: modelUnitMeters)
+        }
         print("[ArcCFD] ✓ \(spec.displayName): seeded \(added) voxel sources at world pos \(wMin)…\(wMax)")
     }
 

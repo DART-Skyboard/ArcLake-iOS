@@ -346,6 +346,21 @@ struct ArcComponentConfigView: View {
                             .font(.system(size: 9, design: .monospaced)).foregroundColor(.orange)
                             .frame(width: 52, alignment: .trailing)
                     }
+                    HStack {
+                        Text("Mass (0 = auto)").font(.system(size: 9, design: .monospaced)).foregroundColor(.white.opacity(0.6))
+                        TextField("kg", value: Binding(
+                            get: { s.massKg },
+                            set: { v in updateSpec { $0.massKg = max(0, v) } }
+                        ), format: .number)
+                            .keyboardType(.decimalPad)
+                            .font(.system(size: 10, design: .monospaced)).foregroundColor(.orange)
+                            .multilineTextAlignment(.trailing)
+                            .frame(width: 70)
+                        Text("kg").font(.system(size: 9, design: .monospaced)).foregroundColor(.white.opacity(0.4))
+                    }
+                    if let line = ArcFluidEngine.shared.tankStatus[s.nodeName] {
+                        Text(line).font(.system(size: 8, design: .monospaced)).foregroundColor(.cyan.opacity(0.8))
+                    }
                     // Auto-detected flow info — hardcoded dictionary first,
                     // geometric classification (task #41) as the fallback
                     // for any component not in that dictionary.

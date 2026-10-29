@@ -334,6 +334,7 @@ struct ArcFluidView: View {
                         get:{ eng.particleVisual == .volumetric },
                         set:{ eng.particleVisual = $0 ? .volumetric : .points }), tint: .green)
                     toggleRow("X-ray interior glow", isOn: $eng.xrayGlow, tint: .cyan)
+                    toggleRow("Continuous flow", isOn: $eng.continuousFlow, tint: .mint)
                     toggleRow("Floor thermal map", isOn: $eng.floorHeatEnabled, tint: .orange)
                     if let msg = eng.volumetricStatus {
                         Text(msg)
