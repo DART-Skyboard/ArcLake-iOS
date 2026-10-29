@@ -103,7 +103,17 @@ public final class ArcSparseVoxelGrid {
     /// Fine lookup is at half the normal cellSize — chosen as the
     /// simplest step that meaningfully tightens narrow-passage coverage
     /// without a second full grid resolution concept.
-    public let fineSubdivision: Int32 = 2
+    public private(set) var fineSubdivision: Int32 = 2
+
+    /// Change the fine-wall subdivision (adaptive per-part resolution).
+    /// Fine keys live in a different coordinate space per subdivision, so the
+    /// existing fine cells are dropped; callers re-mark after changing it.
+    public func setFineSubdivision(_ n: Int) {
+        let v = Int32(max(1, min(8, n)))
+        guard v != fineSubdivision else { return }
+        fineSubdivision = v
+        fineSolidCells.removeAll(keepingCapacity: true)
+    }
 
     public init(cellSize: Float = 2.0) {
         self.cellSize = cellSize

@@ -350,6 +350,9 @@ public final class ArcFluidEngine: ObservableObject {
 
     // MARK: — Floor thermal map (step 2)
     private let floorHeat = ArcFloorHeatMap()
+    /// X-ray interior glow: fluid is drawn through opaque part walls with a
+    /// soft interior glow (default ON, matching the web sandbox).
+    @Published public var xrayGlow = true
     @Published public var floorHeatEnabled = true { didSet { if !floorHeatEnabled { floorHeat.remove() } } }
 
     // SceneKit node refs
@@ -1019,6 +1022,7 @@ public final class ArcFluidEngine: ObservableObject {
     /// resolution" for the full design rationale and why a second grid
     /// resolution (rather than a full octree) was chosen here.
     private var meshCollisionSynced = false
+    private var lastTriangleDensity: [SIMD3<Int32>: Int] = [:]
 
     /// Triangles overlapping a cell above this count flag that cell (and
     /// its immediate neighborhood) as a tight passage for fine-boundary
@@ -1040,6 +1044,7 @@ public final class ArcFluidEngine: ObservableObject {
         meshCollisionSynced = true
         sealApplied = false
         cellOwners.removeAll(keepingCapacity: true)
+        voxelGrid.setFineSubdivision(2)
         let h = voxelGrid.cellSize
 
         // Triangle-density histogram, keyed by the same cell key scheme
@@ -1055,38 +1060,34 @@ public final class ArcFluidEngine: ObservableObject {
                 let o = Int(meshTriangleOwner[triIdx])
                 return o < 64 ? (UInt64(1) << UInt64(o)) : 0
             }()
-            // Triangle bounding box → cell-coordinate range.
-            let bboxMin = simd_min(tri.v0, simd_min(tri.v1, tri.v2))
-            let bboxMax = simd_max(tri.v0, simd_max(tri.v1, tri.v2))
-            let cMin = voxelGrid.cellCoord(of: bboxMin)
-            let cMax = voxelGrid.cellCoord(of: bboxMax)
+            // Virtual triangle subdivision (port of the web sandbox's
+            // subdivideLargeTris): a triangle spanning more than
+            // maxCellsPerTriangle cells is bisected on its longest edge
+            // (virtually — the mesh itself is untouched) until every piece
+            // fits, instead of being skipped (which left holes in big flat
+            // tank walls).
+            var seenCells = Set<SIMD3<Int32>>()
+            ArcFluidEngine.forEachVirtualPiece(of: tri, cellSize: h, maxCells: maxCellsPerTriangle) { piece in
+                let bboxMin = simd_min(piece.v0, simd_min(piece.v1, piece.v2))
+                let bboxMax = simd_max(piece.v0, simd_max(piece.v1, piece.v2))
+                let cMin = self.voxelGrid.cellCoord(of: bboxMin)
+                let cMax = self.voxelGrid.cellCoord(of: bboxMax)
+                for zi in cMin.z...cMax.z {
+                    for yi in cMin.y...cMax.y {
+                        for xi in cMin.x...cMax.x {
+                            let c = SIMD3<Int32>(xi, yi, zi)
+                            let cellCenter = self.voxelGrid.worldCenter(of: c)
+                            guard self.triangleOverlapsAABB(tri: piece, boxCenter: cellCenter, halfExtent: h * 0.5) else { continue }
 
-            let spanX = Int(cMax.x - cMin.x) + 1
-            let spanY = Int(cMax.y - cMin.y) + 1
-            let spanZ = Int(cMax.z - cMin.z) + 1
-            let totalCells = spanX * spanY * spanZ
-            guard totalCells > 0 && totalCells <= maxCellsPerTriangle else {
-                if totalCells > maxCellsPerTriangle {
-                    print("[ArcCFD] ⚠ skipping degenerate triangle spanning \(totalCells) cells (cap \(maxCellsPerTriangle)) — centroid \(tri.centroid)")
-                }
-                continue
-            }
+                            var cell = self.voxelGrid.ensure(c)
+                            cell.isSolid = true
+                            cell.solidNormal = piece.normal
+                            cell.velocity = .zero
+                            self.voxelGrid[c] = cell
 
-            for zi in cMin.z...cMax.z {
-                for yi in cMin.y...cMax.y {
-                    for xi in cMin.x...cMax.x {
-                        let c = SIMD3<Int32>(xi, yi, zi)
-                        let cellCenter = voxelGrid.worldCenter(of: c)
-                        guard triangleOverlapsAABB(tri: tri, boxCenter: cellCenter, halfExtent: h * 0.5) else { continue }
-
-                        var cell = voxelGrid.ensure(c)
-                        cell.isSolid = true
-                        cell.solidNormal = tri.normal
-                        cell.velocity = .zero
-                        voxelGrid[c] = cell
-
-                        triangleDensity[c, default: 0] += 1
-                        cellOwners[c, default: 0] |= ownerBit
+                            if seenCells.insert(c).inserted { triangleDensity[c, default: 0] += 1 }
+                            self.cellOwners[c, default: 0] |= ownerBit
+                        }
                     }
                 }
             }
@@ -1104,7 +1105,110 @@ public final class ArcFluidEngine: ObservableObject {
         if tightPassageCount > 0 {
             print("[ArcCFD] mesh sync: \(tightPassageCount) tight-passage cell(s) got fine-boundary refinement (\(voxelGrid.fineSolidCellCount) fine sub-cells total)")
         }
+        lastTriangleDensity = triangleDensity
+        adaptiveFinePass()
         applySealCuts()
+    }
+
+    /// Bisect `tri` on its longest edge until each piece's cell span is
+    /// <= maxCells (or depth runs out), calling `body` on every piece.
+    static func forEachVirtualPiece(of tri: ArcTriangle, cellSize h: Float, maxCells: Int,
+                                    body: (ArcTriangle) -> Void) {
+        var stack: [(ArcTriangle, Int)] = [(tri, 0)]
+        while let (t, depth) = stack.popLast() {
+            let lo = simd_min(t.v0, simd_min(t.v1, t.v2))
+            let hi = simd_max(t.v0, simd_max(t.v1, t.v2))
+            let span = (hi - lo) / h
+            let cells = (Int(span.x) + 2) * (Int(span.y) + 2) * (Int(span.z) + 2)
+            if cells <= maxCells || depth >= 14 { body(t); continue }
+            let e0 = simd_length_squared(t.v1 - t.v0)
+            let e1 = simd_length_squared(t.v2 - t.v1)
+            let e2 = simd_length_squared(t.v0 - t.v2)
+            let a: SIMD3<Float>, b: SIMD3<Float>, c: SIMD3<Float>   // split edge a-b at its midpoint m; c opposite
+            if e0 >= e1 && e0 >= e2 { a = t.v0; b = t.v1; c = t.v2 }
+            else if e1 >= e2 { a = t.v1; b = t.v2; c = t.v0 }
+            else { a = t.v2; b = t.v0; c = t.v1 }
+            let m = (a + b) * 0.5
+            func make(_ p: SIMD3<Float>, _ q: SIMD3<Float>, _ r: SIMD3<Float>) -> ArcTriangle {
+                ArcTriangle(v0: p, v1: q, v2: r, normal: t.normal, centroid: (p + q + r) / 3)
+            }
+            stack.append((make(a, m, c), depth + 1))
+            stack.append((make(m, b, c), depth + 1))
+        }
+    }
+
+    // MARK: — Adaptive per-part wall resolution
+    /// Per-part fine wall resolution (port of the web sandbox's adaptive
+    /// per-part SDF sizing): each part's thinnest bounding-box dimension
+    /// should span at least `partMinCells` fine voxels, within a fine-cell
+    /// budget. Thin parts (pipes, throats) get triangle-accurate fine solid
+    /// cells at the chosen subdivision; the global subdivision is the max
+    /// requirement, reduced until the estimated cell count fits the budget.
+    private static let partMinCells: Float = 14
+    private static let fineBudget = 250_000
+
+    private func adaptiveFinePass() {
+        let h = voxelGrid.cellSize
+        guard h > 0, !sealRawVerts.isEmpty else { return }
+        var need: [Int] = []          // per-part desired subdivision
+        var area: [Float] = []        // per-part surface area
+        for verts in sealRawVerts {
+            guard verts.count >= 3 else { need.append(1); area.append(0); continue }
+            var lo = SIMD3<Float>(repeating: Float.infinity), hi = SIMD3<Float>(repeating: -Float.infinity)
+            var a: Float = 0
+            var i = 0
+            while i + 2 < verts.count {
+                lo = simd_min(lo, simd_min(verts[i], simd_min(verts[i+1], verts[i+2])))
+                hi = simd_max(hi, simd_max(verts[i], simd_max(verts[i+1], verts[i+2])))
+                a += 0.5 * simd_length(simd_cross(verts[i+1] - verts[i], verts[i+2] - verts[i]))
+                i += 3
+            }
+            let e = hi - lo
+            let sorted = [e.x, e.y, e.z].sorted()
+            let thin = max(sorted[0], sorted[1] * 0.2, 1e-4)
+            let n = Int(ceil(Self.partMinCells * h / thin))
+            need.append(max(1, min(6, n)))
+            area.append(a)
+        }
+        var n = max(2, need.max() ?? 2)
+        guard n > 2 else { voxelGrid.setFineSubdivision(2); return }
+        // Budget: estimated fine cells touched by the thin parts' surfaces.
+        func estimate(_ n: Int) -> Int {
+            let fs = h / Float(n)
+            var total: Float = 0
+            for (i, a) in area.enumerated() where need[i] > 2 { total += a / (fs * fs) * 1.5 }
+            return Int(total)
+        }
+        while n > 2 && estimate(n) > Self.fineBudget { n -= 1 }
+        // Changing subdivision invalidates the tight-passage fine cells
+        // (different key space): rebuild them at the new subdivision.
+        voxelGrid.setFineSubdivision(n)
+        let fs = h / Float(n)
+        let sub = n
+        var fineMarked = 0
+        for (ti, tri) in meshTriangles.enumerated() {
+            guard ti < meshTriangleOwner.count else { break }
+            let o = Int(meshTriangleOwner[ti])
+            if o >= need.count { continue }
+            if need[o] <= 2 { continue }
+            ArcFluidEngine.forEachVirtualPiece(of: tri, cellSize: fs, maxCells: 200) { piece in
+                let lo = voxelGrid.fineCellCoord(of: simd_min(piece.v0, simd_min(piece.v1, piece.v2)))
+                let hi = voxelGrid.fineCellCoord(of: simd_max(piece.v0, simd_max(piece.v1, piece.v2)))
+                for zi in lo.z...hi.z { for yi in lo.y...hi.y { for xi in lo.x...hi.x {
+                    let center = voxelGrid.domainMin
+                        + (SIMD3<Float>(Float(xi), Float(yi), Float(zi)) + 0.5) * fs
+                    if triangleOverlapsAABB(tri: piece, boxCenter: center, halfExtent: fs * 0.5) {
+                        voxelGrid.markFineSolid(at: center)
+                        fineMarked += 1
+                    }
+                }}}
+            }
+        }
+        // Re-add the coarse tight-passage fine cells at the new subdivision.
+        for (c, count) in lastTriangleDensity where count >= tightPassageTriangleThreshold {
+            markFineSolidSubcells(of: c)
+        }
+        print("[ArcCFD] adaptive fine walls: subdivision \(sub)x, \(fineMarked) triangle-accurate fine cell(s) for thin parts")
     }
 
     // MARK: — Auto-seal detection + implied boolean cut-out
@@ -1962,6 +2066,7 @@ public final class ArcFluidEngine: ObservableObject {
             cloudNode.geometry = nil // no point-cloud geometry in this mode
             guard let scene else { return }
             ArcVolumetricFluidRenderer.leakSplats = leaks.isActive ? leaks.splats() : []
+            ArcVolumetricFluidRenderer.xray = xrayGlow
             volumetricNode = ArcVolumetricFluidRenderer.updateVolumetricNode(
                 in: scene,
                 existingNode: volumetricNode,

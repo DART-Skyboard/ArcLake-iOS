@@ -374,6 +374,10 @@ public enum ArcVolumetricFluidRenderer {
         accum = vec4(accumColor, 1.0 - transmittance);
     }
 
+    if (u_xray > 0.5) {
+        // X-ray interior glow: brighten + cool-tint the gas seen through walls.
+        accum.rgb = accum.rgb * 1.35 + vec3(0.02, 0.05, 0.08) * accum.a;
+    }
     _output.color = vec4(accum.rgb, accum.a) + _output.color * (1.0 - accum.a);
     """
 }

@@ -315,6 +315,8 @@ struct ArcFluidView: View {
                         set:{ eng.particleVisual = $0 ? .volumetric : .points })) {
                         mono("Volumetric render")
                     }.tint(.green)
+                    Toggle(isOn: $eng.xrayGlow) { mono("X-ray interior glow") }
+                        .tint(.cyan)
                     Toggle(isOn: $eng.floorHeatEnabled) { mono("Floor thermal map") }
                         .tint(.orange)
                     Text("Volumetric is on by default. Turn it off to fall back to point sprites if it runs choppy.")
