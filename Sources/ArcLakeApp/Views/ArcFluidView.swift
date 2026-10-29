@@ -335,6 +335,11 @@ struct ArcFluidView: View {
                         set:{ eng.particleVisual = $0 ? .volumetric : .points }), tint: .green)
                     toggleRow("X-ray interior glow", isOn: $eng.xrayGlow, tint: .cyan)
                     toggleRow("Floor thermal map", isOn: $eng.floorHeatEnabled, tint: .orange)
+                    if let msg = eng.volumetricStatus {
+                        Text(msg)
+                            .font(.system(size:7,design:.monospaced))
+                            .foregroundColor(.orange)
+                    }
                     Text("Volumetric is on by default. Turn it off to fall back to point sprites if it runs choppy.")
                         .font(.system(size:7,design:.monospaced))
                         .foregroundColor(.white.opacity(0.3))

@@ -423,6 +423,9 @@ public final class ArcFluidEngine: ObservableObject {
     /// X-ray interior glow: fluid is drawn through opaque part walls with a
     /// soft interior glow (default ON, matching the web sandbox).
     @Published public var xrayGlow = true
+    /// One-line reason shown in the Render card when the volumetric shader
+    /// failed on this device and the view fell back to point sprites.
+    @Published public var volumetricStatus: String? = nil
     @Published public var floorHeatEnabled = true { didSet { if !floorHeatEnabled { floorHeat.remove() } } }
 
     // SceneKit node refs
@@ -2269,6 +2272,13 @@ public final class ArcFluidEngine: ObservableObject {
         // pts (the point-cloud visual layer) has been reseeded, so this
         // dispatch happens before the `pts.isEmpty` guard below, which
         // is specific to the point-sprite/gradient-sphere particle path.
+        // Never silently show nothing: if the Metal ray-march shader fails
+        // its one-time compile/render self-test, drop to point sprites and
+        // surface the reason in the Render card.
+        if particleVisual == .volumetric && !ArcVolumetricFluidRenderer.verifyIfNeeded() {
+            volumetricStatus = ArcVolumetricFluidRenderer.failureMessage
+            particleVisual = .points
+        }
         if particleVisual == .volumetric {
             cloudNode.geometry = nil // no point-cloud geometry in this mode
             guard let scene else { return }
