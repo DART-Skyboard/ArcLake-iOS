@@ -308,6 +308,21 @@ struct ArcFluidView: View {
                     .multilineTextAlignment(.center)
             }
 
+            card("RENDER") {
+                VStack(alignment:.leading, spacing:6) {
+                    Toggle(isOn: Binding(
+                        get:{ eng.particleVisual == .volumetric },
+                        set:{ eng.particleVisual = $0 ? .volumetric : .points })) {
+                        mono("Volumetric render")
+                    }.tint(.green)
+                    Toggle(isOn: $eng.floorHeatEnabled) { mono("Floor thermal map") }
+                        .tint(.orange)
+                    Text("Volumetric is on by default. Turn it off to fall back to point sprites if it runs choppy.")
+                        .font(.system(size:7,design:.monospaced))
+                        .foregroundColor(.white.opacity(0.3))
+                }
+            }
+
             // Auto-seal joints (geometric intersection + through-cavity test)
             card("JOINTS") {
                 VStack(alignment:.leading, spacing:6) {

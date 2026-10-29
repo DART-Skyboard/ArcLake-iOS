@@ -116,19 +116,19 @@ final class ArcSealPart: @unchecked Sendable {
 }
 
 /// One detected joint between two parts.
-struct ArcSealJoint: Identifiable, Sendable {
-    var id: String { partA + "|" + partB }
-    let partA: String
-    let partB: String
+public struct ArcSealJoint: Identifiable, Sendable {
+    public var id: String { partA + "|" + partB }
+    public let partA: String
+    public let partB: String
     /// The part whose wall is cut away where it lies inside the other's bore.
-    let receiver: String
-    let centroid: SIMD3<Float>
-    let radius: Float
-    let zoneMin: SIMD3<Float>
-    let zoneMax: SIMD3<Float>
+    public let receiver: String
+    public let centroid: SIMD3<Float>
+    public let radius: Float
+    public let zoneMin: SIMD3<Float>
+    public let zoneMax: SIMD3<Float>
     /// true: through-cavity continuity confirmed (fluid link, cut-out applied).
     /// false: meshes overlap but their hollow interiors never connect (non-flowing).
-    let sealed: Bool
+    public let sealed: Bool
 }
 
 enum ArcAutoSeal {

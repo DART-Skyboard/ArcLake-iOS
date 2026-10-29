@@ -60,140 +60,99 @@ import simd
 
 public enum ArcVolumetricFluidRenderer {
 
-    /// Tunable resolution of the baked density/color volume texture.
-    /// Kept modest (deliberately smaller than the simulation's own
-    /// sparse-voxel resolution) because this is a RENDER-time resample
-    /// of the simulation state, not the simulation grid itself — the
-    /// ray march's own step count + the view's screen resolution are
-    /// what ultimately determine visible smoothness, not this grid's
-    /// cell count. 48³ matches the project's existing default
-    /// `targetResolution: Int = 48` fitDomain() convention
-    /// (ArcSparseVoxelGrid.fitDomain), so it tracks whatever density
-    /// the simulation itself is already resolving at.
+    /// Voxel count along the LONGEST domain axis of the baked volume. The
+    /// other two axes get proportionally fewer so voxels stay CUBIC
+    /// (chamber-artifact fix: a single res^3 lattice stretched over a
+    /// non-cubic domain smeared density anisotropically and produced
+    /// banding in tall/flat assemblies).
     public static var volumeResolution: Int = 48
 
-    // MARK: — Density + color volume bake (CPU-side, mirrors the
-    // WebGL prototype's buildVolumeTexture, see
-    // scratchpad/loading-screen/raymarch/index.html for the visually-
-    // verified reference implementation this ports from)
+    /// X-ray interior glow (step 4): when true the ray march ignores the
+    /// depth buffer so the fluid glows through opaque part walls.
+    public static var xray: Bool = false
 
-    /// One frame's baked volume: RGBA32F texel data packed as a tiled
-    /// 2D atlas (Z-slices tiled across X), exactly mirroring the
-    /// browser prototype's atlas layout — `.r` = density, `.gba` =
-    /// density-weighted average color. SceneKit's SCNMaterialProperty
-    /// supports arbitrary CGImage/texture contents, so this atlas
-    /// becomes a single 2D texture sampled with manual slice
-    /// interpolation in the shader modifier below (texture3D is not
-    /// reliably available across the iOS 16 SceneKit/GLSL-ES target,
-    /// so the browser prototype's tiled-atlas trick is reused rather
-    /// than assuming 3D texture support — same reasoning, same fix).
+    /// One frame's baked volume: RGBA32F texels packed as a tiled 2D atlas
+    /// (Z-slices tiled left-to-right, top-to-bottom; each tile is resX x resY).
+    /// `.r` = density, `.gba` = density-weighted color.
     public struct BakedVolume {
-        public let atlasData: Data        // RGBA32F, atlasW * atlasH * 4 floats
+        public let atlasData: Data
         public let atlasWidth: Int
         public let atlasHeight: Int
-        public let gridRes: Int
+        public let resX: Int
+        public let resY: Int
+        public let resZ: Int
         public let atlasCols: Int
         public let atlasRows: Int
         public let domainMin: SIMD3<Float>
         public let domainMax: SIMD3<Float>
     }
 
-    /// Bakes the current simulation state (density, color, solid mask)
-    /// from `grid` into a volume texture atlas, ready to upload as an
-    /// SCNMaterialProperty.contents each frame uploadParticleCloud()
-    /// would otherwise have rebuilt a particle cloud.
+    /// Cubic-voxel per-axis resolution for a domain of the given extent.
+    static func axisResolutions(span: SIMD3<Float>) -> (Int, Int, Int) {
+        let longest = max(span.x, max(span.y, span.z))
+        let L = Float(max(8, volumeResolution))
+        func r(_ s: Float) -> Int { max(8, min(Int(L), Int((s / longest * L).rounded()))) }
+        return (r(span.x), r(span.y), r(span.z))
+    }
+
     public static func bakeVolume(from grid: ArcSparseVoxelGrid, envTempK: Float) -> BakedVolume {
-        let res = max(8, volumeResolution)
-        let cols = Int(ceil(sqrt(Double(res))))
-        let rows = Int(ceil(Double(res) / Double(cols)))
-        let atlasW = cols * res
-        let atlasH = rows * res
-
-        var texels = [Float](repeating: 0, count: atlasW * atlasH * 4)
-
         let dMin = grid.domainMin
         let dMax = grid.domainMax
         let span = dMax - dMin
         guard span.x > 0, span.y > 0, span.z > 0 else {
-            return BakedVolume(atlasData: Data(texels.withUnsafeBufferPointer { Data(buffer: $0) }),
-                                atlasWidth: atlasW, atlasHeight: atlasH, gridRes: res,
-                                atlasCols: cols, atlasRows: rows, domainMin: dMin, domainMax: dMax)
+            let t = [Float](repeating: 0, count: 8 * 8 * 4)
+            return BakedVolume(atlasData: Data(t.withUnsafeBufferPointer { Data(buffer: $0) }),
+                               atlasWidth: 8, atlasHeight: 8, resX: 8, resY: 8, resZ: 1,
+                               atlasCols: 1, atlasRows: 1, domainMin: dMin, domainMax: dMax)
         }
+        let (resX, resY, resZ) = axisResolutions(span: span)
+        let cols = Int(ceil(sqrt(Double(resZ))))
+        let rows = Int(ceil(Double(resZ) / Double(cols)))
+        let atlasW = cols * resX
+        let atlasH = rows * resY
+        var texels = [Float](repeating: 0, count: atlasW * atlasH * 4)
 
-        // Sample the simulation grid at `res` steps per axis across its
-        // own domain — this is the per-frame resample step. isFineSolid
-        // is checked FIRST and, when true, forces density to 0 for that
-        // texel regardless of what the (coarser) main grid's density
-        // field says there — this is the "mesh collision geometry
-        // blocks/shapes the visible fluid" behavior the user specified,
-        // using the SAME fineSolidCells data the simulation's own
-        // collision response already reads, not a parallel SDF.
-        for zi in 0..<res {
-            let wz = dMin.z + (Float(zi) + 0.5) / Float(res) * span.z
-            for yi in 0..<res {
-                let wy = dMin.y + (Float(yi) + 0.5) / Float(res) * span.y
-                for xi in 0..<res {
-                    let wx = dMin.x + (Float(xi) + 0.5) / Float(res) * span.x
+        for zi in 0..<resZ {
+            let wz = dMin.z + (Float(zi) + 0.5) / Float(resZ) * span.z
+            let tileX = (zi % cols) * resX
+            let tileY = (zi / cols) * resY
+            for yi in 0..<resY {
+                let wy = dMin.y + (Float(yi) + 0.5) / Float(resY) * span.y
+                for xi in 0..<resX {
+                    let wx = dMin.x + (Float(xi) + 0.5) / Float(resX) * span.x
                     let worldPos = SIMD3<Float>(wx, wy, wz)
+                    let texIdx = ((tileY + yi) * atlasW + tileX + xi) * 4
 
-                    let tileX = (zi % cols) * res
-                    let tileY = (zi / cols) * res
-                    let px = tileX + xi
-                    let py = tileY + yi
-                    let texIdx = (py * atlasW + px) * 4
+                    // Mesh walls hide the fluid exactly where they block it.
+                    if grid.isFineSolid(at: worldPos) { continue }
 
-                    if grid.isFineSolid(at: worldPos) {
-                        texels[texIdx+0] = 0
-                        texels[texIdx+1] = 0
-                        texels[texIdx+2] = 0
-                        texels[texIdx+3] = 0
-                        continue
-                    }
-
+                    // Trilinear gather from the simulation grid.
                     let cell = grid.trilinearSample(at: worldPos)
                     let dens = min(4.0, max(0.0, cell.density))
-                    texels[texIdx+0] = dens
-
-                    if dens > 1e-5 {
-                        // Gradient color concept carried over from
-                        // ArcGradientParticleRenderer: density/velocity/
-                        // temperature-driven color, now evaluated as a
-                        // per-texel ramp instead of per-particle pole
-                        // shading.
-                        let heat = min(1, max(0, (cell.tempK - envTempK) / max(1, 2000 - envTempK)))
-                        let speed = simd_length(cell.velocity)
-                        let speedT = min(1, speed / 4.0)
-                        // base cool->hot ramp, speed brightens/whitens
-                        let cool = SIMD3<Float>(0.08, 0.30, 0.60)
-                        let hot  = SIMD3<Float>(0.95, 0.55, 0.15)
-                        let base = cool + (hot - cool) * heat
-                        let bright = base + (SIMD3<Float>(1,1,1) - base) * speedT * 0.5
-                        texels[texIdx+1] = bright.x
-                        texels[texIdx+2] = bright.y
-                        texels[texIdx+3] = bright.z
-                    } else {
-                        texels[texIdx+1] = 0
-                        texels[texIdx+2] = 0
-                        texels[texIdx+3] = 0
-                    }
+                    guard dens > 1e-5 else { continue }
+                    texels[texIdx] = dens
+                    let heat = min(1, max(0, (cell.tempK - envTempK) / max(1, 2000 - envTempK)))
+                    let speedT = min(1, simd_length(cell.velocity) / 4.0)
+                    let cool = SIMD3<Float>(0.08, 0.30, 0.60)
+                    let hot  = SIMD3<Float>(0.95, 0.55, 0.15)
+                    let base = cool + (hot - cool) * heat
+                    let bright = base + (SIMD3<Float>(1,1,1) - base) * speedT * 0.5
+                    texels[texIdx+1] = bright.x
+                    texels[texIdx+2] = bright.y
+                    texels[texIdx+3] = bright.z
                 }
             }
         }
-
         let data = texels.withUnsafeBufferPointer { Data(buffer: $0) }
         return BakedVolume(atlasData: data, atlasWidth: atlasW, atlasHeight: atlasH,
-                            gridRes: res, atlasCols: cols, atlasRows: rows,
-                            domainMin: dMin, domainMax: dMax)
+                           resX: resX, resY: resY, resZ: resZ,
+                           atlasCols: cols, atlasRows: rows, domainMin: dMin, domainMax: dMax)
     }
 
     // MARK: — SceneKit node + shader modifier
 
     private static var cachedBoxGeometry: SCNGeometry?
 
-    /// Builds (or updates in place) the single bounding-box node whose
-    /// fragment shader ray-marches the baked volume texture. Call this
-    /// once per simulation tick from the same place uploadParticleCloud()
-    /// is called, instead of rebuilding a particle cloud.
     public static func updateVolumetricNode(in scene: SCNScene,
                                               existingNode: SCNNode?,
                                               grid: ArcSparseVoxelGrid,
@@ -203,9 +162,7 @@ public enum ArcVolumetricFluidRenderer {
         if existingNode == nil {
             scene.rootNode.addChildNode(node)
         }
-
         let baked = bakeVolume(from: grid, envTempK: envTempK)
-
         let size = baked.domainMax - baked.domainMin
         let center = (baked.domainMin + baked.domainMax) * 0.5
 
@@ -216,41 +173,50 @@ public enum ArcVolumetricFluidRenderer {
             geo = SCNBox(width: 1, height: 1, length: 1, chamferRadius: 0)
             cachedBoxGeometry = geo
         }
-        // Re-scale the unit box to the domain extent each frame instead
-        // of rebuilding geometry — domain size changes slowly (only on
-        // fitDomain calls), so this is cheap and avoids per-frame
-        // allocation.
         node.scale = SCNVector3(max(0.001, size.x), max(0.001, size.y), max(0.001, size.z))
         node.position = SCNVector3(center.x, center.y, center.z)
 
-        let mat = SCNMaterial()
-        mat.lightingModel = .constant
-        mat.isDoubleSided = true
-        mat.blendMode = .alpha
-        mat.writesToDepthBuffer = false
-        mat.readsFromDepthBuffer = true
+        // Reuse one material (only the atlas + uniforms change per tick)
+        // instead of recompiling a fresh shader-modified material each frame.
+        let mat: SCNMaterial
+        if let existing = node.geometry?.firstMaterial, existing.name == "arcVolMat" {
+            mat = existing
+        } else {
+            mat = SCNMaterial()
+            mat.name = "arcVolMat"
+            mat.lightingModel = .constant
+            mat.isDoubleSided = true
+            mat.blendMode = .alpha
+            mat.writesToDepthBuffer = false
+            mat.shaderModifiers = [
+                .surface: Self.surfaceShaderModifier,
+                .fragment: Self.fragmentShaderModifier,
+            ]
+        }
+        mat.readsFromDepthBuffer = !xray
 
-        // Upload the baked atlas as the volume texture. CGImage from raw
-        // float data needs a bitmap context; build it once per bake.
         if let img = Self.makeFloatAtlasImage(data: baked.atlasData,
                                                width: baked.atlasWidth,
                                                height: baked.atlasHeight) {
             mat.setValue(SCNMaterialProperty(contents: img), forKey: "volumeAtlas")
         }
-
-        mat.shaderModifiers = [
-            .surface: Self.surfaceShaderModifier,
-            .fragment: Self.fragmentShaderModifier,
-        ]
-
-        mat.setValue(NSNumber(value: Float(baked.gridRes)), forKey: "gridRes")
+        mat.setValue(NSNumber(value: Float(baked.resX)), forKey: "resX")
+        mat.setValue(NSNumber(value: Float(baked.resY)), forKey: "resY")
+        mat.setValue(NSNumber(value: Float(baked.resZ)), forKey: "resZ")
         mat.setValue(NSNumber(value: Float(baked.atlasCols)), forKey: "atlasCols")
         mat.setValue(NSNumber(value: Float(baked.atlasRows)), forKey: "atlasRows")
         mat.setValue(NSNumber(value: Float(baked.atlasWidth)), forKey: "atlasW")
         mat.setValue(NSNumber(value: Float(baked.atlasHeight)), forKey: "atlasH")
+        mat.setValue(NSNumber(value: size.x), forKey: "sizeX")
+        mat.setValue(NSNumber(value: size.y), forKey: "sizeY")
+        mat.setValue(NSNumber(value: size.z), forKey: "sizeZ")
+        mat.setValue(NSNumber(value: Float(max(baked.resX, max(baked.resY, baked.resZ)))), forKey: "resMax")
+        mat.setValue(NSNumber(value: xray ? Float(1) : Float(0)), forKey: "xray")
 
-        geo.firstMaterial = mat
         node.geometry = geo
+        geo.firstMaterial = mat
+        // Draw after opaque geometry; in X-ray mode draw last and on top.
+        node.renderingOrder = xray ? 1000 : 10
         return node
     }
 
@@ -294,48 +260,31 @@ public enum ArcVolumetricFluidRenderer {
 
     // MARK: — Shader modifiers (GLSL, SceneKit SCNShadable)
     //
-    // Ray-march logic mirrors scratchpad/loading-screen/raymarch/index.html
-    // (visually verified in-browser): sample the tiled-atlas volume
-    // texture per step with bilinear-in-slice + lerp-between-slices
-    // interpolation, accumulate density*stepSize with Beer-Lambert
-    // extinction (not flat additive blending — this is the specific
-    // mechanism that avoids the particle renderer's blowout problem),
-    // and add a density-gradient-derived rim highlight standing in for
-    // the full recursive refraction/reflection (Snell's-law-bent
-    // KeyMarchFluid) pass from the reference technique. A full
-    // recursive refract+reflect port is flagged as a documented
-    // follow-on below rather than attempted blind.
+    // Per-axis (cubic-voxel) tiled-atlas sampling; step count adapts to the
+    // ray's physical length (~1 step per 0.75 voxel, clamped 16...96) and the
+    // start offset is jittered per pixel so slice banding becomes fine noise.
+    // Beer-Lambert extinction as before. Tile samples are inset by half a
+    // texel so bilinear filtering never bleeds across Z-slice tiles.
 
     private static let surfaceShaderModifier = """
-    // Pass the box-local ray origin/direction to the fragment stage.
-    // SceneKit gives us the fragment's model-space position via
-    // _surface.position already; camera position in model space is
-    // derived in the fragment modifier from the inverse model matrix.
+    // (ray setup happens in the fragment modifier)
     """
 
     private static let fragmentShaderModifier = """
     #pragma transparent
     #pragma body
 
-    // ---- Uniforms (bound via SCNMaterial.setValue(forKey:) above) ----
-    float gridRes   = u_gridRes;
+    vec3 res = vec3(u_resX, u_resY, u_resZ);
     float atlasCols = u_atlasCols;
-    float atlasRows = u_atlasRows;
-    float atlasW    = u_atlasW;
-    float atlasH    = u_atlasH;
+    vec2 atlasSize = vec2(u_atlasW, u_atlasH);
+    vec3 domSize = vec3(u_sizeX, u_sizeY, u_sizeZ);
 
-    // Ray in the box's LOCAL (0..1 per axis after the +0.5 recenter)
-    // space: the node is scaled/positioned to exactly cover the grid
-    // domain, so the unit SCNBox's local space IS the 0..1 volume
-    // space once offset by 0.5 (SCNBox is centered on its origin).
-    vec3 localPos = _surface.position + vec3(0.5); // 0..1
+    vec3 localPos = _surface.position + vec3(0.5);
     vec3 localCamPos = (scn_node.inverseModelTransform * vec4(scn_frame.inverseViewTransform[3].xyz, 1.0)).xyz + vec3(0.5);
-    vec3 rd = normalize(localPos - localCamPos);
     vec3 ro = localCamPos;
+    vec3 rdU = localPos - localCamPos;              // unit-box space, un-normalized
+    vec3 rd = rdU / max(length(rdU), 1e-6);
 
-    // Intersect the unit box [0,1]^3 to find the marchable segment —
-    // entering ro may already be inside (camera inside the fluid
-    // domain) or outside; clip to [0,1] either way.
     vec3 invRd = 1.0 / max(abs(rd), vec3(1e-5)) * sign(rd);
     vec3 tA = (vec3(0.0) - ro) * invRd;
     vec3 tB = (vec3(1.0) - ro) * invRd;
@@ -346,30 +295,38 @@ public enum ArcVolumetricFluidRenderer {
 
     vec4 accum = vec4(0.0);
     if (tFar > tNear) {
-        const int STEPS = 48;
-        float stepSize = (tFar - tNear) / float(STEPS);
-        float t = tNear;
+        // physical length of the marched segment
+        float physLen = (tFar - tNear) * length(rd * domSize);
+        float voxel = max(domSize.x, max(domSize.y, domSize.z)) / u_resMax;
+        float wantSteps = clamp(physLen / (voxel * 0.75), 16.0, 96.0);
+        float stepSize = (tFar - tNear) / wantSteps;
+        float stepPhys = physLen / wantSteps;
+        // per-pixel jitter in [0,1)
+        float jit = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
+        float t = tNear + stepSize * jit;
         float transmittance = 1.0;
         vec3 accumColor = vec3(0.0);
+        vec2 halfTexel = vec2(0.5) / atlasSize;
 
-        for (int i = 0; i < STEPS; i++) {
-            vec3 p = ro + rd * (t + stepSize * 0.5);
-
-            // ---- tiled-atlas volume sample (mirrors the WebGL
-            // prototype's sampleVolumeRaw / sampleVolume) ----
-            float gz = p.z * gridRes;
+        for (int i = 0; i < 96; i++) {
+            if (float(i) >= wantSteps) { break; }
+            vec3 p = ro + rd * t;
+            float gz = p.z * res.z;
             float z0 = floor(gz - 0.5);
             float z1 = z0 + 1.0;
             float fz = (gz - 0.5) - z0;
-            z0 = clamp(z0, 0.0, gridRes - 1.0);
-            z1 = clamp(z1, 0.0, gridRes - 1.0);
+            z0 = clamp(z0, 0.0, res.z - 1.0);
+            z1 = clamp(z1, 0.0, res.z - 1.0);
 
             vec2 tile0 = vec2(mod(z0, atlasCols), floor(z0 / atlasCols));
             vec2 tile1 = vec2(mod(z1, atlasCols), floor(z1 / atlasCols));
-            vec2 inTile = clamp(p.xy, 0.0, 1.0);
+            vec2 inTile = clamp(p.xy, 0.0, 1.0) * res.xy;
+            inTile = clamp(inTile, vec2(0.5), res.xy - vec2(0.5));
 
-            vec2 uv0 = (tile0 * gridRes + inTile * gridRes) / vec2(atlasW, atlasH);
-            vec2 uv1 = (tile1 * gridRes + inTile * gridRes) / vec2(atlasW, atlasH);
+            vec2 uv0 = (tile0 * res.xy + inTile) / atlasSize;
+            vec2 uv1 = (tile1 * res.xy + inTile) / atlasSize;
+            uv0 = clamp(uv0, halfTexel, vec2(1.0) - halfTexel);
+            uv1 = clamp(uv1, halfTexel, vec2(1.0) - halfTexel);
 
             vec4 s0 = texture2D(u_volumeAtlas, uv0);
             vec4 s1 = texture2D(u_volumeAtlas, uv1);
@@ -377,7 +334,7 @@ public enum ArcVolumetricFluidRenderer {
 
             float dens = s.r;
             if (dens > 0.004) {
-                float absorb = 1.0 - exp(-dens * stepSize * gridRes * 0.6);
+                float absorb = 1.0 - exp(-dens * stepPhys * (u_resMax / max(domSize.x, max(domSize.y, domSize.z))) * 0.6);
                 accumColor += transmittance * absorb * s.gba;
                 transmittance *= (1.0 - absorb);
                 if (transmittance < 0.02) { break; }
@@ -386,20 +343,6 @@ public enum ArcVolumetricFluidRenderer {
         }
         accum = vec4(accumColor, 1.0 - transmittance);
     }
-
-    // ---- FOLLOW-ON (documented, not implemented this pass) ----
-    // Recursive refraction/reflection (KeyMarchFluid): bend a secondary
-    // ray via Snell's law at the local density-gradient isosurface,
-    // trace it recursively, and blend with a Fresnel-style reflectance
-    // coefficient for the glassy look. GLSL ES on iOS SceneKit has no
-    // general recursion, so this needs either a fixed-depth unrolled
-    // loop (2-3 bounces) or a second explicit ray-march pass driven
-    // from Swift with the reflected/refracted direction computed from
-    // this pass's exit-gradient — both are mechanical extensions of the
-    // single-pass march above, deliberately left out of this first
-    // landing so the core density-field/no-blowout result (the part
-    // directly verified in the WebGL prototype) ships on a geometry/
-    // shader-modifier scaffold that is already exercised end-to-end.
 
     _output.color = vec4(accum.rgb, accum.a) + _output.color * (1.0 - accum.a);
     """

@@ -276,7 +276,7 @@ public final class ArcFluidEngine: ObservableObject {
     @Published public var isRunning   = false
     @Published public var mode        = ArcFluidMode.liquid
     @Published public var scenePreset = ArcFluidScene.dam
-    @Published public var particleVisual = ArcParticleVisual.points
+    @Published public var particleVisual = ArcParticleVisual.volumetric   // default ON (off switch: Setup > Volumetric render, or pick another visual)
     @Published public var particleCount = 500
     @Published public var gravityScale: Float = 1.0
     @Published public var smoothingH:   Float = 1.5   // scene-unit SPH radius
@@ -334,6 +334,10 @@ public final class ArcFluidEngine: ObservableObject {
     private var sealGeneration = 0
     private var sealApplied = false
 
+    // MARK: — Floor thermal map (step 2)
+    private let floorHeat = ArcFloorHeatMap()
+    @Published public var floorHeatEnabled = true { didSet { if !floorHeatEnabled { floorHeat.remove() } } }
+
     // SceneKit node refs
     public weak var scene: SCNScene? = nil
     private var cloudNode: SCNNode? = nil
@@ -387,6 +391,9 @@ public final class ArcFluidEngine: ObservableObject {
         voxelGrid.removeAll()
         meshCollisionSynced = false
         fitVoxelDomainToScene(scene)
+        floorHeat.remove()
+        floorHeat.configure(domainMin: voxelGrid.domainMin, domainMax: voxelGrid.domainMax,
+                            cellSize: voxelGrid.cellSize)
         solver.viscosity = mode.params.visc * 0.6
         solver.thermalDiffusion = mode.params.visc * 1.2 + 0.02
         solver.ambientTempK = envTempK
@@ -416,6 +423,7 @@ public final class ArcFluidEngine: ObservableObject {
         sealGeneration += 1   // invalidate any in-flight joint detection
         cloudNode?.removeFromParentNode(); cloudNode = nil
         volumetricNode?.removeFromParentNode(); volumetricNode = nil
+        floorHeat.remove()
         // Remove thermal coloring from all mesh nodes
         scene?.rootNode.enumerateChildNodes { node, _ in
             node.geometry?.materials.forEach { m in
@@ -918,6 +926,10 @@ public final class ArcFluidEngine: ObservableObject {
             for c in voxelGrid.activeCoords() {
                 let cell = voxelGrid[c]
                 guard !cell.isSolid, cell.density > 0.01 else { continue }
+                if floorHeatEnabled {
+                    floorHeat.deposit(pos: voxelGrid.worldCenter(of: c), density: cell.density,
+                                      temp01: min(1, max(0, (cell.tempK - envTempK) / max(1, 2000 - envTempK))))
+                }
                 activeN += 1
                 sumRho += cell.density
                 sumT += cell.tempK
@@ -928,6 +940,7 @@ public final class ArcFluidEngine: ObservableObject {
                 maxP = max(maxP, pPa)
             }
 
+            if floorHeatEnabled, let sc = scene { floorHeat.refresh(in: sc) }
             if scene != nil { updateThermalColormap(sumT: sumT, maxP: maxP) }
             updateComponentMeasurements(maxP: maxP)
             uploadParticleCloud()
@@ -1096,8 +1109,9 @@ public final class ArcFluidEngine: ObservableObject {
                 parts.append(ArcSealPart(name: nm, verts: raw[i]))
             }
             let found = ArcAutoSeal.detect(parts: parts)
+            let finalParts = parts
             await MainActor.run {
-                self?.finishAutoSeal(parts: parts, joints: found, generation: gen)
+                self?.finishAutoSeal(parts: finalParts, joints: found, generation: gen)
             }
         }
     }
